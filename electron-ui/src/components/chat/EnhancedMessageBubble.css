@@ -1,0 +1,700 @@
+/**
+ * EnhancedMessageBubble Styles
+ * 
+ * CSS styles for enhanced message bubbles with Subject hashtags.
+ * Designed to match LAMA's existing chat UI patterns.
+ */
+
+.enhanced-message-bubble {
+  margin: 8px 0;
+  max-width: 70%;
+  word-wrap: break-word;
+  animation: fadeIn 0.3s ease;
+}
+
+.enhanced-message-bubble.own {
+  margin-left: auto;
+  margin-right: 16px;
+}
+
+.enhanced-message-bubble.other {
+  margin-left: 16px;
+  margin-right: auto;
+}
+
+/* Attachment text label - minimal styling */
+.attachment-text-label {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+/* Message header */
+.message-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.enhanced-message-bubble.own .message-header {
+  justify-content: flex-end;
+}
+
+.sender-name {
+  font-weight: 600;
+  color: #007AFF;
+}
+
+.enhanced-message-bubble.light .sender-name {
+  color: #0056CC;
+}
+
+.timestamp {
+  color: #999;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.timestamp:hover {
+  color: #fff;
+}
+
+.enhanced-message-bubble.light .timestamp {
+  color: #666;
+}
+
+.enhanced-message-bubble.light .timestamp:hover {
+  color: #333;
+}
+
+/* Trust level indicator */
+.trust-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid;
+  font-size: 10px;
+}
+
+.trust-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.trust-label {
+  font-weight: 500;
+  color: inherit;
+}
+
+/* Message content */
+.message-content {
+  background: #333;
+  border-radius: 12px;
+  padding: 6px 10px;
+  position: relative;
+}
+
+/* Other's messages - top-left corner less rounded */
+.enhanced-message-bubble.other .message-content {
+  border-top-left-radius: 4px;
+}
+
+/* User's messages - top-right corner less rounded */
+.enhanced-message-bubble.own .message-content {
+  background: #007AFF;
+  border-top-right-radius: 4px;
+}
+
+/* Remove background when message has attachments */
+.message-content:has(.message-attachments) {
+  background: transparent;
+  padding: 0;
+}
+
+.enhanced-message-bubble.own .message-content:has(.message-attachments) {
+  background: transparent;
+}
+
+.enhanced-message-bubble.light .message-content {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.enhanced-message-bubble.light.own .message-content {
+  background: #007AFF;
+  color: white;
+}
+
+/* Message text */
+.message-text {
+  color: #fff;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.enhanced-message-bubble.light .message-text {
+  color: #333;
+}
+
+.enhanced-message-bubble.light.own .message-text {
+  color: white;
+}
+
+.message-text:last-child {
+  margin-bottom: 0;
+}
+
+/* Inline hashtags */
+.inline-hashtag {
+  color: #40E0D0;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.inline-hashtag.clickable {
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.inline-hashtag.clickable:hover {
+  background: rgba(64, 224, 208, 0.2);
+  transform: translateY(-1px);
+}
+
+.enhanced-message-bubble.light .inline-hashtag {
+  color: #007AFF;
+}
+
+.enhanced-message-bubble.light.own .inline-hashtag {
+  color: #87CEEB;
+}
+
+/* Hashtag chips */
+.hashtag-chip {
+  background: rgba(0, 122, 255, 0.2);
+  color: #007AFF;
+  border: 1px solid rgba(0, 122, 255, 0.3);
+  border-radius: 10px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  margin: 2px 4px 2px 0;
+  transition: all 0.2s ease;
+}
+
+.hashtag-chip.small {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 8px;
+}
+
+.hashtag-chip.clickable {
+  cursor: pointer;
+}
+
+.hashtag-chip.clickable:hover {
+  background: rgba(0, 122, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.hashtag-chip.light {
+  background: rgba(0, 122, 255, 0.1);
+  color: #0056CC;
+  border-color: rgba(0, 122, 255, 0.2);
+}
+
+.enhanced-message-bubble.own .hashtag-chip {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Message subjects */
+.message-subjects {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.enhanced-message-bubble.light .message-subjects {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* Attachments */
+.message-attachments {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment-view {
+  background: transparent;
+  border: none;
+  padding: 0;
+  overflow: visible;
+  transition: all 0.3s ease;
+}
+
+/* Image as bubble background */
+.attachment-image-bubble {
+  position: relative;
+  width: 300px;
+  height: 200px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: 12px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* WhatsApp-style chevron */
+.expand-chevron {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: all 0.2s ease;
+}
+
+.expand-chevron:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* Tags overlay with semi-transparent background */
+.tags-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.overlay-tag {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.overlay-tag:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+/* Message status overlay - time and checkmarks */
+.message-status-overlay {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: white;
+}
+
+.message-time {
+  opacity: 0.9;
+}
+
+.message-checkmarks {
+  color: #4FC3F7;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Action buttons - transparent, no background */
+.attachment-overlay-actions {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: none; /* Hide by default, show in details */
+}
+
+.overlay-action-transparent {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+}
+
+.overlay-action-transparent:hover {
+  opacity: 1;
+}
+
+/* Details panel */
+.attachment-details {
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.detail-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  color: #999;
+  min-width: 60px;
+  margin-right: 8px;
+}
+
+.detail-value {
+  color: #fff;
+  flex: 1;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.detail-action-button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.detail-action-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.attachment-view.light {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.attachment-preview {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.attachment-preview:hover {
+  transform: scale(1.05);
+}
+
+.attachment-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-icon-container {
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-icon {
+  font-size: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-view.light .attachment-icon {
+  background: #e0e0e0;
+}
+
+.play-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.play-button {
+  color: white;
+  font-size: 18px;
+  background: rgba(0, 0, 0, 0.7);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.attachment-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.attachment-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachment-view.light .attachment-name {
+  color: #333;
+}
+
+.attachment-meta {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 6px;
+}
+
+.attachment-meta-compact {
+  font-size: 10px;
+  color: #999;
+  margin-left: auto;
+}
+
+.file-size::after {
+  content: " • ";
+}
+
+.attachment-subjects {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.more-subjects {
+  font-size: 10px;
+  color: #999;
+  align-self: center;
+  margin-left: 4px;
+}
+
+.attachment-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.action-button {
+  background: rgba(0, 122, 255, 0.2);
+  color: #007AFF;
+  border: 1px solid rgba(0, 122, 255, 0.3);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-button:hover {
+  background: rgba(0, 122, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+/* Icon-only buttons */
+.action-button.icon-only {
+  background: transparent;
+  border: none;
+  padding: 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.action-button.icon-only:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: none;
+}
+
+.action-button.icon-only:hover svg {
+  fill: rgba(255, 255, 255, 1);
+}
+
+.attachment-view.light .action-button {
+  background: rgba(0, 122, 255, 0.1);
+  color: #0056CC;
+}
+
+.view-button {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4CAF50;
+  border-color: rgba(76, 175, 80, 0.3);
+}
+
+.view-button:hover {
+  background: rgba(76, 175, 80, 0.3);
+}
+
+.download-button {
+  background: rgba(255, 152, 0, 0.2);
+  color: #FF9800;
+  border-color: rgba(255, 152, 0, 0.3);
+}
+
+.download-button:hover {
+  background: rgba(255, 152, 0, 0.3);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .enhanced-message-bubble {
+    max-width: 85%;
+    margin: 6px 0;
+  }
+  
+  .enhanced-message-bubble.own {
+    margin-right: 8px;
+  }
+  
+  .enhanced-message-bubble.other {
+    margin-left: 8px;
+  }
+  
+  .message-content {
+    padding: 10px;
+  }
+  
+  .attachment-view {
+    flex-direction: column;
+    gap: 6px;
+  }
+  
+  .attachment-preview {
+    width: 100%;
+    height: 120px;
+    align-self: center;
+  }
+  
+  .attachment-actions {
+    justify-content: center;
+  }
+}
+
+/* Dark theme overrides */
+.enhanced-message-bubble.dark .message-content {
+  background: #2a2a2a;
+  border: 1px solid #444;
+}
+
+.enhanced-message-bubble.dark.own .message-content {
+  background: #007AFF;
+  border-color: #0056CC;
+}
+
+.enhanced-message-bubble.dark .attachment-view {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.enhanced-message-bubble.dark .attachment-icon {
+  background: #1a1a1a;
+}
+
+/* Selection highlighting */
+.enhanced-message-bubble::selection,
+.enhanced-message-bubble *::selection {
+  background: rgba(0, 122, 255, 0.3);
+  color: inherit;
+}
+
+/* Focus states for accessibility */
+.hashtag-chip.clickable:focus,
+.inline-hashtag.clickable:focus,
+.action-button:focus,
+.attachment-preview:focus {
+  outline: 2px solid #007AFF;
+  outline-offset: 2px;
+}
+
+/* Print styles */
+@media print {
+  .enhanced-message-bubble {
+    break-inside: avoid;
+    max-width: 100%;
+  }
+  
+  .action-button,
+  .attachment-actions {
+    display: none;
+  }
+  
+  .inline-hashtag,
+  .hashtag-chip {
+    color: #000 !important;
+    background: transparent !important;
+    border: 1px solid #ccc !important;
+  }
+}
