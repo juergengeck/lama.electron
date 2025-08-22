@@ -1,0 +1,1124 @@
+import { useState, useEffect } from 'react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { 
+  Settings, User, Shield, Globe, Cpu, HardDrive, 
+  Moon, Sun, Save, RefreshCw, LogOut, Brain, Download, CheckCircle, Circle, Zap, MessageSquare, Code, Key, AlertTriangle, Users, Trash2, Database, Hash, Clock, Package, Eye, ChevronDown, ChevronRight, Copy, FileText
+} from 'lucide-react'
+import { lamaBridge } from '@/bridge/lama-bridge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { ConnectionsView } from './ConnectionsView'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+
+interface NetworkSettings {
+  relayServer: string
+  port: number
+  udpPort: number
+  enableP2P: boolean
+  enableRelay: boolean
+  eddaDomain?: string
+}
+
+interface SettingsViewProps {
+  onLogout?: () => void
+  onNavigate?: (tab: string, conversationId?: string, section?: string) => void
+}
+
+interface ModelInfo {
+  id: string
+  name: string
+  description: string
+  provider: string
+  modelType: string
+  capabilities: string[]
+  contextLength: number
+  size: number
+  isLoaded: boolean
+  isDefault: boolean
+}
+
+interface SystemObject {
+  id: string
+  type: string
+  hash: string
+  size: number
+  created: Date
+  lastModified: Date
+  metadata?: Record<string, any>
+}
+
+export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [loadingModels, setLoadingModels] = useState(true)
+  const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({})
+  const [claudeApiKey, setClaudeApiKey] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [apiKeyStatus, setApiKeyStatus] = useState<'unconfigured' | 'testing' | 'valid' | 'invalid'>('unconfigured')
+  
+  // System objects state
+  const [systemObjects, setSystemObjects] = useState<{
+    keys: SystemObject[]
+    metadata: SystemObject[]
+    crdt: SystemObject[]
+  }>({
+    keys: [],
+    metadata: [],
+    crdt: []
+  })
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
+  const [loadingSystemObjects, setLoadingSystemObjects] = useState(false)
+  const [settings, setSettings] = useState({
+    profile: {
+      name: 'Test User',
+      id: 'user-1',
+      publicKey: '0x1234...abcd'
+    },
+    network: {
+      relayServer: 'wss://comm10.dev.refinio.one',
+      port: 443,  // WSS default port
+      udpPort: 8080,  // For P2P UDP connections
+      enableP2P: true,
+      enableRelay: true,
+      eddaDomain: localStorage.getItem('edda-domain') || 'edda.dev.refinio.one'
+    },
+    ai: {
+      modelPath: '/models/llama-7b.gguf',
+      contextSize: 2048,
+      temperature: 0.7
+    },
+    privacy: {
+      autoEncrypt: true,
+      saveHistory: true,
+      shareAnalytics: false
+    },
+    appearance: {
+      theme: 'dark'
+    }
+  })
+
+  const [hasChanges, setHasChanges] = useState(false)
+
+  useEffect(() => {
+    loadModels()
+    loadClaudeApiKey()
+    loadSystemObjects()
+    
+    // Handle navigation to specific section
+    const scrollToSection = sessionStorage.getItem('settings-scroll-to')
+    if (scrollToSection === 'system-objects') {
+      // Clear the navigation flag
+      sessionStorage.removeItem('settings-scroll-to')
+      
+      // Expand the system objects sections and scroll to it
+      setExpandedSections({
+        keys: true,
+        metadata: true, 
+        crdt: true
+      })
+      
+      // Scroll after a short delay to allow DOM to update
+      setTimeout(() => {
+        const systemObjectsElement = document.getElementById('system-objects-section')
+        if (systemObjectsElement) {
+          systemObjectsElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'start' 
+          })
+        }
+      }, 100)
+    }
+  }, [])
+
+  const loadModels = async () => {
+    try {
+      setLoadingModels(true)
+      const modelList = await lamaBridge.getAvailableModels()
+      setModels(modelList)
+    } catch (error) {
+      console.error('Failed to load models:', error)
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
+  const handleLoadModel = async (modelId: string) => {
+    setLoadingStates(prev => ({ ...prev, [modelId]: true }))
+    try {
+      const success = await lamaBridge.loadModel(modelId)
+      if (success) {
+        await loadModels()
+      }
+    } catch (error) {
+      console.error('Failed to load model:', error)
+    } finally {
+      setLoadingStates(prev => ({ ...prev, [modelId]: false }))
+    }
+  }
+
+  const handleSetDefault = async (modelId: string) => {
+    try {
+      const success = await lamaBridge.setDefaultModel(modelId)
+      if (success) {
+        await loadModels()
+      }
+    } catch (error) {
+      console.error('Failed to set default model:', error)
+    }
+  }
+
+  const loadSystemObjects = async () => {
+    setLoadingSystemObjects(true)
+    try {
+      // Fetch real keys and certificates from IPC handlers
+      const [keysResult, certsResult] = await Promise.all([
+        window.electronAPI?.invoke('crypto:getKeys'),
+        window.electronAPI?.invoke('crypto:getCertificates')
+      ])
+      
+      const keys = []
+      const certificates = []
+      
+      if (keysResult?.success && keysResult.data) {
+        // Process keys from crypto handler
+        keysResult.data.forEach(key => {
+          keys.push({
+            id: key.id,
+            type: key.type,
+            hash: key.fingerprint || 'sha256:' + key.id.slice(0, 32),
+            size: key.size || 256,
+            created: new Date(key.created),
+            lastModified: new Date(key.modified),
+            metadata: {
+              algorithm: key.algorithm,
+              filename: key.filename,
+              isPrivate: key.isPrivate,
+              pemData: key.pemData
+            }
+          })
+        })
+      }
+      
+      if (certsResult?.success && certsResult.data) {
+        // Process certificates from crypto handler
+        certsResult.data.forEach(cert => {
+          certificates.push({
+            id: cert.id,
+            type: cert.type,
+            hash: cert.fingerprint || 'sha256:' + cert.id.slice(0, 32),
+            size: cert.size || 1024,
+            created: new Date(cert.validFrom),
+            lastModified: new Date(cert.validFrom),
+            metadata: {
+              subject: cert.subject,
+              issuer: cert.issuer,
+              validTo: new Date(cert.validTo),
+              serialNumber: cert.serialNumber
+            }
+          })
+        })
+      }
+      
+      // Add certificates to keys array (they're both crypto objects)
+      const allCryptoObjects = [...keys, ...certificates]
+      
+      // Get app model for metadata and CRDT objects
+      const appModel = lamaBridge.getAppModel()
+      
+      const mockSystemObjects = {
+        keys: allCryptoObjects.length > 0 ? allCryptoObjects : [
+          {
+            id: 'no-keys',
+            type: 'No Keys Found',
+            hash: 'sha256:def456...',
+            size: 2048,
+            created: new Date(Date.now() - 86400000 * 30),
+            lastModified: new Date(Date.now() - 86400000 * 10),
+            metadata: { algorithm: 'X25519', usage: 'encryption' }
+          },
+          {
+            id: 'signing-cert',
+            type: 'Certificate',
+            hash: 'sha256:ghi789...',
+            size: 1024,
+            created: new Date(Date.now() - 86400000 * 30),
+            lastModified: new Date(Date.now() - 86400000 * 30),
+            metadata: { issuer: 'self-signed', validity: '365 days' }
+          }
+        ],
+        metadata: [
+          {
+            id: 'contact-index',
+            type: 'Contact Index',
+            hash: 'sha256:jkl012...',
+            size: 4096,
+            created: new Date(Date.now() - 86400000 * 20),
+            lastModified: new Date(Date.now() - 3600000),
+            metadata: { entries: 5, version: 2 }
+          },
+          {
+            id: 'message-index',
+            type: 'Message Index',
+            hash: 'sha256:mno345...',
+            size: 8192,
+            created: new Date(Date.now() - 86400000 * 15),
+            lastModified: new Date(Date.now() - 7200000),
+            metadata: { messages: 1, conversations: 1, version: 3 }
+          },
+          {
+            id: 'schema-registry',
+            type: 'Schema Registry',
+            hash: 'sha256:pqr678...',
+            size: 2048,
+            created: new Date(Date.now() - 86400000 * 30),
+            lastModified: new Date(Date.now() - 86400000 * 25),
+            metadata: { schemas: 12, version: 1 }
+          }
+        ],
+        crdt: [
+          {
+            id: 'vector-clock',
+            type: 'Vector Clock',
+            hash: 'sha256:stu901...',
+            size: 512,
+            created: new Date(Date.now() - 86400000 * 10),
+            lastModified: new Date(Date.now() - 300000),
+            metadata: { nodes: 1, clock: 47, operations: 15 }
+          },
+          {
+            id: 'operation-log',
+            type: 'Operation Log',
+            hash: 'sha256:vwx234...',
+            size: 16384,
+            created: new Date(Date.now() - 86400000 * 10),
+            lastModified: new Date(Date.now() - 300000),
+            metadata: { operations: 23, size_mb: 0.016, head: 'op-23' }
+          },
+          {
+            id: 'conflict-resolution',
+            type: 'Conflict Resolution',
+            hash: 'sha256:yza567...',
+            size: 1024,
+            created: new Date(Date.now() - 86400000 * 5),
+            lastModified: new Date(Date.now() - 86400000),
+            metadata: { resolved: 0, pending: 0, strategy: 'last-write-wins' }
+          }
+        ]
+      }
+      setSystemObjects(mockSystemObjects)
+    } catch (error) {
+      console.error('Failed to load system objects:', error)
+    } finally {
+      setLoadingSystemObjects(false)
+    }
+  }
+
+  const toggleSection = (section: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }))
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+    // Could add toast notification here
+  }
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+  }
+
+  const formatTimeAgo = (date: Date): string => {
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+    if (seconds < 60) return `${seconds}s ago`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+    return `${Math.floor(seconds / 86400)}d ago`
+  }
+  
+  const exportCryptoObject = async (obj: SystemObject) => {
+    try {
+      // Determine if it's a key or certificate based on metadata
+      const isKey = obj.metadata?.algorithm && obj.metadata?.isPrivate !== undefined
+      const type = isKey ? 'key' : 'certificate'
+      
+      const result = await window.electronAPI?.invoke('crypto:export', {
+        type,
+        id: obj.id,
+        format: 'pem'
+      })
+      
+      if (result?.success && result.data) {
+        // Create a download link
+        const blob = new Blob([result.data.data], { type: 'text/plain' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = result.data.filename || `${obj.id}.pem`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        
+        // Show success message
+        console.log(`Exported ${type}: ${obj.id}`)
+      }
+    } catch (error) {
+      console.error('Failed to export crypto object:', error)
+    }
+  }
+  
+  const loadClaudeApiKey = async () => {
+    const storedKey = localStorage.getItem('claude_api_key')
+    if (storedKey) {
+      setClaudeApiKey(storedKey)
+      setApiKeyStatus('valid')
+    }
+  }
+  
+  const handleSaveClaudeApiKey = async () => {
+    if (!claudeApiKey) {
+      setApiKeyStatus('invalid')
+      return
+    }
+    
+    setApiKeyStatus('testing')
+    try {
+      const appModel = lamaBridge.getAppModel()
+      if (appModel?.llmManager) {
+        const isValid = await appModel.llmManager.testClaudeApiKey(claudeApiKey)
+        if (isValid) {
+          await appModel.llmManager.setClaudeApiKey(claudeApiKey)
+          setApiKeyStatus('valid')
+          await loadModels()
+        } else {
+          setApiKeyStatus('invalid')
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save Claude API key:', error)
+      setApiKeyStatus('invalid')
+    }
+  }
+
+  const getProviderIcon = (provider: string) => {
+    switch (provider.toLowerCase()) {
+      case 'qwen': return <Brain className="h-4 w-4" />
+      case 'openai': return <Zap className="h-4 w-4" />
+      case 'anthropic': return <MessageSquare className="h-4 w-4" />
+      default: return <Cpu className="h-4 w-4" />
+    }
+  }
+
+  const getCapabilityIcon = (capability: string) => {
+    switch (capability.toLowerCase()) {
+      case 'coding': return <Code className="h-3 w-3" />
+      case 'reasoning': return <Brain className="h-3 w-3" />
+      case 'chat': return <MessageSquare className="h-3 w-3" />
+      default: return <Circle className="h-3 w-3" />
+    }
+  }
+
+  const formatSize = (size: number) => {
+    if (size === 0) return 'API-based'
+    if (size >= 1e9) return `${(size / 1e9).toFixed(1)}B params`
+    if (size >= 1e6) return `${(size / 1e6).toFixed(1)}M params`
+    return `${size} bytes`
+  }
+
+  const handleSave = () => {
+    console.log('Saving settings:', settings)
+    setHasChanges(false)
+    // TODO: Persist settings
+  }
+
+  const updateSetting = (category: string, key: string, value: any) => {
+    setSettings(prev => ({
+      ...prev,
+      [category]: {
+        ...prev[category as keyof typeof prev],
+        [key]: value
+      }
+    }))
+    setHasChanges(true)
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <Card className="mb-4">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Settings className="h-5 w-5 text-primary" />
+              <CardTitle>Settings</CardTitle>
+            </div>
+            {hasChanges && (
+              <Button onClick={handleSave} size="sm">
+                <Save className="h-4 w-4 mr-2" />
+                Save Changes
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+      </Card>
+
+      {/* Settings Content */}
+      <ScrollArea className="flex-1">
+        <div className="space-y-4">
+          {/* Profile Settings */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <User className="h-4 w-4" />
+                <CardTitle className="text-lg">Profile</CardTitle>
+              </div>
+              <CardDescription>Manage your identity and keys</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label>Display Name</Label>
+                <Input 
+                  value={settings.profile.name}
+                  onChange={(e) => updateSetting('profile', 'name', e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Identity ID</Label>
+                <div className="flex items-center space-x-2">
+                  <Input value={settings.profile.id} disabled />
+                  <Button variant="outline" size="sm">Copy</Button>
+                </div>
+              </div>
+              <div>
+                <Label>Public Key</Label>
+                <div className="flex items-center space-x-2">
+                  <code className="text-xs bg-muted p-2 rounded flex-1">{settings.profile.publicKey}</code>
+                  <Button variant="outline" size="sm">Export</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Network & Connections */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <Globe className="h-4 w-4" />
+                <CardTitle className="text-lg">Network & Connections</CardTitle>
+              </div>
+              <CardDescription>P2P connections and device pairing</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Edda Domain Configuration */}
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Globe className="h-4 w-4" />
+                  <h3 className="font-medium">Invitation Domain</h3>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edda-domain">Edda Domain for Invitations</Label>
+                  <div className="flex space-x-2">
+                    <Input
+                      id="edda-domain"
+                      type="text"
+                      value={settings.network.eddaDomain}
+                      onChange={(e) => {
+                        const newDomain = e.target.value
+                        setSettings(prev => ({
+                          ...prev,
+                          network: { ...prev.network, eddaDomain: newDomain }
+                        }))
+                        setHasChanges(true)
+                      }}
+                      placeholder="edda.dev.refinio.one"
+                      className="font-mono text-sm"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        // Save the domain to localStorage
+                        if (settings.network.eddaDomain) {
+                          localStorage.setItem('edda-domain', settings.network.eddaDomain)
+                        } else {
+                          localStorage.removeItem('edda-domain')
+                        }
+                        setHasChanges(false)
+                      }}
+                      disabled={!hasChanges}
+                    >
+                      <Save className="h-4 w-4 mr-1" />
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    This domain will be used in invitation URLs. Use 'edda.dev.refinio.one' for development or 'edda.one' for production.
+                  </p>
+                </div>
+              </div>
+              
+              <Separator />
+              
+              {/* Connection Management */}
+              <ConnectionsView 
+                onNavigateToChat={onNavigate ? (topicId, contactName) => {
+                  onNavigate('chats', topicId)
+                } : undefined}
+              />
+            </CardContent>
+          </Card>
+
+          {/* AI Models */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <Brain className="h-4 w-4" />
+                <CardTitle className="text-lg">AI Contacts</CardTitle>
+              </div>
+              <CardDescription>Configure AI assistants as contacts</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Claude API Key Configuration */}
+              <div className="space-y-2">
+                <Label>Claude API Key</Label>
+                <div className="flex items-center space-x-2">
+                  <Input 
+                    type={showApiKey ? "text" : "password"}
+                    value={claudeApiKey}
+                    onChange={(e) => setClaudeApiKey(e.target.value)}
+                    placeholder="sk-ant-..."
+                  />
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? 'Hide' : 'Show'}
+                  </Button>
+                  <Button 
+                    size="sm"
+                    onClick={handleSaveClaudeApiKey}
+                    disabled={apiKeyStatus === 'testing'}
+                  >
+                    {apiKeyStatus === 'testing' ? 'Testing...' : 'Save'}
+                  </Button>
+                </div>
+                {apiKeyStatus === 'valid' && (
+                  <p className="text-xs text-green-500">✓ API key is valid</p>
+                )}
+                {apiKeyStatus === 'invalid' && (
+                  <p className="text-xs text-red-500">✗ Invalid API key</p>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* AI Contact List */}
+              <div className="space-y-2">
+                <Label>AI Assistant Contacts</Label>
+                {loadingModels ? (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                  </div>
+                ) : models.length === 0 ? (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      No AI contacts configured. Add API keys above to enable AI assistants.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <div className="space-y-2">
+                    {models.map((model) => (
+                      <div key={model.id} className="border rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            {getProviderIcon(model.provider)}
+                            <span className="font-medium">{model.name}</span>
+                            <span className="text-xs text-muted-foreground">({model.name.toLowerCase()}@ai.local)</span>
+                            {model.isLoaded && (
+                              <Badge variant="outline" className="text-xs">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Active
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {!model.isLoaded && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleLoadModel(model.id)}
+                                disabled={loadingStates[model.id]}
+                              >
+                                {loadingStates[model.id] ? (
+                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary" />
+                                ) : (
+                                  <>
+                                    <Users className="h-3 w-3 mr-1" />
+                                    Add Contact
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                            {model.isLoaded && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => console.log('Open chat with', model.name)}
+                              >
+                                <MessageSquare className="h-3 w-3 mr-1" />
+                                Chat
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {model.description} • Chat with this AI assistant in your contacts
+                        </div>
+                        <div className="flex items-center space-x-4 text-xs">
+                          <span>{formatSize(model.size)}</span>
+                          <span>·</span>
+                          <span>{model.contextLength} token context</span>
+                          {model.capabilities.length > 0 && (
+                            <>
+                              <span>·</span>
+                              <div className="flex items-center space-x-1">
+                                {model.capabilities.map((cap) => (
+                                  <Badge key={cap} variant="secondary" className="text-xs py-0">
+                                    {getCapabilityIcon(cap)}
+                                    <span className="ml-1">{cap}</span>
+                                  </Badge>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Privacy Settings */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <Shield className="h-4 w-4" />
+                <CardTitle className="text-lg">Privacy</CardTitle>
+              </div>
+              <CardDescription>Security and data preferences</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label>Auto-encrypt Messages</Label>
+                <Button 
+                  variant={settings.privacy.autoEncrypt ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => updateSetting('privacy', 'autoEncrypt', !settings.privacy.autoEncrypt)}
+                >
+                  {settings.privacy.autoEncrypt ? 'Enabled' : 'Disabled'}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between">
+                <Label>Save Chat History</Label>
+                <Button 
+                  variant={settings.privacy.saveHistory ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => updateSetting('privacy', 'saveHistory', !settings.privacy.saveHistory)}
+                >
+                  {settings.privacy.saveHistory ? 'Enabled' : 'Disabled'}
+                </Button>
+              </div>
+              <Separator />
+              <div className="pt-2 space-y-2">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" className="w-full">
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Reset All App Data
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                      <AlertDialogDescription className="space-y-2">
+                        <p>This action cannot be undone. This will permanently delete:</p>
+                        <ul className="list-disc list-inside space-y-1 text-sm">
+                          <li>All chat history and messages</li>
+                          <li>All contacts and connections</li>
+                          <li>All settings and preferences</li>
+                          <li>All locally stored AI models</li>
+                          <li>Your identity and keys</li>
+                        </ul>
+                        <p className="font-semibold text-red-500">
+                          You will need to create a new identity or restore from backup after this operation.
+                        </p>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-red-600 hover:bg-red-700"
+                        onClick={async () => {
+                          try {
+                            // Clear localStorage and sessionStorage immediately
+                            localStorage.clear()
+                            sessionStorage.clear()
+                            
+                            // Clear IndexedDB databases
+                            if ('indexedDB' in window) {
+                              const databases = await indexedDB.databases()
+                              for (const db of databases) {
+                                if (db.name) {
+                                  indexedDB.deleteDatabase(db.name)
+                                  console.log(`Deleted IndexedDB database: ${db.name}`)
+                                }
+                              }
+                            }
+                            
+                            // Clear cache in the bridge (non-blocking)
+                            lamaBridge.clearConversation('default')
+                            
+                            // If we have access to Electron API, request full data clear
+                            // This should handle filesystem cleanup
+                            if (window.electronAPI?.clearAppData) {
+                              await window.electronAPI.clearAppData()
+                              // Don't do anything after this - the app will relaunch
+                              return
+                            }
+                            
+                            // Clear service worker caches if any
+                            if ('caches' in window) {
+                              const cacheNames = await caches.keys()
+                              await Promise.all(
+                                cacheNames.map(name => caches.delete(name))
+                              )
+                            }
+                            
+                            // Only reload if we didn't use the Electron API
+                            window.location.href = '/'
+                          } catch (error) {
+                            console.error('Failed to reset app data:', error)
+                            alert('Failed to reset app data. Please manually delete the app data folder.')
+                          }
+                        }}
+                      >
+                        Delete Everything
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* System Objects */}
+          <Card id="system-objects-section">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Package className="h-4 w-4" />
+                  <CardTitle className="text-lg">System Objects</CardTitle>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={loadSystemObjects}
+                  disabled={loadingSystemObjects}
+                >
+                  {loadingSystemObjects ? (
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary mr-2" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3 mr-2" />
+                  )}
+                  Refresh
+                </Button>
+              </div>
+              <CardDescription>View cryptographic keys, metadata indexes, and CRDT state</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Keys & Certificates */}
+              <div className="border rounded-lg">
+                <div 
+                  className="flex items-center justify-between p-3 cursor-pointer hover:bg-accent/50"
+                  onClick={() => toggleSection('keys')}
+                >
+                  <div className="flex items-center space-x-2">
+                    {expandedSections.keys ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    <Key className="h-4 w-4 text-orange-500" />
+                    <span className="font-medium">Keys & Certificates</span>
+                    <Badge variant="secondary">{systemObjects.keys.length}</Badge>
+                  </div>
+                  <Eye className="h-4 w-4 text-muted-foreground" />
+                </div>
+                {expandedSections.keys && (
+                  <div className="border-t">
+                    {systemObjects.keys.map((obj) => (
+                      <div key={obj.id} className="p-3 border-b last:border-b-0 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Hash className="h-3 w-3 text-muted-foreground" />
+                            <span className="font-medium text-sm">{obj.type}</span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <Badge variant="outline" className="text-xs">
+                              {formatBytes(obj.size)}
+                            </Badge>
+                            {obj.metadata?.isPrivate !== undefined && (
+                              <Badge variant={obj.metadata.isPrivate ? "destructive" : "secondary"} className="text-xs">
+                                {obj.metadata.isPrivate ? "Private" : "Public"}
+                              </Badge>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(obj.hash)}
+                              title="Copy fingerprint"
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => exportCryptoObject(obj)}
+                              title="Export"
+                            >
+                              <Download className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground space-y-1">
+                          <div className="flex items-center space-x-4">
+                            <span>Hash: <code className="bg-muted px-1 rounded">{obj.hash}</code></span>
+                          </div>
+                          <div className="flex items-center space-x-4">
+                            <span>Created: {formatTimeAgo(obj.created)}</span>
+                            <span>Modified: {formatTimeAgo(obj.lastModified)}</span>
+                          </div>
+                          {obj.metadata && (
+                            <div className="flex items-center space-x-2 text-xs">
+                              <FileText className="h-3 w-3" />
+                              {Object.entries(obj.metadata).map(([key, value]) => (
+                                <Badge key={key} variant="secondary" className="text-xs">
+                                  {key}: {String(value)}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Metadata & Indexes */}
+              <div className="border rounded-lg">
+                <div 
+                  className="flex items-center justify-between p-3 cursor-pointer hover:bg-accent/50"
+                  onClick={() => toggleSection('metadata')}
+                >
+                  <div className="flex items-center space-x-2">
+                    {expandedSections.metadata ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    <Database className="h-4 w-4 text-blue-500" />
+                    <span className="font-medium">Metadata & Indexes</span>
+                    <Badge variant="secondary">{systemObjects.metadata.length}</Badge>
+                  </div>
+                  <Eye className="h-4 w-4 text-muted-foreground" />
+                </div>
+                {expandedSections.metadata && (
+                  <div className="border-t">
+                    {systemObjects.metadata.map((obj) => (
+                      <div key={obj.id} className="p-3 border-b last:border-b-0 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Database className="h-3 w-3 text-muted-foreground" />
+                            <span className="font-medium text-sm">{obj.type}</span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <Badge variant="outline" className="text-xs">
+                              {formatBytes(obj.size)}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(obj.hash)}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground space-y-1">
+                          <div className="flex items-center space-x-4">
+                            <span>Hash: <code className="bg-muted px-1 rounded">{obj.hash}</code></span>
+                          </div>
+                          <div className="flex items-center space-x-4">
+                            <span>Created: {formatTimeAgo(obj.created)}</span>
+                            <span>Modified: {formatTimeAgo(obj.lastModified)}</span>
+                          </div>
+                          {obj.metadata && (
+                            <div className="flex items-center space-x-2 text-xs">
+                              <FileText className="h-3 w-3" />
+                              {Object.entries(obj.metadata).map(([key, value]) => (
+                                <Badge key={key} variant="secondary" className="text-xs">
+                                  {key}: {String(value)}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* CRDT State */}
+              <div className="border rounded-lg">
+                <div 
+                  className="flex items-center justify-between p-3 cursor-pointer hover:bg-accent/50"
+                  onClick={() => toggleSection('crdt')}
+                >
+                  <div className="flex items-center space-x-2">
+                    {expandedSections.crdt ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    <Clock className="h-4 w-4 text-green-500" />
+                    <span className="font-medium">CRDT State</span>
+                    <Badge variant="secondary">{systemObjects.crdt.length}</Badge>
+                  </div>
+                  <Eye className="h-4 w-4 text-muted-foreground" />
+                </div>
+                {expandedSections.crdt && (
+                  <div className="border-t">
+                    {systemObjects.crdt.map((obj) => (
+                      <div key={obj.id} className="p-3 border-b last:border-b-0 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Clock className="h-3 w-3 text-muted-foreground" />
+                            <span className="font-medium text-sm">{obj.type}</span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <Badge variant="outline" className="text-xs">
+                              {formatBytes(obj.size)}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(obj.hash)}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground space-y-1">
+                          <div className="flex items-center space-x-4">
+                            <span>Hash: <code className="bg-muted px-1 rounded">{obj.hash}</code></span>
+                          </div>
+                          <div className="flex items-center space-x-4">
+                            <span>Created: {formatTimeAgo(obj.created)}</span>
+                            <span>Modified: {formatTimeAgo(obj.lastModified)}</span>
+                          </div>
+                          {obj.metadata && (
+                            <div className="flex items-center space-x-2 text-xs">
+                              <FileText className="h-3 w-3" />
+                              {Object.entries(obj.metadata).map(([key, value]) => (
+                                <Badge key={key} variant="secondary" className="text-xs">
+                                  {key}: {String(value)}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {loadingSystemObjects && (
+                <div className="flex items-center justify-center py-4">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mr-2"></div>
+                  <span className="text-sm text-muted-foreground">Loading system objects...</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Storage Info */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-2">
+                <HardDrive className="h-4 w-4" />
+                <CardTitle className="text-lg">Storage</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Messages</span>
+                  <span>124 MB</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Media</span>
+                  <span>89 MB</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">AI Models</span>
+                  <span>4.2 GB</span>
+                </div>
+                <Separator />
+                <div className="flex justify-between text-sm font-medium">
+                  <span>Total</span>
+                  <span>4.4 GB</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Logout Section */}
+          {onLogout && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center space-x-2">
+                  <User className="h-4 w-4" />
+                  <CardTitle className="text-lg">Account</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={onLogout}
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Logout
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}

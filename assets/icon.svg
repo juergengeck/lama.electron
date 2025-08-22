@@ -1,0 +1,51 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="128" fill="#0a0a0a"/>
+  
+  <!-- Subtle circle background -->
+  <circle cx="512" cy="512" r="450" fill="#1a1a1a" opacity="0.8"/>
+  <circle cx="512" cy="512" r="450" stroke="#2a2a2a" stroke-width="2" fill="none"/>
+  
+  <!-- LAMA Letters -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" 
+     font-size="320" 
+     font-weight="bold" 
+     text-anchor="middle">
+    
+    <!-- Shadows -->
+    <text x="316" y="580" fill="black" opacity="0.3">L</text>
+    <text x="456" y="580" fill="black" opacity="0.3">A</text>
+    <text x="596" y="580" fill="black" opacity="0.3">M</text>
+    <text x="736" y="580" fill="black" opacity="0.3">A</text>
+    
+    <!-- Letters with colors -->
+    <text x="312" y="576" fill="#ef4444">L</text>
+    <text x="452" y="576" fill="#eab308">A</text>
+    <text x="592" y="576" fill="#22c55e">M</text>
+    <text x="732" y="576" fill="#a855f7">A</text>
+  </g>
+  
+  <!-- Subtle glow effect -->
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Apply glow to letters -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" 
+     font-size="320" 
+     font-weight="bold" 
+     text-anchor="middle"
+     filter="url(#glow)"
+     opacity="0.3">
+    <text x="312" y="576" fill="#ef4444">L</text>
+    <text x="452" y="576" fill="#eab308">A</text>
+    <text x="592" y="576" fill="#22c55e">M</text>
+    <text x="732" y="576" fill="#a855f7">A</text>
+  </g>
+</svg>

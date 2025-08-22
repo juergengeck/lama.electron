@@ -1,0 +1,26 @@
+{
+  "name": "lama",
+  "version": "1.0.0",
+  "private": true,
+  "main": "lama-electron-shadcn.js",
+  "scripts": {
+    "electron": "NODE_ENV=development electron lama-electron-shadcn.js",
+    "dev": "cd electron-ui && npm run dev",
+    "build": "cd electron-ui && npm run build",
+    "build:ui": "npm run build --prefix electron-ui",
+    "install:all": "npm install && npm install --prefix electron-ui",
+    "generate-icons": "node assets/generate-icons-from-svg.js",
+    "update-vendor": "node scripts/update-vendor-packages.js",
+    "postinstall": "cd electron-ui && npm install"
+  },
+  "devDependencies": {
+    "canvas": "^3.2.0",
+    "electron": "^32.0.1",
+    "sharp": "^0.34.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.3",
+    "@refinio/one.core": "file:electron-ui/node_modules/@refinio/one.core",
+    "node-fetch": "^2.7.0"
+  }
+}

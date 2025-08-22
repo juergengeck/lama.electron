@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ONE.CORE and ONE.Models installed packages
+# These are installed from vendor/*.tgz files
+**/node_modules/@refinio/one.core/
+**/node_modules/@refinio/one.models/
+electron-ui/node_modules/@refinio/
+
+# Build outputs
+dist/
+build/
+*.log
+
+# Development
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Electron
+electron-builder.yml
+out/
+
+# Test coverage
+coverage/
+*.lcov
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# ONE.CORE runtime data
+one-data-node/
+one-data-browser/
+
+# Keep vendor .tgz files in git
+!electron-ui/vendor/*.tgz
+
+# Submodules / External repos (these have their own git repos)
+lama/
+one.core/
+one.leute/
+one.leute.replicant/
+one.models/
+packages/
+refinio.api/
+refinio.cli/
+vendor/
