@@ -279,18 +279,60 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
     // Initial fetch
     fetchIOMData()
 
-    // Set up auto-refresh
     let interval: NodeJS.Timeout | undefined
+    let currentDelay = 1000 // Start with 1 second
+    let lastDataHash = ''
+    let consecutiveNoChanges = 0
+    
+    const smartFetch = async () => {
+      const beforeHash = JSON.stringify({ instances, dataStats, replicationEvents })
+      await fetchIOMData()
+      const afterHash = JSON.stringify({ instances, dataStats, replicationEvents })
+      
+      if (beforeHash === afterHash) {
+        consecutiveNoChanges++
+        if (consecutiveNoChanges >= 2) {
+          currentDelay = Math.min(currentDelay * 2, 30000)
+        }
+      } else {
+        consecutiveNoChanges = 0
+        currentDelay = 1000
+      }
+      lastDataHash = afterHash
+    }
+
+    const scheduleNextFetch = () => {
+      if (autoRefresh) {
+        interval = setTimeout(() => {
+          smartFetch().then(() => {
+            scheduleNextFetch()
+          }).catch((error) => {
+            console.error('[DataDashboard] Smart fetch error:', error)
+            currentDelay = Math.min(currentDelay * 1.5, 30000)
+            scheduleNextFetch()
+          })
+        }, currentDelay)
+      }
+    }
+
     if (autoRefresh) {
-      interval = setInterval(() => {
-        fetchIOMData()
-      }, 5000)
+      scheduleNextFetch()
     }
     
     // Listen for real-time replication events from main process
     const handleReplicationEvent = (event: any) => {
       if (event.detail) {
         setReplicationEvents(prev => [event.detail, ...prev].slice(0, 100))
+        consecutiveNoChanges = 0
+        currentDelay = 1000
+      }
+    }
+    
+    const handleUserInteraction = () => {
+      consecutiveNoChanges = 0
+      currentDelay = 1000
+      if (autoRefresh && !interval) {
+        scheduleNextFetch()
       }
     }
     
@@ -298,13 +340,22 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       window.addEventListener('iom:replicationEvent', handleReplicationEvent)
     }
     
+    // Listen for user interactions to reset polling speed
+    document.addEventListener('click', handleUserInteraction)
+    document.addEventListener('keydown', handleUserInteraction)
+    
     return () => {
-      if (interval) clearInterval(interval)
+      if (interval) {
+        clearTimeout(interval)
+        interval = undefined
+      }
       if (window.electronAPI) {
         window.removeEventListener('iom:replicationEvent', handleReplicationEvent)
       }
+      document.removeEventListener('click', handleUserInteraction)
+      document.removeEventListener('keydown', handleUserInteraction)
     }
-  }, [autoRefresh])
+  }, [autoRefresh, instances, dataStats, replicationEvents])
 
   const getInstanceIcon = (type: IOMInstance['type']) => {
     switch (type) {
@@ -398,6 +449,15 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
           )}
         </div>
         <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchIOMData()}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh Now
+          </Button>
           <Button
             variant={autoRefresh ? "default" : "outline"}
             size="sm"
