@@ -19,7 +19,8 @@ async function loadBrowserPlatform() {
     
     // With context isolation, the renderer is a clean browser environment
     // No Node.js globals to worry about
-    await import('@refinio/one.core/lib/system/system/load-browser.js')
+    // Use standard ONE.core platform detection - no explicit loading needed
+    console.log('[PLATFORM-LOADER] Using standard ONE.core platform abstraction')
     
     window.ONE_CORE_PLATFORM_LOADED = true
     console.log('✅ PLATFORM-LOADER: Browser platform loaded successfully')

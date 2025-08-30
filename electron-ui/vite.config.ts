@@ -31,7 +31,12 @@ export default defineConfig({
       '@react-native-community',
       '@react-native-async-storage',
       '@react-native-clipboard',
-      '@react-native-picker'
+      '@react-native-picker',
+      'expo',
+      'expo-crypto',
+      'expo-file-system',
+      'expo-secure-store',
+      '@react-native-async-storage/async-storage'
     ],
     esbuildOptions: {
       define: {
@@ -40,10 +45,17 @@ export default defineConfig({
     }
   },
   build: {
-    target: 'electron-renderer',
+    target: 'esnext',
     outDir: 'dist',
     sourcemap: true,
     rollupOptions: {
+      external: [
+        'react-native',
+        'expo-crypto',
+        'expo-file-system', 
+        'expo-secure-store',
+        '@react-native-async-storage/async-storage'
+      ],
       output: {
         format: 'cjs',
         manualChunks: {

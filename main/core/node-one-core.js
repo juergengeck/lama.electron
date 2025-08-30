@@ -83,14 +83,14 @@ class NodeOneCore {
    * Initialize ONE.core instance with browser credentials
    */
   async initOneCoreInstance(username, password, directory) {
-    // MUST set base directory BEFORE any other imports
+    // Load Node.js platform FIRST - before any other ONE.core imports  
+    // Use standard ONE.core platform detection and loading
+    
+    // MUST set base directory BEFORE instance initialization
     const { setBaseDirOrName } = await import('../../node_modules/@refinio/one.core/lib/system/storage-base.js')
     setBaseDirOrName(directory)
     
-    // Load Node.js platform after directory is set
-    await import('../../node_modules/@refinio/one.core/lib/system/system/load-nodejs.js')
-    
-    // Import required modules
+    // Import required modules AFTER platform is loaded
     const { initInstance, closeInstance, getInstanceOwnerIdHash } = await import('../../node_modules/@refinio/one.core/lib/instance.js')
     const { SettingsStore } = await import('../../node_modules/@refinio/one.core/lib/system/settings-store.js')
     const { createRandomString } = await import('../../node_modules/@refinio/one.core/lib/system/crypto-helpers.js')
