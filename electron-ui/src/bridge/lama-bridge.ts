@@ -3,7 +3,6 @@
 import { AppModel } from '../models/AppModel'
 import type { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks'
 import type { Person } from '@refinio/one.core/lib/recipes'
-import { realBrowserInstance } from '@/services/real-browser-instance'
 import { llmProxy } from '../services/llm-proxy'
 
 export interface LamaAPI {
@@ -98,6 +97,16 @@ class LamaBridge implements LamaAPI {
       })
     }
     
+    // Listen for CHUM message events via window events
+    if (typeof window !== 'undefined') {
+      window.addEventListener('lama:messageReceived', ((event: CustomEvent) => {
+        console.log('[LamaBridge] Message received via CHUM:', event.detail)
+        this.emit('message:updated', { 
+          conversationId: event.detail.conversationId 
+        })
+      }) as EventListener)
+    }
+    
     if (model.transportManager) {
       // Listen for connection events
       model.transportManager.onConnectionEstablished.listen((connection, transport) => {
@@ -144,13 +153,13 @@ class LamaBridge implements LamaAPI {
     }
   }
   
-  async createIdentity(name: string, password: string): Promise<string> {
+  async createIdentity(name: string, _password: string): Promise<string> {
     console.log('Creating identity:', name)
     // Mock implementation
     return `id-${Date.now()}`
   }
   
-  async login(id: string, password: string): Promise<boolean> {
+  async login(id: string, _password: string): Promise<boolean> {
     console.log('Logging in:', id)
     return true
   }
@@ -167,7 +176,7 @@ class LamaBridge implements LamaAPI {
     try {
       const profile = await this.appModel.getCurrentUserProfile()
       return {
-        id: profile.id,
+        id: profile.id || 'unknown',
         name: profile.name
       }
     } catch (err) {
@@ -214,22 +223,84 @@ class LamaBridge implements LamaAPI {
           const sendStart = performance.now()
           
           // TopicRoom.sendMessage signature: (message, author, channelOwner)
-          // For person-to-person topics, determine which channel to use (like one.leute does)
+          // For person-to-person topics, determine which channel to use (EXACTLY like one.leute does)
           if (this.isPersonToPersonTopic(conversationId)) {
             console.log('[LamaBridge] Sending message in person-to-person topic')
             
-            // Determine channel owner like one.leute does
+            // Follow one.leute's exact pattern from useChatMessages.ts
             let channelOwner: any = undefined
             if (this.appModel.channelManager && this.appModel.leuteModel) {
+              const myPersonId = await this.appModel.leuteModel.myMainIdentity()
               const channelInfos = await this.appModel.channelManager.getMatchingChannelInfos({
                 channelId: conversationId
               })
-              const myPersonId = await this.appModel.leuteModel.myMainIdentity()
               
-              // Priority (from one.leute):
-              // 1. myPersonId (use my channel if it exists)
-              // 2. any other owner
-              // 3. undefined (no owner)
+              // If no channels exist, create one NOW before sending
+              if (!channelInfos || channelInfos.length === 0) {
+                console.log('[LamaBridge] No channels found, creating channel before sending')
+                try {
+                  await this.appModel.channelManager.createChannel(conversationId, myPersonId)
+                  channelOwner = myPersonId
+                  console.log('[LamaBridge] Created channel with owner:', myPersonId)
+                } catch (err) {
+                  console.error('[LamaBridge] Failed to create channel:', err)
+                  throw new Error('Cannot send message - failed to create channel')
+                }
+              } else {
+                // Determine owner priority (from one.leute/src/root/chat/hooks/useChatMessages.ts):
+                // 1. myPersonId  
+                // 2. any not undefined
+                // 3. undefined, meaning that there is no owner
+                for (const channelInfo of channelInfos) {
+                  if (channelInfo.owner === myPersonId) {
+                    channelOwner = myPersonId
+                    break
+                  } else if (channelOwner === undefined) {
+                    channelOwner = channelInfo.owner
+                  }
+                }
+                console.log(`[LamaBridge] Channel owner determined: ${channelOwner || 'undefined'}`)
+              }
+            }
+            
+            // Send message based on whether it has attachments
+            // Following one.leute/src/root/chat/chatId/Chat.tsx pattern
+            if (attachments && attachments.length > 0) {
+              console.log(`[LamaBridge] Sending message with ${attachments.length} attachments`)
+              
+              const attachmentHashes = attachments.map(att => att.hash)
+              
+              // From Chat.tsx line 271-274: undefined author means 'use my main identity'
+              // channelOwner ?? null handles the case where no owner was found
+              await topicRoom.sendMessageWithAttachmentAsHash(
+                content, 
+                attachmentHashes, 
+                undefined,  // author: undefined means 'use my main identity'
+                channelOwner ?? null  // channelOwner or null if no owner found
+              )
+            } else {
+              // From Chat.tsx line 215: undefined author means 'use my main identity'
+              // channelOwner ?? null handles the case where no owner was found
+              await topicRoom.sendMessage(
+                content,
+                undefined,  // author: undefined means 'use my main identity'  
+                channelOwner ?? null  // channelOwner or null if no owner found
+              )
+            }
+            
+            // Grant access rights after sending
+            await this.grantAccessForPersonToPersonTopic(conversationId)
+          } else {
+            // For group topics, follow the same pattern as one.leute
+            // Group topics typically have a single owner (the creator)
+            let channelOwner: any = undefined
+            if (this.appModel.channelManager) {
+              const channelInfos = await this.appModel.channelManager.getMatchingChannelInfos({
+                channelId: conversationId
+              })
+              const myPersonId = await this.appModel.leuteModel?.myMainIdentity?.()
+              
+              // Same owner determination logic
               for (const channelInfo of channelInfos) {
                 if (channelInfo.owner === myPersonId) {
                   channelOwner = myPersonId
@@ -238,55 +309,33 @@ class LamaBridge implements LamaAPI {
                   channelOwner = channelInfo.owner
                 }
               }
-              console.log(`[LamaBridge] Determined channel owner: ${channelOwner || 'undefined'}`)
+              
+              console.log(`[LamaBridge] Group channel owner: ${channelOwner || 'undefined'}`)
             }
-            
-            // Prepare message data with blobs if attachments are present
-            let messageData = content
-            
-            // If we have attachments, we need to create a ChatMessage object with blobs
-            if (attachments && attachments.length > 0) {
-              console.log(`[LamaBridge] Sending message with ${attachments.length} attachments`)
-              
-              // Create a ChatMessage-like object with text and blobs
-              // Note: This is a simplified approach - the actual ONE platform 
-              // requires properly storing blobs first and then referencing them
-              const blobs = attachments.map(att => ({
-                hash: att.hash,
-                mimeType: att.mimeType,
-                name: att.name,
-                size: att.size
-              }))
-              
-              // For now, we'll append attachment info to the text
-              // In a proper implementation, we'd need to:
-              // 1. Store the blobs using BlobStorage
-              // 2. Create proper ChatMessage with blobs array
-              // 3. Send the ChatMessage through the channel
-              messageData = content + '\n[Attachments: ' + attachments.map(a => a.name).join(', ') + ']'
-              
-              console.log('[LamaBridge] Note: Full blob support requires BlobStorage integration')
-            }
-            
-            // Send with the determined owner (convert undefined to null like one.leute)
-            await topicRoom.sendMessage(messageData, undefined, channelOwner ?? null)
-            
-            // Grant access rights after sending
-            await this.grantAccessForPersonToPersonTopic(conversationId)
-          } else {
-            // For group topics, use default behavior
-            let messageData = content
             
             if (attachments && attachments.length > 0) {
               console.log(`[LamaBridge] Sending group message with ${attachments.length} attachments`)
-              messageData = content + '\n[Attachments: ' + attachments.map(a => a.name).join(', ') + ']'
+              const attachmentHashes = attachments.map(att => att.hash)
+              
+              await topicRoom.sendMessageWithAttachmentAsHash(
+                content,
+                attachmentHashes,
+                undefined,  // author: undefined means 'use my main identity'
+                channelOwner ?? null  // channelOwner or null if no owner found
+              )
+            } else {
+              await topicRoom.sendMessage(
+                content,
+                undefined,  // author: undefined means 'use my main identity'
+                channelOwner ?? null  // channelOwner or null if no owner found
+              )
             }
-            
-            await topicRoom.sendMessage(messageData)
           }
           
           timings.sendMessage = performance.now() - sendStart
           console.log(`[PERF] ⏱️ Send message to TopicRoom: ${timings.sendMessage.toFixed(2)}ms`)
+          
+          // Message sync to Node.js instance handled by CHUM automatically
           
           // Emit topic update - let the UI fetch from the source of truth
           this.emit('message:updated', { conversationId })
@@ -296,12 +345,14 @@ class LamaBridge implements LamaAPI {
           const shouldEnableAI = await this.shouldEnableAIForConversation(conversationId)
           console.log('[LamaBridge] Should enable AI for conversation:', conversationId, shouldEnableAI)
           
-          if (shouldEnableAI && this.appModel?.llmManager) {
-            // Use LLM Manager for AI response
-            console.log('[LamaBridge] Using LLMManager for AI response')
+          // DISABLED: AI responses now handled by Node.js listening to CHUM channels
+          // The browser just sends messages to channels, Node detects and responds automatically
+          if (false) { // Was: shouldEnableAI && window.electronAPI
+            // Use LLM via IPC proxy for AI response
+            console.log('[LamaBridge] Using LLM via IPC proxy for AI response')
             
             // Set up streaming handler for real-time display
-            const streamHandler = (data: { chunk: string, isThinking?: boolean, partial: string }) => {
+            const _streamHandler = (data: { chunk: string, isThinking?: boolean, partial: string }) => {
               // Emit streaming event for UI to display progressively
               this.emit('message:stream', { 
                 conversationId, 
@@ -311,8 +362,8 @@ class LamaBridge implements LamaAPI {
               })
             }
             
-            // Subscribe to stream events temporarily
-            const unsubscribe = this.appModel.llmManager.onChatStream.listen(streamHandler)
+            // Note: Streaming is not yet implemented in IPC proxy
+            // For now, just show processing indicator
             
             try {
               // Get the full conversation history
@@ -336,34 +387,10 @@ class LamaBridge implements LamaAPI {
               console.log(`[PERF] ⏱️ History prep: ${(performance.now() - historyStart).toFixed(2)}ms`)
               console.log('[LamaBridge] Sending chat history to LLM:', chatHistory.length, 'messages')
               
-              const aiStart = performance.now()
-              // Use LLM proxy to call main process LLM
-              const response = await llmProxy.chat(chatHistory)
-              timings.aiResponse = performance.now() - aiStart
-              console.log(`[PERF] ⏱️ AI Response time: ${timings.aiResponse.toFixed(2)}ms`)
-              
-              // Clean up stream handler
-              unsubscribe()
-              
-              console.log('[LamaBridge] LLM response:', response ? `"${response.substring(0, 50)}..."` : 'null/empty')
-              if (response) {
-                // Use cached AI person ID - it was created when the topic was created
-                let aiPersonId = this.conversationAIPersons.get(conversationId)
-                if (!aiPersonId) {
-                  // Fallback: create if not cached (shouldn't happen)
-                  console.warn('[LamaBridge] AI person not cached for conversation, creating now')
-                  aiPersonId = await this.getAIPersonId('gpt-oss')
-                  this.conversationAIPersons.set(conversationId, aiPersonId)
-                }
-                
-                // Send AI response through TopicRoom (message, author, channelOwner)
-                // Use current user as channel owner for AI messages
-                const ownerId = this.appModel.ownerId
-                await topicRoom.sendMessage(response, aiPersonId, ownerId)
-                
-                // Emit topic update - the AI message is now in TopicRoom
-                this.emit('message:updated', { conversationId })
-              }
+              // DO NOT use IPC for AI - let the Node listener handle it
+              // AI is a first-class citizen that sends messages through CHUM
+              console.log('[LamaBridge] AI conversation - Node listener will handle response via CHUM')
+              this.emit('ai:processing', { conversationId, started: true })
             } catch (aiError) {
               console.error('[LamaBridge] Direct LLM response failed:', aiError)
             }
@@ -485,11 +512,9 @@ class LamaBridge implements LamaAPI {
               // Get or create AI Person ID and ensure it has keys
               const aiPersonId = await this.getAIPersonId(modelName.toLowerCase().replace(/\s+/g, '-'))
               
-              // The getAIPersonId method now ensures keys exist, so we can send the message
-              // sendMessage signature is (message, author, channelOwner)
-              // Use current user as channel owner for AI welcome message
-              const ownerId = this.appModel.ownerId
-              await topicRoom.sendMessage(welcomeContent, aiPersonId, ownerId)
+              // Send welcome message as plain text
+              // TopicRoom.sendMessage expects (text, author, channelOwner)
+              await topicRoom.sendMessage(welcomeContent, aiPersonId, undefined)
               console.log('[LamaBridge] Welcome message sent to TopicRoom')
               
               // No need to emit - just return the message from storage
@@ -657,9 +682,8 @@ class LamaBridge implements LamaAPI {
       // Emit processing event
       this.emit('ai:processing', { prompt })
       
-      // Use LLM proxy to process the query
-      const messages = [{ role: 'user' as const, content: prompt }]
-      const response = await llmProxy.chat(messages)
+      // AI queries should go through topics, not direct IPC
+      throw new Error('Direct AI queries deprecated - use topic-based conversation')
       
       this.emit('ai:complete', { prompt, response })
       return response
@@ -894,6 +918,17 @@ class LamaBridge implements LamaAPI {
       const topic = await this.appModel.topicModel.createOneToOneTopic(myPersonId, contactId)
       console.log('[LamaBridge] Topic created/found:', topic.id)
       
+      // CRITICAL: Create the channel for this topic immediately!
+      // Without a channel, we cannot post messages to the topic
+      try {
+        console.log('[LamaBridge] Creating channel for topic:', topic.id)
+        await this.appModel.channelManager.createChannel(topic.id, myPersonId)
+        console.log('[LamaBridge] ✅ Channel created successfully with owner:', myPersonId)
+      } catch (channelError) {
+        // Channel might already exist, which is fine
+        console.log('[LamaBridge] Channel creation result:', channelError?.message || 'Channel may already exist')
+      }
+      
       // Enter the topic room to ensure it's properly initialized
       try {
         console.log('[LamaBridge] Entering topic room to initialize...')
@@ -1006,10 +1041,10 @@ class LamaBridge implements LamaAPI {
       for (const channelInfo of channelInfos) {
         console.log('[LamaBridge] Granting access to channel:', channelInfo.idHash)
         
-        // Grant access to the ChannelInfo object itself
+        // Grant access to the ChannelInfo object itself - for ALL participants at once
         await createAccess([{
           id: channelInfo.idHash,
-          person: participants as any, // Both participants get access
+          person: participants,  // Pass array of participants
           group: [],
           mode: SET_ACCESS_MODE.ADD
         }])
@@ -1019,9 +1054,10 @@ class LamaBridge implements LamaAPI {
         const entries = channelInfo.obj?.data || []
         for (const entry of entries) {
           if (entry.dataHash) {
+            // Grant access for ALL participants at once
             await createAccess([{
               object: entry.dataHash,
-              person: participants as any,
+              person: participants,  // Pass array of participants
               group: [],
               mode: SET_ACCESS_MODE.ADD
             }])
@@ -1056,7 +1092,7 @@ class LamaBridge implements LamaAPI {
           
           const myPersonId = await this.appModel.leuteModel?.myMainIdentity?.()
           const hasMyChannel = channelInfos?.some(info => 
-            info.owner === myPersonId || info.owner === null
+            info.owner === myPersonId
           )
           
           if (!hasMyChannel) {
@@ -1213,35 +1249,44 @@ class LamaBridge implements LamaAPI {
           throw new Error('Cannot access topic without user identity')
         }
         
-        // For person-to-person topics, ensure the channel exists
-        if (this.isPersonToPersonTopic(conversationId)) {
-          console.log('[LamaBridge] Detected person-to-person topic, ensuring channel exists')
+        // ALWAYS ensure the channel exists before trying to use it
+        // This is the root cause - we must create the channel if it doesn't exist
+        if (this.appModel.channelManager) {
+          const channelInfos = await this.appModel.channelManager.getMatchingChannelInfos({
+            channelId: conversationId
+          })
           
-          // Extract participants from topic ID
-          const participants = conversationId.split('<->')
-          if (participants.length === 2) {
-            const [personA, personB] = participants
+          // If no channel exists, create one
+          if (!channelInfos || channelInfos.length === 0) {
+            console.log('[LamaBridge] No channel exists for:', conversationId)
+            console.log('[LamaBridge] Creating channel with myPersonId as owner')
             
-            // Create topic without specifying owner - will use current user
             try {
-              console.log('[LamaBridge] Creating topic with default owner')
-              await this.appModel.topicModel.createOneToOneTopic(personA, personB)
-              console.log('[LamaBridge] Topic/channel created/verified')
-              
-              // Also ensure the channel exists explicitly
-              if (this.appModel.channelManager) {
-                const channelInfos = await this.appModel.channelManager.getMatchingChannelInfos({
-                  channelId: conversationId
-                })
-                
-                if (!channelInfos || channelInfos.length === 0) {
-                  console.log('[LamaBridge] Creating channel explicitly...')
-                  await this.appModel.channelManager.createChannel(conversationId, null)
+              await this.appModel.channelManager.createChannel(conversationId, myPersonId)
+              console.log('[LamaBridge] ✅ Channel created successfully')
+            } catch (err) {
+              console.error('[LamaBridge] Failed to create channel:', err)
+              // Try to create topic which will create the channel
+              if (this.isPersonToPersonTopic(conversationId)) {
+                const participants = conversationId.split('<->')
+                if (participants.length === 2) {
+                  const [personA, personB] = participants
+                  console.log('[LamaBridge] Attempting to create topic for person-to-person chat')
+                  const topic = await this.appModel.topicModel.createOneToOneTopic(personA, personB)
+                  console.log('[LamaBridge] Topic created:', topic?.id)
                 }
+              } else {
+                // Create a group topic
+                const topic = await this.appModel.topicModel.createGroupTopic(
+                  'Chat',
+                  conversationId,
+                  myPersonId
+                )
+                console.log('[LamaBridge] Group topic created:', topic?.id)
               }
-            } catch (channelErr) {
-              console.log('[LamaBridge] Topic/channel may already exist:', channelErr)
             }
+          } else {
+            console.log('[LamaBridge] Channel already exists, found', channelInfos.length, 'channel(s)')
           }
         }
         
@@ -1361,6 +1406,98 @@ class LamaBridge implements LamaAPI {
       console.error('[LamaBridge] Failed to generate AI Person ID:', error)
       // Fallback to a simple deterministic ID
       return `ai-${aiName}`.padEnd(64, '0')
+    }
+  }
+
+  /**
+   * Get information about the current instance
+   */
+  async getInstanceInfo(): Promise<any> {
+    try {
+      if (!window.electronAPI) {
+        // Browser-only mode - return browser instance info
+        return {
+          success: true,
+          instance: {
+            id: 'browser-instance',
+            name: 'Browser UI',
+            platform: 'browser',
+            role: 'client',
+            initialized: true,
+            capabilities: {
+              network: false,
+              storage: false,
+              llm: false
+            }
+          }
+        }
+      }
+
+      // Get instance info via IPC from Node.js
+      const result = await window.electronAPI.invoke('instance:info')
+      return result
+    } catch (error) {
+      console.error('[LamaBridge] Failed to get instance info:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  /**
+   * Get connected devices/instances
+   */
+  async getConnectedDevices(): Promise<any> {
+    try {
+      if (!window.electronAPI) {
+        // Browser-only mode - no connected devices
+        return { success: true, devices: [] }
+      }
+
+      // Get connected devices via IPC
+      const result = await window.electronAPI.invoke('devices:connected')
+      return result
+    } catch (error) {
+      console.error('[LamaBridge] Failed to get connected devices:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  /**
+   * Create an invitation for pairing
+   */
+  async createInvitation(): Promise<any> {
+    try {
+      if (!window.electronAPI) {
+        return {
+          success: false,
+          error: 'Invitations require Electron environment'
+        }
+      }
+
+      // Create invitation via IPC
+      const result = await window.electronAPI.invoke('invitation:create')
+      return result
+    } catch (error) {
+      console.error('[LamaBridge] Failed to create invitation:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  /**
+   * Get contacts from Node.js ONE.core
+   */
+  async getNodeContacts(): Promise<any> {
+    try {
+      if (!window.electronAPI) {
+        // Browser-only mode - no Node.js contacts
+        return { success: true, contacts: [] }
+      }
+
+      // Get contacts from Node.js ONE.core via IPC
+      const result = await window.electronAPI.invoke('onecore:getContacts')
+      return result
+    } catch (error) {
+      console.error('[LamaBridge] Failed to get Node.js contacts:', error)
+      return { success: false, error: error.message }
     }
   }
 }

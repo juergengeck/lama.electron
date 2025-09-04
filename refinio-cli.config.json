@@ -1,0 +1,25 @@
+{
+  "client": {
+    "serverUrl": "quic://localhost:9876",
+    "timeout": 30000,
+    "retryAttempts": 3,
+    "retryDelay": 1000
+  },
+  "keys": {
+    "path": "./refinio-keys.json"
+  },
+  "output": {
+    "format": "json",
+    "pretty": true
+  },
+  "profiles": {
+    "default": {
+      "serverUrl": "quic://localhost:9876",
+      "name": "LAMA Electron Local"
+    },
+    "dev": {
+      "serverUrl": "quic://localhost:9876",
+      "name": "Development"
+    }
+  }
+}

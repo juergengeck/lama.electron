@@ -3,8 +3,8 @@
  * Tracks WebSocket connections and sync status
  */
 
-const EventEmitter = require('events')
-const config = require('../config/iom-config')
+import EventEmitter from 'events'
+import config from '../config/iom-config.js'
 
 class ChumMonitor extends EventEmitter {
   constructor() {
@@ -174,4 +174,4 @@ class ChumMonitor extends EventEmitter {
 }
 
 // Export singleton
-module.exports = new ChumMonitor()
+export default new ChumMonitor()

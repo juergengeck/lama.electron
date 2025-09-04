@@ -35,5 +35,11 @@
     "./node_modules/@refinio/one.models/@OneObjectInterfaces.d.ts",
     "./src/types/@OneObjectInterfaces.d.ts"
   ],
+  "exclude": [
+    "node_modules/@refinio/one.core/lib/system/expo/**/*",
+    "node_modules/@refinio/one.core/lib/system/nodejs/**/*",
+    "node_modules/@refinio/one.core/src/system/expo/**/*",
+    "node_modules/@refinio/one.core/src/system/nodejs/**/*"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

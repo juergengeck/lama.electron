@@ -18,7 +18,35 @@ export function ChatView({
   const { peers } = useLamaPeers()
   const [conversationName, setConversationName] = useState<string>('Messages')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isAIProcessing, setIsAIProcessing] = useState(false)
+  const [aiStreamingContent, setAiStreamingContent] = useState('')
 
+  // Listen for AI streaming events
+  useEffect(() => {
+    const handleStreamEvent = (event: any) => {
+      if (event.conversationId === conversationId) {
+        if (event.isThinking) {
+          setIsAIProcessing(true)
+          setAiStreamingContent('')
+        } else if (event.partial) {
+          setIsAIProcessing(false)
+          setAiStreamingContent(event.partial)
+        } else if (event.chunk === null || event.chunk === undefined) {
+          // Stream ended
+          setIsAIProcessing(false)
+          setAiStreamingContent('')
+        }
+      }
+    }
+    
+    // Subscribe to streaming events
+    const unsubscribe = lamaBridge.on('message:stream', handleStreamEvent)
+    
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
+  }, [conversationId])
+  
   useEffect(() => {
     // Get the conversation/contact name
     const loadConversationDetails = async () => {
@@ -146,17 +174,28 @@ export function ChatView({
     loadConversationDetails()
   }, [conversationId, messages, peers])
 
-  const handleSendMessage = async (content: string) => {
-    console.log('[ChatView] handleSendMessage called with:', content, 'for conversation:', conversationId)
+  const handleSendMessage = async (content: string, attachments?: any[]) => {
+    console.log('[ChatView] handleSendMessage called with:', content, 'attachments:', attachments?.length || 0, 'for conversation:', conversationId)
     setIsProcessing(true)
     onProcessingChange?.(true)
     
+    // Check if this is an AI conversation to show processing indicator
+    const isAIConversation = conversationId === 'default' || 
+                             conversationId === 'ai-chat' || 
+                             messages.some(m => m.isAI)
+    
+    if (isAIConversation) {
+      setIsAIProcessing(true)
+      setAiStreamingContent('')
+    }
+    
     try {
-      await sendMessage(conversationId, content)
+      await sendMessage(conversationId, content, attachments)
       console.log('[ChatView] sendMessage completed for conversation:', conversationId)
     } finally {
       setIsProcessing(false)
       onProcessingChange?.(false)
+      // AI processing indicator will be cleared by streaming events
     }
   }
   
@@ -187,6 +226,8 @@ export function ChatView({
           placeholder="Type a message..."
           showSender={true}
           loading={loading}
+          isAIProcessing={isAIProcessing}
+          aiStreamingContent={aiStreamingContent}
         />
       </CardContent>
     </Card>

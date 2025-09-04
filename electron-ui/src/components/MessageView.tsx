@@ -26,12 +26,14 @@ import type { MessageAttachment, BlobDescriptor } from '@/types/attachments'
 interface MessageViewProps {
   messages: Message[]
   currentUserId?: string
-  onSendMessage: (content: string) => Promise<void>
+  onSendMessage: (content: string, attachments?: MessageAttachment[]) => Promise<void>
   placeholder?: string
   showSender?: boolean
   loading?: boolean
   participants?: string[] // List of participant IDs to determine if multiple people
   useEnhancedUI?: boolean // Toggle for enhanced UI components
+  isAIProcessing?: boolean // Show typing indicator when AI is processing
+  aiStreamingContent?: string // Show partial AI response while streaming
 }
 
 export function MessageView({ 
@@ -42,7 +44,9 @@ export function MessageView({
   showSender = true,
   loading = false,
   participants = [],
-  useEnhancedUI = true // Enable enhanced UI for attachments
+  useEnhancedUI = true, // Enable enhanced UI for attachments
+  isAIProcessing = false,
+  aiStreamingContent = ''
 }: MessageViewProps) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -169,15 +173,9 @@ export function MessageView({
         }
       }
       
-      // Send the message with attachment references
-      // In a real implementation, we'd modify onSendMessage to accept attachments
-      // For now, we'll append attachment info to the message
-      if (messageAttachments.length > 0) {
-        // This is temporary - ideally the bridge would handle attachments properly
-        messageContent += `\n\n[Attachments: ${messageAttachments.map(a => a.hash).join(', ')}]`
-      }
-      
-      await onSendMessage(messageContent)
+      // Send the message with attachments
+      // Pass attachments directly to onSendMessage
+      await onSendMessage(messageContent, messageAttachments.length > 0 ? messageAttachments : undefined)
       
     } catch (error) {
       console.error('Failed to send enhanced message:', error)
@@ -242,24 +240,45 @@ export function MessageView({
               const hashtags = message.content.match(hashtagRegex) || []
               const subjects = hashtags.map(tag => tag.slice(1)) // Remove # prefix
               
-              // Check if message contains attachment indicator
+              // Parse attachment references from message content
               let messageAttachmentsList: any[] = []
-              if (message.content.includes('📎 Attachments:')) {
-                // Try to find attachments for recent messages
-                // Look through stored attachments for a match
-                for (const [key, atts] of messageAttachments.entries()) {
-                  // Simple heuristic: if this message was sent recently and mentions attachments
-                  if (isCurrentUser && message.content.includes(atts[0]?.name)) {
-                    messageAttachmentsList = atts
-                    console.log('[MessageView] Found attachments for message:', atts)
-                    break
+              let cleanedText = message.content
+              
+              // Check for attachment references in the format [Attachments: hash1, hash2]
+              const attachmentRegex = /\[Attachments: ([^\]]+)\]/
+              const attachmentMatch = message.content.match(attachmentRegex)
+              
+              if (attachmentMatch) {
+                const attachmentHashes = attachmentMatch[1].split(', ')
+                console.log('[MessageView] Found attachment hashes in message:', attachmentHashes)
+                
+                // Clean the text by removing the attachment reference
+                cleanedText = message.content.replace(attachmentRegex, '').trim()
+                
+                // Look up stored attachment descriptors
+                for (const hash of attachmentHashes) {
+                  const descriptor = attachmentDescriptors.get(hash)
+                  if (descriptor) {
+                    messageAttachmentsList.push({
+                      id: hash,
+                      name: descriptor.name,
+                      type: descriptor.type.startsWith('image/') ? 'image' : 
+                            descriptor.type.startsWith('video/') ? 'video' :
+                            descriptor.type.startsWith('audio/') ? 'audio' : 'document',
+                      url: hash, // Use hash as URL identifier
+                      thumbnail: descriptor.type.startsWith('image/') ? hash : undefined,
+                      size: descriptor.size,
+                      subjects: [],
+                      trustLevel: 3
+                    })
+                    console.log('[MessageView] Added attachment to message:', descriptor.name)
                   }
                 }
               }
               
               const enhancedMessage: EnhancedMessageData = {
                 id: message.id,
-                text: message.content,
+                text: cleanedText, // Use cleaned text without attachment references
                 senderId: message.senderId,
                 senderName: isAIMessage ? 'AI' : (contactNames[message.senderId] || 'Unknown'),
                 timestamp: message.timestamp,
@@ -277,6 +296,7 @@ export function MessageView({
                   onAttachmentClick={handleAttachmentClick}
                   onDownloadAttachment={handleDownloadAttachment}
                   theme="dark"
+                  attachmentDescriptors={attachmentDescriptors}
                 />
               )
             }
@@ -419,6 +439,33 @@ export function MessageView({
               </div>
             )
           })}
+          
+          {/* AI Typing Indicator or Streaming Content */}
+          {(isAIProcessing || aiStreamingContent) && (
+            <div className="flex gap-2 mb-2 justify-start">
+              <Avatar className="h-8 w-8 shrink-0">
+                <AvatarFallback className="text-xs">AI</AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col max-w-[70%]">
+                <div className="message-bubble message-bubble-ai">
+                  {aiStreamingContent ? (
+                    // Show streaming content if available
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {aiStreamingContent}
+                    </ReactMarkdown>
+                  ) : (
+                    // Show typing indicator
+                    <div className="typing-indicator">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
           <div ref={messagesEndRef} />
         </div>
       </div>

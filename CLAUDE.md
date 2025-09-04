@@ -24,8 +24,18 @@ The app follows a specific authentication sequence:
 
 1. **Browser First**: User logs in via browser UI
 2. **Node Provisioning**: Browser provisions the Node instance with credentials
-3. **State Sync**: User state propagates from Node to stateManager
-4. **Ready**: Both instances are authenticated and ready
+3. **Federation Setup**: Both instances create OneInstanceEndpoints
+4. **Connection**: Browser connects to Node via ws://localhost:8765
+5. **CHUM Sync**: Data synchronization over established connection
+6. **Ready**: Both instances are connected and syncing
+
+### Federation Architecture
+
+**Direct WebSocket Connection**:
+- Node.js: Socket listener on ws://localhost:8765 + CommServer for external
+- Browser: Outgoing connections only, discovers Node via OneInstanceEndpoint
+- Connection: Automatic via LeuteConnectionsModule discovery
+- Sync: CHUM protocol handles bidirectional data synchronization
 
 ### Common Issues
 
@@ -34,19 +44,31 @@ The app follows a specific authentication sequence:
 - Solution: User must log in first via the browser UI
 - The Node instance is provisioned automatically after browser login
 
+**Connection Issues**
+- Check Node socket listener on port 8765: Look for "Direct listener on ws://localhost:8765"
+- Verify OneInstanceEndpoint creation: Look for "Created OneInstanceEndpoint"
+- Ensure no firewall blocking localhost:8765
+- Check browser ConnectionsModel logs for discovery attempts
+
 ### Key Files
 
-- `/ELECTRON-ARCHITECTURE.md` - Full architecture documentation
+- `/FEDERATION-ARCHITECTURE.md` - Federation and connection documentation
+- `/ELECTRON-ARCHITECTURE-V2.md` - Full architecture documentation
+- `/main/core/federation-api.js` - Federation API for endpoint management
+- `/main/core/node-one-core.js` - Node instance with socket listener
 - `/main/hybrid/node-provisioning.js` - Node provisioning logic
-- `/main/hybrid/real-node-instance.js` - Node ONE.core instance
-- `/electron-ui/src/services/init-flow.ts` - Browser initialization
+- `/electron-ui/src/models/AppModel.ts` - Browser connection setup
+- `/electron-ui/src/services/browser-init-simple.ts` - Browser initialization
 - `/main/ipc/handlers/chat.js` - Chat handler with auth checks
 
 ### Development Notes
 
 - Main process uses CommonJS (`require`)
 - Renderer uses ESM (`import`)
-- IPC communication via contextBridge
-- Future: CHUM sync between instances
+- IPC communication via contextBridge for UI operations
+- Direct WebSocket for ONE.core instance communication
+- CHUM sync between instances is automatic
 
 For consistency with the Expo/React Native LAMA app, we maintain similar patterns where possible.
+- No commserver for internal connections (direct WebSocket instead)
+- IPC is not used for content (CHUM handles sync)

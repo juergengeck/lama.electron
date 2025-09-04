@@ -1,0 +1,1 @@
+<div itemscope itemtype="//refin.io/Recipe"><span itemprop="name">Person</span><ol itemprop="rule"><li><div><span itemprop="itemprop">email</span><span itemprop="isId">true</span></div></li><li><div><span itemprop="itemprop">name</span><span itemprop="optional">true</span></div></li></ol></div>

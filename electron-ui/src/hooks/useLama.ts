@@ -79,10 +79,10 @@ export function useLamaMessages(conversationId: string) {
     }
   }, [conversationId])
 
-  const sendMessage = useCallback(async (topicId: string, content: string) => {
+  const sendMessage = useCallback(async (topicId: string, content: string, attachments?: any[]) => {
     try {
-      console.log('[useLama] 🚀 Starting sendMessage with:', { topicId, content })
-      const messageId = await lamaBridge.sendMessage(topicId, content)
+      console.log('[useLama] 🚀 Starting sendMessage with:', { topicId, content, attachments: attachments?.length || 0 })
+      const messageId = await lamaBridge.sendMessage(topicId, content, attachments)
       console.log('[useLama] ✅ sendMessage completed, messageId:', messageId, 'for topic:', topicId)
       return messageId
     } catch (err) {

@@ -2,8 +2,8 @@
  * Authentication IPC Handlers
  */
 
-const authModel = require('../../models/auth')
-const stateManager = require('../../state/manager')
+import authModel from '../../models/auth.js'
+import stateManager from '../../state/manager.js'
 
 const authHandlers = {
   async login(event, { username, password }) {
@@ -54,4 +54,4 @@ const authHandlers = {
   }
 }
 
-module.exports = authHandlers
+export default authHandlers

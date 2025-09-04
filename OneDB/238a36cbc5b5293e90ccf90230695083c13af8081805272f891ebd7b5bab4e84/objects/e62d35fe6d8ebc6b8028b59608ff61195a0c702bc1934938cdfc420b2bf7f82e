@@ -1,0 +1,1 @@
+<div itemscope itemtype="//refin.io/Recipe"><span itemprop="name">Group</span><ol itemprop="rule"><li><div><span itemprop="itemprop">name</span><span itemprop="isId">true</span></div></li><li><div><span itemprop="itemprop">person</span><span itemprop="itemtype">{"item":{"allowedTypes":["Person"],"type":"referenceToId"},"type":"bag"}</span></div></li></ol></div>

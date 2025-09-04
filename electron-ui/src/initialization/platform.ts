@@ -1,15 +1,20 @@
 /**
- * Platform initialization stub
- * ONE.CORE now runs in the main process, not in the renderer
+ * Platform initialization for dual ONE.core architecture
+ * Renderer runs its own ONE.core instance that connects to Node.js via IoM
  */
 
-console.log('[Platform] ONE.CORE runs in main process - skipping renderer platform imports')
+import '@refinio/one.core/lib/system/load-browser.js'
+import { SYSTEM } from '@refinio/one.core/lib/system/platform.js'
+
+console.log('[Platform] Loading platform support (NOT initializing ONE.core)')
 
 /**
- * Initialize the platform (stub for compatibility)
+ * Initialize the browser platform for renderer ONE.core instance
  */
 export async function initPlatform(): Promise<void> {
-  console.log('[Platform] Platform runs in main process, nothing to do in renderer')
+  console.log('[Platform] Loading browser platform for renderer ONE.core...')
+  // Browser platform is loaded by the import above
+  console.log('[Platform] ✅ Renderer ONE.core platform initialized')
 }
 
 /**

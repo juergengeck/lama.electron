@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+// import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChatLayout } from '@/components/ChatLayout'
 import { JournalView } from '@/components/JournalView'
 import { ContactsView } from '@/components/ContactsView'
 import { SettingsView } from '@/components/SettingsView'
 import { DataDashboard } from '@/components/DataDashboard'
 import { LoginDeploy } from '@/components/LoginDeploy'
-import initFlow from '@/services/init-flow'
 import { ModelOnboarding } from '@/components/ModelOnboarding'
 import { MessageSquare, BookOpen, Users, Settings, Loader2, Network, BarChart3 } from 'lucide-react'
 import { useLamaInit } from '@/hooks/useLamaInit'
@@ -16,23 +15,26 @@ import { lamaBridge } from '@/bridge/lama-bridge'
 function App() {
   const [activeTab, setActiveTab] = useState('chats')
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(undefined)
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
-  const { isInitialized, isAuthenticated, isLoading, login, register, logout, error } = useLamaInit()
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => {
+    // Check if user has completed onboarding before
+    return localStorage.getItem('lama-onboarding-completed') === 'true'
+  })
+  const { isInitialized, isAuthenticated, isLoading, login, logout, error } = useLamaInit()
   const appModel = lamaBridge.getAppModel()
   
   // Listen for navigation from Electron menu
   useEffect(() => {
-    const handleNavigate = (event: any, tab: string) => {
+    const handleNavigate = (_event: any, tab: string) => {
       setActiveTab(tab)
     }
     
     // Check if we're in Electron environment
-    if (window.electronAPI && window.electronAPI.on) {
-      window.electronAPI.on('navigate', handleNavigate)
+    if (window.electronAPI && 'on' in window.electronAPI) {
+      (window.electronAPI as any).on('navigate', handleNavigate)
       return () => {
         // Only call off if it exists
-        if (window.electronAPI.off) {
-          window.electronAPI.off('navigate', handleNavigate)
+        if ('off' in window.electronAPI!) {
+          (window.electronAPI as any).off('navigate', handleNavigate)
         }
       }
     }
@@ -63,9 +65,17 @@ function App() {
   }
 
   // Check if we need to show model onboarding
-  const hasModels = appModel?.llmManager?.getModels().length > 0
-  if (!hasModels && !hasCompletedOnboarding) {
-    return <ModelOnboarding onComplete={() => setHasCompletedOnboarding(true)} />
+  // Only show onboarding if:
+  // 1. User has never completed it before AND
+  // 2. No models are configured
+  const hasModels = (appModel?.llmManager?.getModels()?.length ?? 0) > 0
+  const shouldShowOnboarding = !hasCompletedOnboarding && !hasModels
+  
+  if (shouldShowOnboarding) {
+    return <ModelOnboarding onComplete={() => {
+      localStorage.setItem('lama-onboarding-completed', 'true')
+      setHasCompletedOnboarding(true)
+    }} />
   }
 
   const tabs = [

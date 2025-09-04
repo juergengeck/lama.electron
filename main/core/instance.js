@@ -69,4 +69,4 @@ class InstanceManager {
   }
 }
 
-module.exports = new InstanceManager()
+export default new InstanceManager()

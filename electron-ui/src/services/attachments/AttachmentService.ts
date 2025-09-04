@@ -84,27 +84,39 @@ export class AttachmentService implements IAttachmentService {
       }
       options?.onProgress?.(50)
       
-      // Store blob in Node.js ONE.core instance via IPC
+      // Store blob in Node.js ONE.core instance via IPC, fallback to browser
       let hash: string
       if (window.electronAPI) {
-        // Convert to base64 for IPC transfer
-        const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-        
-        const result = await window.electronAPI.invoke('attachment:store', {
-          data: base64Data,
-          metadata: {
-            name: file.name,
-            type: file.type,
-            size: file.size
+        try {
+          // Convert to base64 for IPC transfer
+          const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+          
+          const result = await window.electronAPI.invoke('attachment:store', {
+            data: base64Data,
+            metadata: {
+              name: file.name,
+              type: file.type,
+              size: file.size
+            }
+          })
+          
+          if (result.success) {
+            hash = result.data.hash
+            console.log(`[AttachmentService] Stored blob in Node.js with hash: ${hash}`)
+          } else {
+            console.warn(`[AttachmentService] Node storage failed (${result.error}), using browser fallback`)
+            // Fallback to browser storage
+            const result = await storeArrayBufferAsBlob(arrayBuffer)
+            hash = result.hash as unknown as string
+            console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${result.status}`)
           }
-        })
-        
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to store attachment')
+        } catch (error) {
+          console.warn(`[AttachmentService] IPC failed (${error.message}), using browser fallback`)
+          // Fallback to browser storage
+          const result = await storeArrayBufferAsBlob(arrayBuffer)
+          hash = result.hash as unknown as string
+          console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${result.status}`)
         }
-        
-        hash = result.data.hash
-        console.log(`[AttachmentService] Stored blob in Node.js with hash: ${hash}`)
       } else {
         // Fallback to browser storage for development
         const result = await storeArrayBufferAsBlob(arrayBuffer)

@@ -64,8 +64,44 @@ export async function initializePlatform(config: PlatformConfig): Promise<void> 
     
     let instanceOptions;
     
-    if (storedInstanceName && storedEmail) {
-        // Use existing instance
+    // In Electron, get credentials from Node.js for IoM sync
+    if ((window as any).electronAPI) {
+        try {
+            console.log('[Platform] Getting credentials from Node.js for IoM sync...');
+            const nodeCredentials = await (window as any).electronAPI.invoke('oneCore:getBrowserCredentials');
+            
+            if (nodeCredentials?.success && nodeCredentials.email) {
+                // Use same person (email/secret) but different instance name for IoM
+                instanceOptions = {
+                    name: nodeCredentials.browserInstanceName || 'browser',
+                    email: nodeCredentials.email,
+                    secret: config.secret  // Same secret as Node.js
+                };
+                console.log('[Platform] Using Node.js credentials for IoM - same person, different instance');
+                console.log('[Platform] Email:', instanceOptions.email);
+                console.log('[Platform] Instance name:', instanceOptions.name);
+            } else {
+                throw new Error('Could not get credentials from Node.js');
+            }
+        } catch (error) {
+            console.warn('[Platform] Failed to get Node.js credentials:', error);
+            // Fall back to stored or new credentials
+            if (storedInstanceName && storedEmail) {
+                instanceOptions = {
+                    name: storedInstanceName as string,
+                    email: storedEmail as string,
+                    secret: config.secret
+                };
+            } else {
+                instanceOptions = {
+                    name: config.instanceName || `electron-${await createRandomString(32)}`,
+                    email: config.email || `electron@${await createRandomString(32)}.com`,
+                    secret: config.secret
+                };
+            }
+        }
+    } else if (storedInstanceName && storedEmail) {
+        // Use existing instance (non-Electron)
         instanceOptions = {
             name: storedInstanceName as string,
             email: storedEmail as string,
@@ -73,7 +109,7 @@ export async function initializePlatform(config: PlatformConfig): Promise<void> 
         };
         console.log('[Platform] Using existing instance:', instanceOptions.name);
     } else {
-        // Create new instance
+        // Create new instance (non-Electron)
         instanceOptions = {
             name: config.instanceName || `electron-${await createRandomString(32)}`,
             email: config.email || `electron@${await createRandomString(32)}.com`,

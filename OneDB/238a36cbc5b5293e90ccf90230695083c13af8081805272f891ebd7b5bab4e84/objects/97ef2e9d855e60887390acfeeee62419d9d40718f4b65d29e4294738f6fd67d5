@@ -1,0 +1,1 @@
+<div itemscope itemtype="//refin.io/Recipe"><span itemprop="name">EncryptionKey</span><ol itemprop="rule"><li><div><span itemprop="itemprop">key</span><span itemprop="itemtype">{"regexp":"^[A-Za-z0-9+/]{64}$","type":"string"}</span></div></li></ol></div>

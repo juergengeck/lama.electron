@@ -8,6 +8,7 @@ import type Connection from '@refinio/one.models/lib/misc/Connection/Connection'
 import ConnectionsModel from '@refinio/one.models/lib/models/ConnectionsModel.js'
 import GroupModel from '@refinio/one.models/lib/models/Leute/GroupModel'
 import type LeuteModel from '@refinio/one.models/lib/models/Leute/LeuteModel.js'
+import BlacklistModel from '../../BlacklistModel'
 import { TransportType, type ITransport, type ConnectionTarget } from '../TransportManager'
 
 export enum TransportStatus {
@@ -41,12 +42,14 @@ export class CommServerManager implements ITransport {
   public onStatusChanged: OEvent<(status: TransportStatus) => void> = new OEvent()
   
   private connectionsModel!: InstanceType<typeof ConnectionsModel>
+  private blacklistModel: BlacklistModel
 
   constructor(
     private leuteModel: InstanceType<typeof LeuteModel>,
     config: CommServerTransportConfig
   ) {
     this.config = config
+    this.blacklistModel = new BlacklistModel()
   }
 
   async init(): Promise<void> {
@@ -70,15 +73,29 @@ export class CommServerManager implements ITransport {
           acceptIncomingConnections: true,
           acceptUnknownInstances: true,
           acceptUnknownPersons: false,
-          allowPairing: true,
+          allowPairing: false,  // No pairing in browser
           allowDebugRequests: true,
           pairingTokenExpirationDuration: 60000 * 15, // 15 minutes
           establishOutgoingConnections: true
       })
 
-      // Initialize the ConnectionsModel (required for pairing to work)
-      await this.connectionsModel.init()
-      console.log('[CommServerManager] ConnectionsModel initialized')
+      // Create required groups for blacklist management (following one.leute pattern)
+      const binGroup = await this.leuteModel.createGroup('bin')
+      const everyoneGroup = await GroupModel.constructFromLatestProfileVersionByGroupName(
+        this.leuteModel.constructor.EVERYONE_GROUP_NAME
+      )
+      
+      // Initialize blacklist model
+      this.blacklistModel.init(binGroup, everyoneGroup)
+      console.log('[CommServerManager] Blacklist groups initialized')
+      
+      // Initialize the ConnectionsModel with blacklist (required for proper connection handling)
+      await this.connectionsModel.init(this.blacklistModel.blacklistGroupModel)
+      console.log('[CommServerManager] ConnectionsModel initialized with blacklist')
+      
+      // Wait for the transport to be ready before proceeding
+      // This ensures WebSocket connections have their plugins properly set up
+      await this.waitForTransportReady()
 
       // Set up event forwarding
       this.connectionsModel.onConnectionsChange.listen(() => {
@@ -120,15 +137,8 @@ export class CommServerManager implements ITransport {
     }
 
     if (target.pairingToken) {
-      // Handle pairing with invitation
-      const pairing = this.connectionsModel.pairing
-      if (!pairing) {
-        throw new Error('Pairing manager not available')
-      }
-      
-      // Parse pairing URL and establish connection
-      const invitation = await pairing.parseInvitationUrl(target.pairingToken)
-      return await pairing.acceptInvitation(invitation)
+      // Browser should NOT accept invitations - only Node.js handles pairing
+      throw new Error('Browser cannot accept invitations - pairing disabled. Invitations must be handled by the Node.js instance.')
     } else if (target.personId && target.instanceId) {
       // Direct connection to known device
       return await this.connectionsModel.establishConnection(
@@ -160,6 +170,10 @@ export class CommServerManager implements ITransport {
       await this.connectionsModel.shutdown()
     }
     
+    if (this.blacklistModel) {
+      await this.blacklistModel.shutdown()
+    }
+    
     this.setStatus(TransportStatus.UNINITIALIZED)
     console.log('[CommServerManager] Shutdown complete')
   }
@@ -189,6 +203,38 @@ export class CommServerManager implements ITransport {
 
   isOnline(): boolean {
     return this.status === TransportStatus.CONNECTED
+  }
+
+  async waitForTransportReady(timeout: number = 5000): Promise<void> {
+    console.log('[CommServerManager] Waiting for transport to be ready...')
+    
+    return new Promise((resolve, reject) => {
+      const checkReady = () => {
+        // Check if the transport layer is properly initialized
+        if (this.connectionsModel && this.connectionsModel.pairing) {
+          console.log('[CommServerManager] Transport is ready')
+          resolve()
+          return true
+        }
+        return false
+      }
+      
+      // Check immediately
+      if (checkReady()) return
+      
+      // Set up timeout
+      const timer = setTimeout(() => {
+        reject(new Error('Transport initialization timeout'))
+      }, timeout)
+      
+      // Poll for readiness
+      const pollInterval = setInterval(() => {
+        if (checkReady()) {
+          clearInterval(pollInterval)
+          clearTimeout(timer)
+        }
+      }, 100)
+    })
   }
 
   async waitForConnection(timeout: number = 30000): Promise<void> {

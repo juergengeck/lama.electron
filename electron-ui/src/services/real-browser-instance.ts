@@ -10,10 +10,12 @@ import RecipesStable from '@refinio/one.models/lib/recipes/recipes-stable.js'
 import RecipesExperimental from '@refinio/one.models/lib/recipes/recipes-experimental.js'
 import { ReverseMapsStable } from '@refinio/one.models/lib/recipes/reversemaps-stable.js'
 import { ReverseMapsExperimental } from '@refinio/one.models/lib/recipes/reversemaps-experimental.js'
+// Settings recipe removed - will be handled differently
 
 export class RealBrowserInstance {
   private multiUser: MultiUser | null = null
   private leuteModel: LeuteModel | null = null
+  private connectionsModel: any | null = null // ConnectionsModel for IoM
   private initialized: boolean = false
   private ownerId: string | null = null
   private browserSettings: any = null
@@ -59,6 +61,7 @@ export class RealBrowserInstance {
         recipes: [
           ...RecipesStable,
           ...RecipesExperimental
+          // Settings will be handled differently, not as a Recipe
         ],
         reverseMaps: new Map([
           ...ReverseMapsStable,
@@ -189,6 +192,11 @@ export class RealBrowserInstance {
         }
         
         console.log('[RealBrowser] ✅ LeuteModel initialized!')
+        
+        // Set up ConnectionsModel for local IoM with Node.js
+        if (window.electronAPI) {
+          await this.setupLocalIoMConnection()
+        }
         
         // Store the owner ID for later use
         this.ownerId = ownerId
@@ -384,6 +392,46 @@ export class RealBrowserInstance {
   
   getLeuteModel(): LeuteModel | null {
     return this.leuteModel
+  }
+  
+  private async setupLocalIoMConnection(): Promise<void> {
+    try {
+      console.log('[RealBrowser] Setting up ConnectionsModel for local IoM with Node.js...')
+      
+      const { default: ConnectionsModel } = await import('@refinio/one.models/lib/models/ConnectionsModel.js')
+      const { default: GroupModel } = await import('@refinio/one.models/lib/models/Leute/GroupModel.js')
+      
+      // Create or get blacklist group
+      let blacklistGroup
+      try {
+        blacklistGroup = await GroupModel.constructFromLatestProfileVersionByGroupName('blacklist')
+      } catch {
+        blacklistGroup = await this.leuteModel!.createGroup('blacklist')
+      }
+      
+      // Create ConnectionsModel that connects to local Node.js WebSocket
+      this.connectionsModel = new ConnectionsModel(this.leuteModel, {
+        localWebSocketUrl: 'ws://localhost:8765',  // Connect to Node's local WebSocket
+        acceptIncomingConnections: true,
+        acceptUnknownInstances: true,  // Accept Node instance (same person)
+        acceptUnknownPersons: false,   // Only accept same person (IoM)
+        allowPairing: false,           // No external pairing from browser
+        establishOutgoingConnections: true,
+        allowDebugRequests: true,
+        noImport: false,
+        noExport: false
+      })
+      
+      // Initialize ConnectionsModel
+      await this.connectionsModel.init(blacklistGroup)
+      console.log('[RealBrowser] ✅ ConnectionsModel initialized - connecting to Node.js at ws://localhost:8765')
+      
+      // CHUM sync will happen automatically through ConnectionsModel
+      
+    } catch (error) {
+      console.error('[RealBrowser] Failed to set up local IoM connection:', error)
+      // Continue without IoM - browser can still work independently
+    }
   }
   
   async shutdown(): Promise<void> {

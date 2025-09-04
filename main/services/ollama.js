@@ -3,7 +3,7 @@
  * Handles communication with local Ollama instance
  */
 
-const fetch = require('node-fetch')
+import fetch from 'node-fetch'
 
 /**
  * Check if Ollama is running
@@ -116,7 +116,7 @@ async function generateWithOllama(modelName, prompt, options = {}) {
   return chatWithOllama(modelName, [{ role: 'user', content: prompt }], options)
 }
 
-module.exports = {
+export {
   isOllamaRunning,
   testOllamaModel,
   chatWithOllama,

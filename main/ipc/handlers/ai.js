@@ -3,8 +3,8 @@
  * Handles all AI-related IPC calls from renderer
  */
 
-const llmManager = require('../../services/llm-manager')
-const stateManager = require('../../state/manager')
+import llmManager from '../../services/llm-manager.js';
+import stateManager from '../../state/manager.js';
 
 const aiHandlers = {
   async chat(event, { messages, modelId }) {
@@ -246,4 +246,4 @@ const aiHandlers = {
   }
 }
 
-module.exports = aiHandlers
+export default aiHandlers

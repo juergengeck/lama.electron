@@ -43,6 +43,7 @@ export interface EnhancedMessageBubbleProps {
   onAttachmentClick?: (attachmentId: string) => void;
   onDownloadAttachment?: (attachmentId: string) => void;
   theme?: 'light' | 'dark';
+  attachmentDescriptors?: Map<string, any>; // Added to pass attachment blob data
 }
 
 // Subject hashtag chip component
@@ -109,9 +110,28 @@ const AttachmentView: React.FC<{
   onDownloadAttachment?: (attachmentId: string) => void;
   onHashtagClick?: (hashtag: string) => void;
   theme?: 'light' | 'dark';
-}> = ({ attachment, onAttachmentClick, onDownloadAttachment, onHashtagClick, theme = 'dark' }) => {
+  attachmentDescriptors?: Map<string, any>;
+}> = ({ attachment, onAttachmentClick, onDownloadAttachment, onHashtagClick, theme = 'dark', attachmentDescriptors }) => {
   
   const [isExpanded, setIsExpanded] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  
+  // Create object URL from attachment descriptor
+  React.useEffect(() => {
+    if (attachment.type === 'image' && attachmentDescriptors) {
+      const descriptor = attachmentDescriptors.get(attachment.id);
+      if (descriptor && descriptor.data) {
+        const blob = new Blob([descriptor.data], { type: descriptor.type });
+        const url = URL.createObjectURL(blob);
+        setImageUrl(url);
+        
+        // Cleanup on unmount
+        return () => {
+          URL.revokeObjectURL(url);
+        };
+      }
+    }
+  }, [attachment, attachmentDescriptors]);
   
   const getFileIcon = (type: string) => {
     switch (type) {
@@ -142,12 +162,12 @@ const AttachmentView: React.FC<{
   return (
     <div className={`attachment-view image-bubble ${theme} ${isExpanded ? 'expanded' : 'collapsed'}`}>
       {/* Image as bubble background */}
-      {attachment.thumbnail && (
+      {(attachment.thumbnail || imageUrl) && (
         <div 
           className="attachment-image-bubble" 
           onClick={handleAttachmentClick}
           style={{
-            backgroundImage: `url(${attachment.thumbnail})`
+            backgroundImage: `url(${imageUrl || attachment.thumbnail})`
           }}
         >
           {(attachment.type === 'video' || attachment.type === 'audio') && (
@@ -330,7 +350,8 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
   onHashtagClick,
   onAttachmentClick,
   onDownloadAttachment,
-  theme = 'dark'
+  theme = 'dark',
+  attachmentDescriptors
 }) => {
   
   const [showFullTimestamp, setShowFullTimestamp] = useState(false);
@@ -385,6 +406,7 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
                     onDownloadAttachment={onDownloadAttachment}
                     onHashtagClick={onHashtagClick}
                     theme={theme}
+                    attachmentDescriptors={attachmentDescriptors}
                   />
                 ))}
               </div>

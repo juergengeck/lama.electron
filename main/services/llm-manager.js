@@ -3,15 +3,20 @@
  * Handles AI model operations and MCP integration in Node.js environment
  */
 
-const { spawn } = require('child_process')
-const path = require('path')
-const EventEmitter = require('events')
+import { spawn } from 'child_process';
+import path from 'path';
+import EventEmitter from 'events';
+import { fileURLToPath } from 'url';
+import electron from 'electron';
+const { ipcMain, BrowserWindow } = electron;
+
+// Get __dirname equivalent in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Function to forward logs to renderer
 function forwardLog(level, ...args) {
   try {
-    const { ipcMain } = require('electron')
-    const { BrowserWindow } = require('electron')
     const mainWindow = BrowserWindow.getAllWindows()[0]
     
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -77,7 +82,7 @@ class LLMManager extends EventEmitter {
   async registerModels() {
     // Check for LM Studio availability (optional)
     try {
-      const lmstudio = require('./lmstudio')
+      const { default: lmstudio } = await import('./lmstudio.js');
       const isLMStudioAvailable = await lmstudio.isLMStudioRunning()
       
       if (isLMStudioAvailable) {
@@ -178,8 +183,8 @@ class LLMManager extends EventEmitter {
     
     try {
       // Import MCP SDK
-      const { Client } = require('@modelcontextprotocol/sdk/client/index.js')
-      const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js')
+      const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
       
       // Start filesystem MCP server
       const fsTransport = new StdioClientTransport({
@@ -210,7 +215,7 @@ class LLMManager extends EventEmitter {
       }
       
       // Start custom LAMA MCP server
-      await this.startLamaMCPServer()
+      // await this.startLamaMCPServer() // Disabled due to MCP SDK compatibility issues
       
       console.log(`[LLMManager] MCP initialized with ${this.mcpTools.size} tools`)
     } catch (error) {
@@ -221,8 +226,8 @@ class LLMManager extends EventEmitter {
 
   async startLamaMCPServer() {
     try {
-      const { Client } = require('@modelcontextprotocol/sdk/client/index.js')
-      const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js')
+      const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
       
       const lamaMCPPath = path.join(__dirname, '../../lama/electron/mcp-server.js')
       
@@ -277,6 +282,20 @@ class LLMManager extends EventEmitter {
     description += '```json\n{\n  "tool": "tool_name",\n  "parameters": { "param1": "value1" }\n}\n```\n'
     
     return description
+  }
+
+  getAvailableModels() {
+    // Return array of available models
+    const modelsArray = []
+    for (const [id, model] of this.models) {
+      modelsArray.push({
+        id: model.id,
+        name: model.name,
+        provider: model.provider,
+        description: model.description
+      })
+    }
+    return modelsArray
   }
 
   async chat(messages, modelId = null) {
@@ -387,9 +406,9 @@ class LLMManager extends EventEmitter {
   }
 
   async chatWithOllama(model, messages) {
-    const ollama = require('./ollama')
+    const { chatWithOllama } = await import('./ollama.js')
     
-    return await ollama.chatWithOllama(
+    return await chatWithOllama(
       model.parameters.modelName,
       messages,
       {
@@ -400,7 +419,7 @@ class LLMManager extends EventEmitter {
   }
   
   async chatWithLMStudio(model, messages) {
-    const lmstudio = require('./lmstudio')
+    const { default: lmstudio } = await import('./lmstudio.js')
     
     // Handle streaming if requested
     if (model.parameters.stream) {
@@ -434,7 +453,7 @@ class LLMManager extends EventEmitter {
   }
 
   async chatWithClaude(model, messages) {
-    const { chatWithClaude } = require('../../electron-ui/src/services/claude')
+    const { chatWithClaude } = await import('../../electron-ui/src/services/claude.js')
     
     const apiKey = process.env.ANTHROPIC_API_KEY || this.getStoredApiKey('claude')
     if (!apiKey) {
@@ -483,6 +502,32 @@ class LLMManager extends EventEmitter {
   getDefaultModel() {
     return this.models.get(this.defaultModelId)
   }
+  
+  /**
+   * Set the personId for a model (used by AIAssistantModel)
+   */
+  setModelPersonId(modelId, personId) {
+    const model = this.models.get(modelId)
+    if (model) {
+      model.personId = personId
+      console.log(`[LLMManager] Set personId for ${modelId}: ${personId?.toString().substring(0, 8)}...`)
+    }
+  }
+  
+  /**
+   * Check if a personId belongs to an AI model
+   */
+  isAIPersonId(personId) {
+    const personIdStr = personId?.toString()
+    if (!personIdStr) return false
+    
+    for (const model of this.models.values()) {
+      if (model.personId?.toString() === personIdStr) {
+        return true
+      }
+    }
+    return false
+  }
 
   debugToolsState() {
     console.log(`[LLMManager] DEBUG - Tools state:`)
@@ -521,4 +566,4 @@ class LLMManager extends EventEmitter {
   }
 }
 
-module.exports = new LLMManager()
+export default new LLMManager()

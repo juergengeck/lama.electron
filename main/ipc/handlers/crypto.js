@@ -1,119 +1,106 @@
 /**
  * Cryptographic Objects Handlers
- * Provides access to keys, certificates, and other crypto objects
+ * Provides access to keys, certificates, and other crypto objects from ONE.core
  */
 
-const fs = require('fs').promises;
-const path = require('path');
-const crypto = require('crypto');
+import nodeOneCore from '../../core/node-one-core.js';
 
 /**
- * Get available keys from ONE.CORE
+ * Get available keys from ONE.core
  */
 async function getKeys(event) {
   try {
     const keys = [];
     
-    // Check for ONE.CORE data directory
-    const dataPath = path.join(process.cwd(), 'one-data-node');
-    const keysPath = path.join(dataPath, 'keys');
-    
-    // Try to read actual key files if directory exists
-    try {
-      await fs.access(keysPath);
-      const keyFiles = await fs.readdir(keysPath);
-      
-      for (const file of keyFiles) {
-        if (file.endsWith('.key') || file.endsWith('.pub')) {
-          const filePath = path.join(keysPath, file);
-          const stats = await fs.stat(filePath);
-          const content = await fs.readFile(filePath, 'utf8');
-          
-          // Parse key type from filename or content
-          const isPrivate = file.endsWith('.key');
-          const keyType = file.includes('sign') ? 'Signing' : 
-                         file.includes('encrypt') ? 'Encryption' : 
-                         file.includes('identity') ? 'Identity' : 'General';
-          
-          keys.push({
-            id: file,
-            type: `${keyType} ${isPrivate ? 'Private Key' : 'Public Key'}`,
-            filename: file,
-            algorithm: detectKeyAlgorithm(content),
-            size: stats.size,
-            created: stats.birthtime,
-            modified: stats.mtime,
-            fingerprint: generateFingerprint(content),
-            isPrivate,
-            path: filePath
-          });
-        }
-      }
-    } catch (e) {
-      // Directory doesn't exist, use default keys
-      console.log('Keys directory not found, using defaults');
-    }
-    
-    // If no real keys found, provide example keys
-    if (keys.length === 0) {
-      // Generate example keys to show the interface
-      const identityKeyPair = crypto.generateKeyPairSync('ed25519');
-      const encryptionKeyPair = crypto.generateKeyPairSync('x25519');
-      
-      keys.push(
-        {
-          id: 'identity-private',
-          type: 'Identity Private Key',
-          filename: 'identity.key',
-          algorithm: 'Ed25519',
+    // Check if Node ONE.core is initialized
+    if (nodeOneCore.initialized && nodeOneCore.ownerId) {
+      try {
+        // Get owner identity hash from ONE.core
+        const ownerIdHash = nodeOneCore.ownerId;
+        
+        // Display the owner ID hash as the primary identity
+        keys.push({
+          id: 'owner-id',
+          type: 'Owner Identity Hash',
+          filename: 'owner.id',
+          algorithm: 'SHA256',
           size: 64,
           created: new Date(),
           modified: new Date(),
-          fingerprint: generateFingerprint(identityKeyPair.privateKey.toString('hex')),
-          isPrivate: true,
-          pemData: identityKeyPair.privateKey.toString('hex').substring(0, 64) + '...'
-        },
-        {
-          id: 'identity-public',
-          type: 'Identity Public Key',
-          filename: 'identity.pub',
-          algorithm: 'Ed25519',
-          size: 32,
-          created: new Date(),
-          modified: new Date(),
-          fingerprint: generateFingerprint(identityKeyPair.publicKey.toString('hex')),
+          fingerprint: `SHA256:${ownerIdHash.substring(0, 47)}`,
           isPrivate: false,
-          pemData: identityKeyPair.publicKey.toString('hex')
-        },
+          pemData: ownerIdHash
+        });
+        
+        // Get instance-specific keys if available
+        if (nodeOneCore.instanceModule) {
+          try {
+            const instanceInfo = {
+              id: 'instance-id',
+              type: 'Instance Identity',
+              filename: `${nodeOneCore.instanceName || 'node'}.id`,
+              algorithm: 'ONE.core',
+              size: 64,
+              created: new Date(),
+              modified: new Date(),
+              fingerprint: `Instance:${nodeOneCore.instanceName}`,
+              isPrivate: false,
+              pemData: nodeOneCore.instanceName || 'Node.js Hub'
+            };
+            keys.push(instanceInfo);
+          } catch (e) {
+            console.log('Could not get instance info:', e);
+          }
+        }
+        
+        // Get LeUTe model identity if available
+        if (nodeOneCore.leuteModel) {
+          try {
+            // Get the owner's Someone model from LeUTe
+            const ownerSomeone = await nodeOneCore.leuteModel.me();
+            if (ownerSomeone) {
+              keys.push({
+                id: 'leute-identity',
+                type: 'LeUTe Identity',
+                filename: 'leute.id',
+                algorithm: 'ONE.core LeUTe',
+                size: 64,
+                created: new Date(),
+                modified: new Date(),
+                fingerprint: `LeUTe:${ownerSomeone.idHash.substring(0, 40)}`,
+                isPrivate: false,
+                pemData: ownerSomeone.idHash
+              });
+            }
+          } catch (e) {
+            console.log('Could not get LeUTe identity:', e);
+          }
+        }
+      } catch (e) {
+        console.log('Error getting keys from ONE.core:', e);
+      }
+    }
+    
+    // If no keys available from ONE.core, provide placeholder data
+    if (keys.length === 0) {
+      keys.push(
         {
-          id: 'encryption-private',
-          type: 'Encryption Private Key',
-          filename: 'encryption.key',
-          algorithm: 'X25519',
-          size: 32,
+          id: 'no-keys',
+          type: 'No Keys Available',
+          filename: 'N/A',
+          algorithm: 'N/A',
+          size: 0,
           created: new Date(),
           modified: new Date(),
-          fingerprint: generateFingerprint(encryptionKeyPair.privateKey.toString('hex')),
-          isPrivate: true,
-          pemData: encryptionKeyPair.privateKey.toString('hex').substring(0, 64) + '...'
-        },
-        {
-          id: 'encryption-public',
-          type: 'Encryption Public Key',
-          filename: 'encryption.pub',
-          algorithm: 'X25519',
-          size: 32,
-          created: new Date(),
-          modified: new Date(),
-          fingerprint: generateFingerprint(encryptionKeyPair.publicKey.toString('hex')),
+          fingerprint: 'ONE.core not initialized',
           isPrivate: false,
-          pemData: encryptionKeyPair.publicKey.toString('hex')
+          pemData: 'Please log in to view keys'
         }
       );
     }
     
     console.log('[Crypto] Returning keys:', keys.length)
-    return keys;
+    return { success: true, data: keys };
   } catch (error) {
     console.error('[Crypto] Failed to get keys:', error);
     throw error;
@@ -121,76 +108,92 @@ async function getKeys(event) {
 }
 
 /**
- * Get available certificates
+ * Get available certificates from ONE.core
  */
 async function getCertificates(event) {
   try {
     const certificates = [];
     
-    // Check for certificates directory
-    const dataPath = path.join(process.cwd(), 'one-data-node');
-    const certsPath = path.join(dataPath, 'certs');
-    
-    try {
-      await fs.access(certsPath);
-      const certFiles = await fs.readdir(certsPath);
-      
-      for (const file of certFiles) {
-        if (file.endsWith('.crt') || file.endsWith('.pem') || file.endsWith('.cert')) {
-          const filePath = path.join(certsPath, file);
-          const stats = await fs.stat(filePath);
-          const content = await fs.readFile(filePath, 'utf8');
-          
-          certificates.push({
-            id: file,
-            type: 'X.509 Certificate',
-            filename: file,
-            subject: extractCertSubject(content),
-            issuer: extractCertIssuer(content),
-            validFrom: stats.birthtime,
-            validTo: new Date(stats.birthtime.getTime() + 365 * 24 * 60 * 60 * 1000), // 1 year
-            size: stats.size,
-            fingerprint: generateFingerprint(content),
-            path: filePath
-          });
-        }
-      }
-    } catch (e) {
-      console.log('Certs directory not found, using defaults');
-    }
-    
-    // If no real certificates found, provide examples
-    if (certificates.length === 0) {
-      certificates.push(
-        {
-          id: 'self-signed-identity',
-          type: 'Self-Signed Identity Certificate',
-          filename: 'identity.crt',
-          subject: 'CN=User Identity, O=LAMA, C=US',
-          issuer: 'CN=User Identity, O=LAMA, C=US',
+    // Check if Node ONE.core is initialized
+    if (nodeOneCore.initialized && nodeOneCore.ownerId) {
+      try {
+        // Get identity certificate from ONE.core if available
+        const ownerIdHash = nodeOneCore.ownerId;
+        
+        certificates.push({
+          id: 'owner-cert',
+          type: 'Owner Certificate',
+          filename: 'owner.crt',
+          subject: `CN=Owner, ID=${ownerIdHash.substring(0, 16)}`,
+          issuer: 'CN=ONE.core Self-Signed',
           validFrom: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
           validTo: new Date(Date.now() + 335 * 24 * 60 * 60 * 1000),
           size: 1024,
-          fingerprint: 'SHA256:' + crypto.randomBytes(32).toString('hex').substring(0, 47),
-          serialNumber: crypto.randomBytes(8).toString('hex').toUpperCase()
-        },
-        {
-          id: 'device-cert',
-          type: 'Device Certificate',
-          filename: 'device.crt',
-          subject: 'CN=Desktop Device, O=LAMA IoM, C=US',
-          issuer: 'CN=User Identity, O=LAMA, C=US',
-          validFrom: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-          validTo: new Date(Date.now() + 358 * 24 * 60 * 60 * 1000),
-          size: 1024,
-          fingerprint: 'SHA256:' + crypto.randomBytes(32).toString('hex').substring(0, 47),
-          serialNumber: crypto.randomBytes(8).toString('hex').toUpperCase()
+          fingerprint: `SHA256:${ownerIdHash.substring(0, 47)}`,
+          serialNumber: ownerIdHash.substring(0, 16).toUpperCase()
+        });
+        
+        // Add instance certificate if available
+        if (nodeOneCore.instanceName) {
+          certificates.push({
+            id: 'instance-cert',
+            type: 'Instance Certificate',
+            filename: `${nodeOneCore.instanceName}.crt`,
+            subject: `CN=${nodeOneCore.instanceName}, O=LAMA IoM`,
+            issuer: `CN=Owner ${ownerIdHash.substring(0, 8)}, O=LAMA ONE.core`,
+            validFrom: new Date(),
+            validTo: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+            size: 1024,
+            fingerprint: `Instance:${nodeOneCore.instanceName}`,
+            serialNumber: Date.now().toString(16).toUpperCase()
+          });
         }
-      );
+        
+        // Add IoM group certificate if IoMManager is available
+        if (nodeOneCore.iomManager) {
+          try {
+            const iomGroup = await nodeOneCore.iomManager.iomGroup();
+            if (iomGroup) {
+              certificates.push({
+                id: 'iom-cert',
+                type: 'IoM Group Certificate',
+                filename: 'iom-group.crt',
+                subject: `CN=IoM Group, ID=${iomGroup.idHash.substring(0, 16)}`,
+                issuer: `CN=Owner ${ownerIdHash.substring(0, 8)}`,
+                validFrom: new Date(),
+                validTo: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                size: 1024,
+                fingerprint: `IoM:${iomGroup.idHash.substring(0, 44)}`,
+                serialNumber: iomGroup.idHash.substring(0, 16).toUpperCase()
+              });
+            }
+          } catch (e) {
+            console.log('Could not get IoM group:', e);
+          }
+        }
+      } catch (e) {
+        console.log('Error getting certificates from ONE.core:', e);
+      }
+    }
+    
+    // If no certificates available, provide placeholder
+    if (certificates.length === 0) {
+      certificates.push({
+        id: 'no-certs',
+        type: 'No Certificates Available',
+        filename: 'N/A',
+        subject: 'N/A',
+        issuer: 'N/A',
+        validFrom: new Date(),
+        validTo: new Date(),
+        size: 0,
+        fingerprint: 'ONE.core not initialized',
+        serialNumber: 'Please log in to view certificates'
+      });
     }
     
     console.log('[Crypto] Returning certificates:', certificates.length)
-    return certificates;
+    return { success: true, data: certificates };
   } catch (error) {
     console.error('[Crypto] Failed to get certificates:', error);
     throw error;
@@ -198,64 +201,88 @@ async function getCertificates(event) {
 }
 
 /**
- * Export a key or certificate
+ * Export a key or certificate from ONE.core
  */
 async function exportCryptoObject(event, { type, id, format }) {
   try {
-    // In a real implementation, this would export the actual key/cert
-    // For now, return a placeholder response
-    const exportData = {
-      type,
-      id,
-      format,
-      data: `-----BEGIN ${type.toUpperCase()}-----\n` +
-            crypto.randomBytes(48).toString('base64') + '\n' +
-            `-----END ${type.toUpperCase()}-----`,
-      filename: `${id}.${format || 'pem'}`
-    };
+    let exportData = null;
     
-    return exportData;
+    // Check if Node ONE.core is initialized
+    if (nodeOneCore.initialized && nodeOneCore.ownerId) {
+      const ownerIdHash = nodeOneCore.ownerId;
+      
+      // Export based on the requested ID
+      switch(id) {
+        case 'owner-id':
+          exportData = {
+            type: 'IDENTITY',
+            id,
+            format: format || 'hex',
+            data: ownerIdHash,
+            filename: `owner-id.${format || 'txt'}`
+          };
+          break;
+          
+        case 'instance-id':
+          exportData = {
+            type: 'INSTANCE',
+            id,
+            format: format || 'txt',
+            data: nodeOneCore.instanceName || 'Node.js Hub',
+            filename: `instance.${format || 'txt'}`
+          };
+          break;
+          
+        case 'leute-identity':
+          try {
+            const ownerSomeone = await nodeOneCore.leuteModel?.me();
+            exportData = {
+              type: 'LEUTE',
+              id,
+              format: format || 'hex',
+              data: ownerSomeone?.idHash || 'Not available',
+              filename: `leute.${format || 'txt'}`
+            };
+          } catch (e) {
+            exportData = {
+              type: 'LEUTE',
+              id,
+              format: format || 'txt',
+              data: 'LeUTe model not available',
+              filename: 'error.txt'
+            };
+          }
+          break;
+          
+        default:
+          exportData = {
+            type,
+            id,
+            format,
+            data: 'Key not found',
+            filename: `${id}.txt`
+          };
+      }
+    } else {
+      exportData = {
+        type,
+        id,
+        format,
+        data: 'ONE.core not initialized',
+        filename: 'error.txt'
+      };
+    }
+    
+    return { success: true, data: exportData };
   } catch (error) {
     console.error('[Crypto] Failed to export:', error);
     throw error;
   }
 }
 
-/**
- * Helper functions
- */
+// Helper functions removed - using ONE.core's built-in crypto functionality
 
-function detectKeyAlgorithm(content) {
-  if (content.includes('RSA')) return 'RSA';
-  if (content.includes('EC') || content.includes('ECDSA')) return 'ECDSA';
-  if (content.includes('Ed25519')) return 'Ed25519';
-  if (content.includes('X25519')) return 'X25519';
-  return 'Unknown';
-}
-
-function generateFingerprint(content) {
-  const hash = crypto.createHash('sha256');
-  hash.update(content);
-  const digest = hash.digest('hex');
-  // Format as fingerprint (XX:XX:XX:...)
-  return 'SHA256:' + digest.substring(0, 47);
-}
-
-function extractCertSubject(content) {
-  // In a real implementation, parse the certificate
-  // For now, return a placeholder
-  const match = content.match(/Subject: (.+)/);
-  return match ? match[1] : 'CN=Unknown';
-}
-
-function extractCertIssuer(content) {
-  // In a real implementation, parse the certificate
-  // For now, return a placeholder
-  const match = content.match(/Issuer: (.+)/);
-  return match ? match[1] : 'CN=Unknown Issuer';
-}
-
-module.exports = {
+export default {
   getKeys,
   getCertificates,
   exportCryptoObject

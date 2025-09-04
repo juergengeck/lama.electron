@@ -3,7 +3,7 @@
  * Minimal working version based on one.leute pattern
  */
 
-console.log('[BrowserInitSimple] Starting initialization...')
+console.log('[BrowserInitSimple] Module loaded')
 
 // Use standard ONE.core platform abstraction - no explicit platform loading needed  
 // The browser platform will be detected and loaded automatically
@@ -17,6 +17,7 @@ import '@refinio/one.models/lib/recipes/Certificates/RightToDeclareTrustedKeysFo
 import SingleUserNoAuth from '@refinio/one.models/lib/models/Authenticator/SingleUserNoAuth.js'
 import RecipesStable from '@refinio/one.models/lib/recipes/recipes-stable.js'
 import RecipesExperimental from '@refinio/one.models/lib/recipes/recipes-experimental.js'
+import { LamaRecipes } from '../recipes/index.js'
 import { ReverseMapsStable } from '@refinio/one.models/lib/recipes/reversemaps-stable.js'
 import { ReverseMapsExperimental } from '@refinio/one.models/lib/recipes/reversemaps-experimental.js'
 
@@ -31,73 +32,20 @@ export class SimpleBrowserInit {
 
   async initialize(): Promise<{ ready: boolean; needsAuth: boolean }> {
     if (this.initialized) {
-      console.log('[BrowserInitSimple] Already initialized')
+      console.log('[BrowserInitSimple] Already checked - ready for login')
       return { ready: true, needsAuth: !this.currentUser }
     }
 
-    console.log('[BrowserInitSimple] Creating SingleUserNoAuth...')
+    console.log('[BrowserInitSimple] NO ONE.CORE YET - Waiting for user login')
 
-    try {
-      // Wait for storage to be ready
-      await new Promise(resolve => setTimeout(resolve, 1000))
-
-      // Create the authenticator (like in one.leute)
-      this.one = new SingleUserNoAuth({
-        recipes: [...RecipesStable, ...RecipesExperimental],
-        reverseMaps: new Map([
-          ...ReverseMapsStable,
-          ...ReverseMapsExperimental
-        ]),
-        storageInitTimeout: 20000
-      })
-
-      // Set up event handlers
-      this.one.onLogin.listen(this.handleLogin.bind(this))
-      this.one.onLogout.listen(this.handleLogout.bind(this))
-
-      this.initialized = true
-      console.log('[BrowserInitSimple] ✅ Initialized successfully')
-
-      // Check if already logged in
-      const isRegistered = await this.one.isRegistered()
-      if (isRegistered) {
-        console.log('[BrowserInitSimple] User is registered, checking for saved credentials...')
-        
-        // Try to get saved credentials from localStorage
-        const savedUser = localStorage.getItem('lama-last-user')
-        if (savedUser) {
-          try {
-            const { username, hint } = JSON.parse(savedUser)
-            console.log(`[BrowserInitSimple] Found saved user: ${username}`)
-            
-            // For demo purposes, password is same as username
-            // In production, you'd use proper credential management
-            const password = hint || username
-            this.loginCredentials = { username, password }
-            
-            const email = `${username}@lama.local`
-            const instanceName = `lama-${username}`
-            
-            await this.one.loginOrRegister(email, password, instanceName)
-            return { ready: true, needsAuth: false }
-          } catch (error) {
-            console.warn('[BrowserInitSimple] Auto-login with saved credentials failed:', error)
-            // Clear invalid saved credentials
-            localStorage.removeItem('lama-last-user')
-            return { ready: true, needsAuth: true }
-          }
-        }
-        
-        // No saved credentials, user needs to login
-        return { ready: true, needsAuth: true }
-      }
-
-      return { ready: true, needsAuth: true }
-
-    } catch (error) {
-      console.error('[BrowserInitSimple] Initialization failed:', error)
-      return { ready: true, needsAuth: true }
-    }
+    // DON'T initialize ONE.core here!
+    // Just mark as ready so the UI can render the login screen
+    this.initialized = true
+    
+    // Removed auto-login to prevent IndexedDB conflicts
+    
+    // Always need auth - we haven't initialized ONE.core yet
+    return { ready: true, needsAuth: true }
   }
 
   private async handleLogin(instanceName: string, secret: string): Promise<void> {
@@ -112,6 +60,16 @@ export class SimpleBrowserInit {
 
     // Initialize AppModel after successful login
     try {
+      console.log('[BrowserInitSimple] DEBUG: About to initialize AppModel')
+      console.log('[BrowserInitSimple] DEBUG: nodeInstanceInfo on window exists:', !!((window as any).nodeInstanceInfo))
+      if ((window as any).nodeInstanceInfo) {
+        const nodeInfo = (window as any).nodeInstanceInfo
+        console.log('[BrowserInitSimple] DEBUG: nodeInstanceInfo details:')
+        console.log('  - nodeId:', nodeInfo.nodeId)
+        console.log('  - endpoint:', nodeInfo.endpoint)  
+        console.log('  - pairingInvite exists:', !!nodeInfo.pairingInvite)
+      }
+      
       await this.initializeAppModel()
     } catch (error) {
       console.error('[BrowserInitSimple] Failed to initialize AppModel:', error)
@@ -150,6 +108,17 @@ export class SimpleBrowserInit {
       if (!ownerId) {
         throw new Error('No owner ID available from ONE.CORE')
       }
+      
+      console.log('[BrowserInitSimple] Browser instance owner ID:', ownerId)
+      
+      // Also send to Node.js for comparison  
+      if (window.electronAPI && window.electronAPI.send) {
+        window.electronAPI.send('debug', {
+          type: 'browser-owner-id',
+          ownerId: ownerId,
+          timestamp: new Date().toISOString()
+        })
+      }
 
       // Create AppModel with browser-specific config
       this.appModel = new AppModel({
@@ -158,33 +127,16 @@ export class SimpleBrowserInit {
         commServerUrl: '' // Browser instance doesn't use comm server directly
       })
 
-      // Provision Node.js instance FIRST if in Electron (so pairing invitation is ready)
-      if (window.electronAPI && this.loginCredentials) {
-        console.log('[BrowserInitSimple] Provisioning Node.js instance...')
-        try {
-          const result = await window.electronAPI.invoke('provision:node', {
-            user: { 
-              id: ownerId,
-              name: this.loginCredentials.username,
-              password: this.loginCredentials.password
-            },
-            config: {
-              storageRole: 'archive',
-              capabilities: ['network', 'storage']
-            }
-          })
-          console.log('[BrowserInitSimple] Node.js provisioning result:', result)
-          
-          // Store Node instance info for endpoint creation
-          ;(window as any).nodeInstanceInfo = result
-        } catch (error) {
-          console.error('[BrowserInitSimple] Failed to provision Node.js instance:', error)
-          // Continue anyway - browser works without Node.js
-        }
+      // Node.js was already provisioned in login() before browser ONE.core init
+      // Just retrieve the stored info for connection
+      const nodeInfo = (window as any).nodeInstanceInfo
+      if (nodeInfo) {
+        console.log('[BrowserInitSimple] Node.js instance available:', nodeInfo.nodeId)
+        console.log('[BrowserInitSimple] Will connect to Node at:', nodeInfo.endpoint)
       }
       
-      // Initialize the AppModel AFTER Node.js is provisioned
-      console.warn('[BrowserInitSimple] Starting AppModel.init() now...')
+      // Initialize the AppModel - Node.js is already ready
+      console.warn('[BrowserInitSimple] Starting AppModel.init()...')
       await this.appModel.init(ownerId)
       console.log('[BrowserInitSimple] ✅ AppModel initialized successfully')
       console.warn('[BrowserInitSimple] AppModel.init() completed')
@@ -199,18 +151,91 @@ export class SimpleBrowserInit {
   async login(username: string, password: string): Promise<{ success: boolean; user?: any }> {
     console.log('[BrowserInitSimple] Login attempt:', username)
 
-    if (!this.one) {
-      throw new Error('Not initialized')
-    }
-
-    // Store credentials for Node.js provisioning
+    // Store credentials
     this.loginCredentials = { username, password }
-
     const email = `${username}@lama.local`
     const instanceName = `lama-${username}`
 
     try {
-      await this.one.loginOrRegister(email, password, instanceName)
+      // STEP 1: Initialize/provision Node.js instance FIRST via IPC
+      console.log('[BrowserInitSimple] Step 1: Initializing Node.js instance via IPC...')
+      if (window.electronAPI) {
+        console.log('[BrowserInitSimple] Calling IPC provision:node with:', { username, password: '***' })
+        const nodeResult = await window.electronAPI.invoke('provision:node', {
+          user: { 
+            name: username,
+            password: password
+          }
+          // Browser instance info will be sent AFTER browser ONE.core init
+        })
+        
+        console.log('[BrowserInitSimple] IPC returned:', nodeResult)
+        
+        if (!nodeResult || !nodeResult.success) {
+          throw new Error(`Failed to initialize Node.js instance: ${nodeResult?.error || 'No response'}`)
+        }
+        console.log('[BrowserInitSimple] ✅ Node.js instance ready:', nodeResult.nodeId)
+        console.log('[BrowserInitSimple] Node endpoint:', nodeResult.endpoint)
+        
+        // Store Node info for later connection
+        ;(window as any).nodeInstanceInfo = {
+          nodeId: nodeResult.nodeId,
+          endpoint: nodeResult.endpoint || 'ws://localhost:8765',
+          pairingInvite: nodeResult.pairingInvite
+        }
+        
+        console.log('[BrowserInitSimple] DEBUG: Stored nodeInstanceInfo on window:')
+        console.log('[BrowserInitSimple] - nodeId:', nodeResult.nodeId)
+        console.log('[BrowserInitSimple] - endpoint:', nodeResult.endpoint)
+        console.log('[BrowserInitSimple] - pairingInvite exists:', !!nodeResult.pairingInvite)
+        if (nodeResult.pairingInvite) {
+          console.log('[BrowserInitSimple] - pairingInvite.token:', nodeResult.pairingInvite.token)
+          console.log('[BrowserInitSimple] - pairingInvite.url:', nodeResult.pairingInvite.url)
+        }
+      } else {
+        // Cannot proceed without Electron/Node.js
+        throw new Error('Electron API not available - cannot initialize Node.js instance')
+      }
+
+      // STEP 2: NOW Initialize Browser ONE.core instance (ONLY after Node.js is ready)
+      console.log('[BrowserInitSimple] Step 2: Initializing browser ONE.core (Node.js is ready)...')
+      
+      // Import same recipes as Node.js for consistent crypto context
+      const { CORE_RECIPES } = await import('@refinio/one.core/lib/recipes.js')
+      
+      // Create the authenticator NOW (after Node is ready) - same config as Node.js
+      this.one = new SingleUserNoAuth({
+        recipes: [
+          ...(CORE_RECIPES || []),
+          ...RecipesStable,
+          ...RecipesExperimental,
+          ...LamaRecipes
+        ],
+        reverseMaps: new Map([
+          ...ReverseMapsStable,
+          ...ReverseMapsExperimental
+        ]),
+        storageInitTimeout: 20000
+      })
+
+      // Set up event handlers
+      this.one.onLogin.listen(this.handleLogin.bind(this))
+      this.one.onLogout.listen(this.handleLogout.bind(this))
+
+      // Check if already registered
+      const isRegistered = await this.one.isRegistered()
+      
+      if (isRegistered) {
+        console.log('[BrowserInitSimple] Instance already registered, logging in...')
+        await this.one.login()
+      } else {
+        console.log('[BrowserInitSimple] Registering new instance with email:', email)
+        await this.one.register({
+          email: email,
+          instanceName: instanceName,
+          secret: password
+        })
+      }
 
       // Wait for login event
       let attempts = 0
@@ -220,6 +245,26 @@ export class SimpleBrowserInit {
       }
 
       if (this.currentUser) {
+        console.log('[BrowserInitSimple] ✅ Browser instance logged in')
+        
+        // STEP 3: Accept pairing invitation to establish contact relationship
+        // NOTE: We'll use AppModel's ConnectionsModel which is created during AppModel.init()
+        // For now, just store the invitation for AppModel to process
+        const nodeInfo = (window as any).nodeInstanceInfo
+        if (nodeInfo?.pairingInvite) {
+          console.log('[BrowserInitSimple] Step 3: Pairing invitation received from Node.js')
+          console.log('[BrowserInitSimple] Token:', nodeInfo.pairingInvite.token)
+          console.log('[BrowserInitSimple] URL:', nodeInfo.pairingInvite.url)
+          console.log('[BrowserInitSimple] Invitation will be accepted by AppModel during setupNodeConnection()')
+          
+          // Store invitation for AppModel to use
+          ;(window as any).pendingPairingInvitation = nodeInfo.pairingInvite
+        } else {
+          console.warn('[BrowserInitSimple] No pairing invitation from Node.js - contact relationship not established')
+          console.warn('[BrowserInitSimple] Connection may fail without contact relationship')
+        }
+        
+        console.log('[BrowserInitSimple] Both instances ready for federation')
         return { success: true, user: this.currentUser }
       } else {
         throw new Error('Login event not fired')

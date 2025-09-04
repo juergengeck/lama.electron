@@ -2,10 +2,10 @@
  * Chat IPC Handlers
  */
 
-const stateManager = require('../../state/manager')
-const instanceManager = require('../../core/instance')
-const nodeProvisioning = require('../../hybrid/node-provisioning')
-const nodeInstance = require('../../hybrid/real-node-instance')
+import stateManager from '../../state/manager.js';
+import instanceManager from '../../core/instance.js';
+import nodeProvisioning from '../../hybrid/node-provisioning.js';
+import nodeOneCore from '../../core/node-one-core.js';
 
 const chatHandlers = {
   async sendMessage(event, { conversationId, text, attachments = [] }) {
@@ -17,7 +17,7 @@ const chatHandlers = {
         throw new Error('Node not provisioned')
       }
       
-      if (!nodeInstance.topicModel) {
+      if (!nodeOneCore.topicModel) {
         throw new Error('TopicModel not initialized')
       }
       
@@ -26,7 +26,58 @@ const chatHandlers = {
         throw new Error('User not authenticated')
       }
       
-      // For now, create message locally until TopicModel is properly integrated
+      // Get or create topic room for the conversation
+      let topicRoom
+      try {
+        topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+      } catch (error) {
+        // Topic doesn't exist, create it
+        console.log('[ChatHandler] Topic does not exist, creating:', conversationId)
+        await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
+        
+        // CRITICAL: Also create the channel so we can post messages
+        if (nodeOneCore.channelManager) {
+          try {
+            console.log('[ChatHandler] Creating channel for new topic')
+            await nodeOneCore.channelManager.createChannel(conversationId, nodeOneCore.ownerId)
+            console.log('[ChatHandler] Channel created successfully')
+            
+            // Grant IoM group access for sync between local instances
+            if (nodeOneCore.iomGroup) {
+              const { createAccess } = await import('@refinio/one.core/lib/access.js')
+              const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+              const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
+              
+              const channelInfoHash = await calculateIdHashOfObj({
+                $type$: 'ChannelInfo',
+                id: conversationId,
+                owner: nodeOneCore.ownerId
+              })
+              
+              await createAccess([{
+                id: channelInfoHash,
+                person: [],
+                group: [nodeOneCore.iomGroup.groupIdHash],
+                mode: SET_ACCESS_MODE.ADD
+              }])
+              
+              console.log('[ChatHandler] IoM group access granted for channel:', conversationId)
+            }
+          } catch (channelErr) {
+            console.log('[ChatHandler] Channel creation result:', channelErr?.message || 'May already exist')
+          }
+        }
+        
+        topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+      }
+      
+      // Send message through TopicModel (this syncs via ChannelManager)
+      // TopicRoom.sendMessage expects (message, author, channelOwner)
+      // undefined author means "use my main identity"
+      // undefined channelOwner means "use my channel"
+      await topicRoom.sendMessage(text, undefined, undefined)
+      
+      // Create message object for UI
       const message = {
         id: `msg-${Date.now()}`,
         conversationId,
@@ -36,9 +87,6 @@ const chatHandlers = {
         timestamp: new Date().toISOString(),
         status: 'sent'
       }
-      
-      // TODO: Actually send through TopicModel when properly initialized
-      // await nodeInstance.topicModel.sendMessage(conversationId, text, attachments)
       
       // Add to state for UI
       stateManager.addMessage(conversationId, message)
@@ -63,9 +111,51 @@ const chatHandlers = {
     console.log('[ChatHandler] Get messages:', { conversationId, limit, offset })
     
     try {
-      // For now, just use state manager until TopicModel is properly integrated
-      const messages = stateManager.getMessages(conversationId) || []
-      const paginated = messages.slice(offset, offset + limit)
+      // Check if node is provisioned
+      if (!nodeProvisioning.isProvisioned() || !nodeOneCore.topicModel) {
+        // Fallback to state manager if not ready
+        const messages = stateManager.getMessages(conversationId) || []
+        const paginated = messages.slice(offset, offset + limit)
+        return {
+          success: true,
+          data: {
+            messages: paginated,
+            total: messages.length,
+            hasMore: offset + limit < messages.length
+          }
+        }
+      }
+      
+      // Get messages from TopicModel
+      let topicRoom
+      try {
+        topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+      } catch (error) {
+        // Topic doesn't exist yet
+        return {
+          success: true,
+          data: {
+            messages: [],
+            total: 0,
+            hasMore: false
+          }
+        }
+      }
+      
+      // Get messages from the topic room
+      const messages = await topicRoom.getRecentMessages(limit, offset)
+      
+      // Transform messages to UI format
+      const formattedMessages = messages.map(msg => ({
+        id: msg.hash || msg.id,
+        conversationId,
+        text: msg.text || msg.content,
+        sender: msg.sender || msg.author,
+        timestamp: msg.timestamp || new Date().toISOString(),
+        status: 'received'
+      }))
+      
+      const paginated = formattedMessages
       
       return {
         success: true,
@@ -99,7 +189,7 @@ const chatHandlers = {
       // If not in state manager but node is provisioned, get from node
       if (!userId && nodeProvisioning.isProvisioned()) {
         const user = nodeProvisioning.getUser()
-        userId = user?.id || nodeInstance.ownerId
+        userId = user?.id || nodeOneCore.ownerId
         
         // Update state manager for consistency
         if (user) {
@@ -132,8 +222,8 @@ const chatHandlers = {
       }
       
       // TODO: Create in TopicModel when properly initialized
-      // if (nodeInstance.topicModel) {
-      //   await nodeInstance.topicModel.createTopic({type, participants, name})
+      // if (nodeOneCore.topicModel) {
+      //   await nodeOneCore.topicModel.createTopic({type, participants, name})
       // }
       
       // Add to state for UI
@@ -215,4 +305,4 @@ const chatHandlers = {
   }
 }
 
-module.exports = chatHandlers
+export default chatHandlers

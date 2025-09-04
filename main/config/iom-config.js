@@ -3,7 +3,7 @@
  * Central configuration for Internet of Me replication and monitoring
  */
 
-module.exports = {
+export default {
   // Event storage configuration
   events: {
     // Maximum number of replication events to keep in memory

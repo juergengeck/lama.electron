@@ -3,21 +3,23 @@
  * Receives provisioning from browser instance and initializes
  */
 
-const { ipcMain } = require('electron')
-const realNodeInstance = require('./real-node-instance')
-const stateManager = require('../state/manager')
+import electron from 'electron';
+const { ipcMain } = electron;
+import nodeOneCore from '../core/node-one-core.js';
+import stateManager from '../state/manager.js';
 
 class NodeProvisioning {
   constructor() {
-    this.provisioned = false
-    this.credential = null
     this.user = null
   }
 
   initialize() {
     // Listen for provisioning requests from browser
     ipcMain.handle('provision:node', async (event, provisioningData) => {
-      return await this.provision(provisioningData)
+      console.log('[NodeProvisioning] IPC handler invoked with:', JSON.stringify(provisioningData))
+      const result = await this.provision(provisioningData)
+      console.log('[NodeProvisioning] IPC returning result:', JSON.stringify(result))
+      return result
     })
     
     console.log('[NodeProvisioning] Listening for provisioning requests')
@@ -26,44 +28,133 @@ class NodeProvisioning {
   async provision(provisioningData) {
     console.log('[NodeProvisioning] Received provisioning request')
     
-    // Check if already provisioned
-    if (this.provisioned) {
-      console.log('[NodeProvisioning] Node already provisioned, returning existing instance')
+    // Check if Node is actually initialized WITH an owner ID
+    const nodeInfo = nodeOneCore.getInfo()
+    if (nodeInfo.initialized && nodeInfo.ownerId) {
+      console.log('[NodeProvisioning] Node already fully initialized')
+      
+      // Create profile with OneInstanceEndpoint for browser to discover
+      console.log('[NodeProvisioning] Creating profile with OneInstanceEndpoint for browser discovery')
+      
+      try {
+        const { getInstanceIdHash } = await import('@refinio/one.core/lib/instance.js')
+        const { getDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
+        const { default: ProfileModel } = await import('@refinio/one.models/lib/models/Leute/ProfileModel.js')
+        
+        const instanceId = getInstanceIdHash()
+        const personId = nodeInfo.ownerId
+        
+        // Create the OneInstanceEndpoint for the Node
+        const personKeys = await getDefaultKeys(personId)
+        const instanceKeys = await getDefaultKeys(instanceId)
+        
+        const endpoint = {
+          $type$: 'OneInstanceEndpoint',
+          personId: personId,
+          instanceId: instanceId,
+          personKeys: personKeys,
+          instanceKeys: instanceKeys,
+          url: 'ws://localhost:8765'  // Direct socket listener
+        }
+        
+        // Get or create profile for the Node's owner
+        const me = await nodeOneCore.leuteModel.me()
+        console.log('[NodeProvisioning] Getting main profile for Node person:', personId)
+        let profile = await me.mainProfile()
+        
+        if (!profile) {
+          // Create profile on-the-fly
+          console.log('[NodeProvisioning] No existing profile found, creating new one...')
+          profile = await ProfileModel.constructWithNewProfile(personId, personId, 'default')
+          console.log('[NodeProvisioning] Created new profile for Node instance:', profile.idHash)
+        } else {
+          console.log('[NodeProvisioning] Using existing profile:', profile.idHash)
+        }
+        
+        // Ensure communicationEndpoints array exists
+        if (!profile.communicationEndpoints) {
+          profile.communicationEndpoints = []
+          console.log('[NodeProvisioning] Initialized empty communicationEndpoints array')
+        } else {
+          console.log('[NodeProvisioning] Existing communicationEndpoints:', profile.communicationEndpoints.length, 'endpoints')
+        }
+        
+        // Add or update the endpoint
+        const existingIndex = profile.communicationEndpoints.findIndex(
+          ep => ep.$type$ === 'OneInstanceEndpoint' && ep.instanceId === instanceId
+        )
+        
+        if (existingIndex >= 0) {
+          profile.communicationEndpoints[existingIndex] = endpoint
+          console.log('[NodeProvisioning] Updated existing OneInstanceEndpoint at index:', existingIndex)
+        } else {
+          profile.communicationEndpoints.push(endpoint)
+          console.log('[NodeProvisioning] Added new OneInstanceEndpoint to profile')
+          console.log('[NodeProvisioning] Total endpoints now:', profile.communicationEndpoints.length)
+        }
+        
+        console.log('[NodeProvisioning] Saving profile with endpoint...')
+        await profile.saveAndLoad()
+        console.log('[NodeProvisioning] ✅ Profile saved successfully with OneInstanceEndpoint')
+        console.log('[NodeProvisioning] Node person ID:', personId?.substring(0, 8))
+        console.log('[NodeProvisioning] Endpoint URL:', endpoint.url)
+        
+      } catch (error) {
+        console.error('[NodeProvisioning] Failed to create profile with endpoint:', error)
+      }
+      
+      // Create pairing invitation using the Node's own pairing manager
+      let pairingInvite = null
+      try {
+        if (nodeOneCore.connectionsModel && nodeOneCore.connectionsModel.pairing) {
+          console.log('[NodeProvisioning] Creating pairing invitation for browser connection...')
+          
+          // Use the proper API - let the Node instance create its own invitation
+          const invitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
+          
+          // Override URL to use local socket instead of CommServer
+          pairingInvite = {
+            ...invitation,
+            url: 'ws://localhost:8765'
+          }
+          
+          console.log('[NodeProvisioning] Created pairing invitation for already-initialized Node')
+          console.log('[NodeProvisioning] Pairing token:', pairingInvite.token)
+        }
+      } catch (error) {
+        console.error('[NodeProvisioning] Failed to create pairing invitation:', error)
+      }
+      
+      console.log('[NodeProvisioning] IPC returning result:', JSON.stringify({
+        success: true,
+        nodeId: nodeInfo.ownerId,
+        endpoint: 'ws://localhost:8765',
+        pairingInvite: pairingInvite
+      }, null, 2))
+      
       return {
         success: true,
-        nodeId: this.user?.id || 'node-' + Date.now(),
-        endpoint: 'ws://localhost:8765'
+        nodeId: nodeInfo.ownerId,
+        endpoint: 'ws://localhost:8765',
+        pairingInvite: pairingInvite  // Include pairing invitation
       }
+    } else if (nodeInfo.initialized && !nodeInfo.ownerId) {
+      console.log('[NodeProvisioning] Node initialized but no owner ID yet, re-initializing...')
+      // Continue with initialization
     }
-    
-    // Check if currently provisioning (prevent duplicate calls)
-    if (this.isProvisioning) {
-      console.log('[NodeProvisioning] Already provisioning, waiting...')
-      while (this.isProvisioning) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-      return {
-        success: true,
-        nodeId: this.user?.id || 'node-' + Date.now(),
-        endpoint: 'ws://localhost:8765'
-      }
-    }
-    
-    this.isProvisioning = true
     
     try {
-      // Validate credential
-      if (!this.validateCredential(provisioningData?.credential)) {
-        throw new Error('Invalid provisioning credential')
+      // Simple validation - just need username and password
+      if (!provisioningData?.user?.name || !provisioningData?.user?.password) {
+        throw new Error('Username and password required for provisioning')
       }
       
-      // Store credential and user
-      this.credential = provisioningData.credential
+      // Store user info (ID will be set after ONE.core initialization)
       this.user = provisioningData.user
       
-      // Update state manager with authenticated user
+      // Update state manager with authenticated user (ID will be updated after init)
       stateManager.setUser({
-        id: this.user.id,
+        id: this.user.id || null, // ID comes from ONE.core after init
         name: this.user.name,
         email: this.user.email || `${this.user.name}@lama.local`
       })
@@ -72,26 +163,76 @@ class NodeProvisioning {
       // Initialize Node instance with provisioned identity
       await this.initializeNodeInstance(provisioningData)
       
-      // Mark as provisioned
-      this.provisioned = true
-      this.isProvisioning = false
-      
       console.log('[NodeProvisioning] Node instance provisioned successfully')
       
-      // Start CHUM sync to browser
-      const chumSync = require('../services/chum-sync')
-      await chumSync.initialize()
-      console.log('[NodeProvisioning] CHUM sync started')
+      // Create pairing invitation using the Node's own pairing manager
+      // This is the PROPER way - let the instance create its own invitation
+      let pairingInvite = null
+      try {
+        if (nodeOneCore.connectionsModel && nodeOneCore.connectionsModel.pairing) {
+          console.log('[NodeProvisioning] Creating pairing invitation through Node\'s pairing manager...')
+          
+          // Use the proper API - let the Node instance create its own invitation
+          // This ensures the invitation is properly registered with the correct keys
+          const invitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
+          
+          // The invitation from createInvitation() already has the correct format:
+          // {token, publicKey, url} but the URL will be for CommServer
+          // We need to override it to use the local socket listener
+          pairingInvite = {
+            ...invitation,
+            url: 'ws://localhost:8765'  // Override to use local socket instead of CommServer
+          }
+          
+          console.log('[NodeProvisioning] PAIRING INVITATION:', JSON.stringify(pairingInvite, null, 2))
+          console.log('[NodeProvisioning] Created invitation through proper API with token:', pairingInvite.token)
+          console.log('[NodeProvisioning] Pairing invitation ready for ws://localhost:8765')
+        }
+      } catch (error) {
+        console.error('[NodeProvisioning] Failed to create pairing invitation:', error)
+      }
       
+      // Profile and endpoint creation handled in initializeNodeInstance now
+      // No need to duplicate here
+      
+      // Register browser instance for federation if info provided
+      if (provisioningData.browserInstance) {
+        console.log('[NodeProvisioning] Registering browser instance for federation...')
+        try {
+          await nodeOneCore.federationAPI.registerBrowserInstance(provisioningData.browserInstance)
+          console.log('[NodeProvisioning] Browser instance registered with contact and endpoint')
+        } catch (error) {
+          console.error('[NodeProvisioning] Failed to register browser instance:', error)
+        }
+      }
+      
+      // CHUM sync is handled automatically by ONE.core when instances are connected via IoM
+      console.log('[NodeProvisioning] CHUM sync handled by ONE.core automatically')
+      
+      // Get the actual owner ID from the initialized Node instance
+      const nodeOwnerId = nodeOneCore.ownerId || nodeOneCore.getInfo().ownerId
+      
+      // Update state manager with the actual owner ID
+      if (nodeOwnerId) {
+        stateManager.setUser({
+          id: nodeOwnerId,
+          name: this.user.name,
+          email: this.user.email || `${this.user.name}@lama.local`
+        })
+      }
+      
+      // Skip AI contact setup during provisioning - will be done on-demand
+      // This saves significant initialization time
+
       return {
         success: true,
-        nodeId: realNodeInstance.getOwnerId() || 'node-' + Date.now(),
-        endpoint: 'ws://localhost:8765'
+        nodeId: nodeOwnerId || 'node-' + Date.now(),
+        endpoint: 'ws://localhost:8765',
+        pairingInvite: pairingInvite  // Include pairing invitation
       }
       
     } catch (error) {
       console.error('[NodeProvisioning] Provisioning failed:', error)
-      this.isProvisioning = false
       return {
         success: false,
         error: error.message
@@ -123,115 +264,132 @@ class NodeProvisioning {
   }
 
   async initializeNodeInstance(provisioningData) {
-    const { credential, user, config } = provisioningData || {}
+    const { user } = provisioningData || {}
     
-    console.log('[NodeProvisioning] Initializing Node instance for user:', user?.name || 'undefined')
+    console.log('[NodeProvisioning] Initializing Node instance for user:', user?.name)
     
-    // Initialize ONE.CORE with provisioned identity
-    await realNodeInstance.initialize(user, credential)
+    // Check if Node is already initialized
+    const currentInfo = nodeOneCore.getInfo()
+    if (currentInfo.initialized) {
+      console.log('[NodeProvisioning] Node already initialized, skipping')
+      return
+    }
     
-    // Store user data
-    await realNodeInstance.setState('identity.user', {
-      id: user.id,
-      name: user.name,
-      email: user.email || `${user.name}@lama.local`,
-      provisionedAt: new Date().toISOString(),
-      provisionedBy: credential.issuer.id
-    })
+    // Initialize Node.js with same credentials as browser
+    const username = user.name
+    const password = user.password
     
-    // Store provisioning credential
-    await realNodeInstance.setState('provisioning.credential', credential)
+    if (!username || !password) {
+      throw new Error('Username and password required for Node initialization')
+    }
     
-    // Configure based on provisioning
-    await this.configureNodeInstance(config)
+    console.log('[NodeProvisioning] Initializing Node.js with username:', username)
+    const result = await nodeOneCore.initialize(username, password)
+    if (!result.success) {
+      // If it's a decryption error, it means passwords don't match
+      if (result.error && result.error.includes('CYENC-SYMDEC')) {
+        throw new Error('Password mismatch between browser and Node instances. Please use the same password.')
+      }
+      throw new Error(`Failed to initialize Node.js ONE.core instance: ${result.error}`)
+    }
     
-    // User objects not needed - Settings datatype handles all state
+    console.log('[NodeProvisioning] Node.js ONE.core initialized with ID:', result.ownerId)
+    
+    // Skip heavy configuration during init - use minimal setup
+    // Full capabilities can be enabled on-demand
+  }
+
+  isProvisioned() {
+    return this.provisioned
   }
 
   async configureNodeInstance(config) {
-    console.log('[NodeProvisioning] Configuring Node instance:', config)
-    
-    // Set storage role
-    await realNodeInstance.setState('config.storageRole', config.storageRole)
-    
-    // Enable capabilities
-    for (const capability of config.capabilities) {
-      await this.enableCapability(capability)
+    // Minimal configuration for fast startup
+    // Only set essential config, skip heavy operations
+    if (!config) {
+      config = {
+        storageRole: 'archive',
+        syncEndpoint: 'ws://localhost:8765'
+      }
     }
     
-    // Configure CHUM sync endpoint
-    if (config.syncEndpoint) {
-      await realNodeInstance.setState('config.syncEndpoint', config.syncEndpoint)
-    }
+    // Just set basic config without heavy capability initialization
+    await nodeOneCore.setState('config.storageRole', config?.storageRole || 'archive')
+    await nodeOneCore.setState('config.syncEndpoint', config.syncEndpoint)
   }
 
   async enableCapability(capability) {
+    console.log('[NodeProvisioning] Enabling capability:', capability)
+    
     switch (capability) {
       case 'llm':
-        // Initialize LLM worker (worker file will be added later)
-        // const LLMWorker = require('../workers/llm-worker')
-        await realNodeInstance.setState('capabilities.llm', {
+        // Initialize LLM capability - integrate with main process LLMManager
+        await nodeOneCore.setState('capabilities.llm', {
           enabled: true,
-          worker: 'llm-worker',
-          models: ['gpt-3.5-turbo', 'llama-2']
+          provider: 'main-process',
+          models: ['gpt-oss', 'claude-3-5-sonnet', 'claude-3-5-haiku'],
+          integration: 'lama-llm-manager'
         })
+        console.log('[NodeProvisioning] LLM capability enabled with main process integration')
         break
         
       case 'files':
-        // Enable file import/export
-        await realNodeInstance.setState('capabilities.files', {
+        // Enable file import/export capability
+        await nodeOneCore.setState('capabilities.files', {
           enabled: true,
+          storageType: 'file-system',
           importPath: './imports',
-          exportPath: './exports'
+          exportPath: './exports',
+          blobStorage: 'one-core-storage/node/blobs/'
         })
+        console.log('[NodeProvisioning] File storage capability enabled')
         break
         
       case 'network':
-        // Enable full network access
-        await realNodeInstance.setState('capabilities.network', {
+        // Enable full network access via ConnectionsModel
+        await nodeOneCore.setState('capabilities.network', {
           enabled: true,
-          protocols: ['http', 'https', 'ws', 'wss']
+          protocols: ['http', 'https', 'ws', 'wss', 'udp'],
+          p2pEnabled: true,
+          commServerUrl: 'wss://comm10.dev.refinio.one',
+          directConnections: true,
+          iomServer: {
+            enabled: true,
+            port: 8765
+          }
         })
+        console.log('[NodeProvisioning] Network capability enabled via ConnectionsModel')
+        break
+        
+      case 'storage':
+        // Enable archive storage role
+        await nodeOneCore.setState('capabilities.storage', {
+          enabled: true,
+          role: 'archive',
+          persistent: true,
+          location: 'one-core-storage/node/',
+          unlimited: true
+        })
+        console.log('[NodeProvisioning] Archive storage capability enabled')
         break
     }
   }
 
   async createUserObjects(user) {
-    console.log('[NodeProvisioning] Creating user objects in ONE.CORE')
-    
-    // User object already created in initialization
-    
-    // Create welcome conversation
-    const welcomeConversation = await realNodeInstance.createConversation(
-      'system',
-      ['system', user.id],
-      'Welcome to LAMA'
-    )
-    
-    // Create welcome message
-    await realNodeInstance.createMessage(
-      welcomeConversation.hash || welcomeConversation.id,
-      `Welcome to LAMA, ${user.name}! Your Node instance has been provisioned and is ready to use.`,
-      { sender: 'system' }
-    )
-    
-    console.log('[NodeProvisioning] User objects created')
+    // Skip creating welcome messages - not needed and slows down init
+    // User objects already created in initialization
   }
 
   async deprovision() {
     console.log('[NodeProvisioning] Deprovisioning Node instance...')
     
-    if (!this.provisioned) {
-      return { success: true, message: 'Not provisioned' }
-    }
-    
     try {
-      // Shutdown Node instance
-      await realNodeInstance.shutdown()
+      // Shutdown Node instance if initialized
+      if (nodeOneCore.getInfo().initialized) {
+        await nodeOneCore.shutdown()
+      }
       
-      // Clear provisioning data
-      this.provisioned = false
-      this.credential = null
+      // Clear user data
       this.user = null
       
       // Clear storage (optional - for full reset)
@@ -255,17 +413,13 @@ class NodeProvisioning {
   }
 
   isProvisioned() {
-    return this.provisioned
+    return nodeOneCore.getInfo().initialized
   }
 
   getUser() {
     return this.user
   }
-
-  getCredential() {
-    return this.credential
-  }
 }
 
 // Export singleton
-module.exports = new NodeProvisioning()
+export default new NodeProvisioning()

@@ -1,72 +1,63 @@
 /**
- * React hook for LAMA initialization
+ * React hook for LAMA initialization with proper ONE.CORE
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { lamaInit } from '../initialization'
+import { simpleBrowserInit as browserInit } from '../services/browser-init-simple.ts'
 
 export interface LamaAuthState {
   isInitialized: boolean
   isAuthenticated: boolean
   isLoading: boolean
   error: Error | null
-  user: { email: string; id: string } | null
+  user: { email: string; id: string; name: string } | null
 }
 
 export function useLamaInit() {
   const [state, setState] = useState<LamaAuthState>({
     isInitialized: false,
     isAuthenticated: false,
-    isLoading: true,
+    isLoading: false, // main.tsx handles the initial loading
     error: null,
     user: null
   })
 
-  // Initialize on mount
+  // Check initialization status on mount
   useEffect(() => {
     let mounted = true
     
-    const init = async () => {
-      // Prevent multiple initializations
+    const checkStatus = async () => {
       if (!mounted) return
       
       try {
-        setState(prev => ({ ...prev, isLoading: true }))
+        const initialized = browserInit.isInitialized()
+        const currentUser = browserInit.getCurrentUser()
         
-        // Create authenticator instance
-        await lamaInit.createInstance()
-        
-        // Check if already logged in (e.g., after hot reload)
-        const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance')
-        const ownerId = getInstanceOwnerIdHash()
-        
-        if (ownerId) {
-          console.log('[useLamaInit] Already logged in, initializing models...')
+        // If already authenticated, connect the bridge
+        if (currentUser) {
+          const appModel = browserInit.getAppModel()
           
-          // User is already logged in, initialize models
-          const appModel = await lamaInit.initModel()
-          
-          // Connect LamaBridge to the AppModel
-          const { lamaBridge } = await import('@/bridge/lama-bridge')
-          lamaBridge.setAppModel(appModel)
-          
-          if (mounted) {
-            setState(prev => ({
-              ...prev,
-              isInitialized: true,
-              isAuthenticated: true,
-              isLoading: false
-            }))
-          }
-        } else {
-          if (mounted) {
-            setState(prev => ({
-              ...prev,
-              isInitialized: true,
-              isLoading: false
-            }))
+          if (appModel) {
+            console.log('[useLamaInit] Connecting lamaBridge to existing session...')
+            const { lamaBridge } = await import('@/bridge/lama-bridge')
+            
+            lamaBridge.setAppModel(appModel)
+            console.log('[useLamaInit] ✅ lamaBridge connected for existing session')
           }
         }
+        
+        setState({
+          isInitialized: initialized,
+          isAuthenticated: !!currentUser,
+          isLoading: false,
+          error: null,
+          user: currentUser ? {
+            email: `${currentUser.name}@lama.local`,
+            id: currentUser.id,
+            name: currentUser.name
+          } : null
+        })
+        
       } catch (error) {
         if (mounted) {
           setState(prev => ({
@@ -78,33 +69,57 @@ export function useLamaInit() {
       }
     }
     
-    init()
+    checkStatus()
     
     return () => {
       mounted = false
     }
   }, [])
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (username: string, password: string) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
     
     try {
-      // Login or register
-      await lamaInit.loginOrRegister(email, password)
+      const result = await browserInit.login(username, password)
       
-      // Initialize models
-      const appModel = await lamaInit.initModel()
+      if (result.success && result.user) {
+        // Save credentials for auto-login
+        localStorage.setItem('lama-last-user', JSON.stringify({
+          username,
+          hint: password // Store password hint for auto-login
+        }))
+        
+        // Connect lamaBridge to the proper AppModel
+        const appModel = browserInit.getAppModel()
+        
+        if (appModel) {
+          console.log('[useLamaInit] Connecting lamaBridge to AppModel...')
+          // Import and set up bridge
+          const { lamaBridge } = await import('@/bridge/lama-bridge')
+          
+          // Connect the bridge with the full AppModel
+          lamaBridge.setAppModel(appModel)
+          console.log('[useLamaInit] ✅ lamaBridge connected to AppModel')
+        } else {
+          console.warn('[useLamaInit] No AppModel available for bridge connection')
+        }
+        
+        setState(prev => ({
+          ...prev,
+          isAuthenticated: true,
+          isLoading: false,
+          user: {
+            email: `${result.user.name}@lama.local`,
+            id: result.user.id,
+            name: result.user.name
+          }
+        }))
+        
+        console.log('[useLamaInit] Login successful:', result.user.name)
+      } else {
+        throw new Error('Login failed')
+      }
       
-      // Connect LamaBridge to the AppModel
-      const { lamaBridge } = await import('@/bridge/lama-bridge')
-      lamaBridge.setAppModel(appModel)
-      
-      setState(prev => ({
-        ...prev,
-        isAuthenticated: true,
-        isLoading: false,
-        user: { email, id: email }
-      }))
     } catch (error) {
       setState(prev => ({
         ...prev,
@@ -115,16 +130,19 @@ export function useLamaInit() {
     }
   }, [])
 
-  const register = useCallback(async (email: string, password: string) => {
-    // For LAMA, register uses the same flow as login
-    return login(email, password)
+  const register = useCallback(async (username: string, password: string) => {
+    // Same flow as login for ONE.CORE SingleUserNoAuth
+    return login(username, password)
   }, [login])
 
   const logout = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true, error: null }))
     
     try {
-      await lamaInit.logout()
+      await browserInit.logout()
+      
+      // Clear saved credentials on logout
+      localStorage.removeItem('lama-last-user')
       
       setState(prev => ({
         ...prev,
@@ -132,6 +150,9 @@ export function useLamaInit() {
         isLoading: false,
         user: null
       }))
+      
+      console.log('[useLamaInit] Logout successful')
+      
     } catch (error) {
       setState(prev => ({
         ...prev,
@@ -147,6 +168,7 @@ export function useLamaInit() {
     login,
     register,
     logout,
-    getModel: lamaInit.getModel
+    getLeuteModel: () => browserInit.getLeuteModel(),
+    getChannelManager: () => browserInit.getChannelManager()
   }
 }

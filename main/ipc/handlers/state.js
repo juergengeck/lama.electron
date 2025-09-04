@@ -2,7 +2,7 @@
  * State Management IPC Handlers
  */
 
-const stateManager = require('../../state/manager')
+import stateManager from '../../state/manager.js'
 
 const stateHandlers = {
   async getState(event, { path } = {}) {
@@ -56,4 +56,4 @@ const stateHandlers = {
   }
 }
 
-module.exports = stateHandlers
+export default stateHandlers

@@ -2,6 +2,7 @@
   "name": "lama",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "main": "lama-electron-shadcn.js",
   "scripts": {
     "electron": "NODE_ENV=development electron lama-electron-shadcn.js",
@@ -15,12 +16,14 @@
   },
   "devDependencies": {
     "canvas": "^3.2.0",
-    "electron": "^32.0.1",
+    "electron": "^32.3.3",
     "sharp": "^0.34.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.3",
-    "@refinio/one.core": "file:electron-ui/node_modules/@refinio/one.core",
-    "node-fetch": "^2.7.0"
+    "@refinio/one.core": "file:vendor/refinio-one.core-0.6.1-beta-2.tgz",
+    "@refinio/one.models": "file:vendor/refinio-one.models-14.1.0-beta-4.tgz",
+    "node-fetch": "^2.7.0",
+    "ws": "^8.18.3"
   }
 }

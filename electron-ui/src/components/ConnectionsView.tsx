@@ -131,27 +131,66 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
       }
     }
     
-    // Poll for updates
-    const interval = setInterval(() => {
-      loadConnections()
-      checkNetworkStatus()
-    }, 5000)
+    console.log('[ConnectionsView] Setting up CHUM sync listeners...')
     
-    return () => clearInterval(interval)
+    // Listen for CHUM sync events from main process
+    const handleChumSync = (data: any) => {
+      console.log('[ConnectionsView] Received CHUM sync data:', data)
+      
+      if (data.type === 'Settings' && Array.isArray(data.changes)) {
+        data.changes.forEach((settingsObject: any) => {
+          if (settingsObject.category === 'connections') {
+            console.log('[ConnectionsView] Processing connections settings from CHUM sync')
+            processConnectionsSettings(settingsObject.data)
+          }
+        })
+      }
+    }
+
+    // Register CHUM sync listener
+    const unsubscribe = window.electronAPI?.on?.('chum:sync', handleChumSync)
+    
+    // Initial load and periodic updates (fallback)
+    loadConnections()
+    checkNetworkStatus()
+    
+    const interval = setInterval(() => {
+      checkNetworkStatus() // Keep network status polling
+    }, 10000)
+    
+    return () => {
+      clearInterval(interval)
+      if (unsubscribe) {
+        unsubscribe()
+      }
+    }
   }, [])
 
-  const loadConnections = async () => {
+  const processConnectionsSettings = (settingsData: any) => {
     try {
-      if (!appModel?.connections) {
-        console.log('[ConnectionsView] Connections model not available yet')
+      console.log('[ConnectionsView] Processing connections settings:', settingsData)
+      
+      // Process contacts (Person objects) if available
+      if (settingsData.contacts && Array.isArray(settingsData.contacts)) {
+        const formattedConnections: Connection[] = settingsData.contacts.map((person: any) => ({
+          id: person.connectionId || person.id || `conn-${Math.random()}`,
+          personId: person.id || '',
+          name: person.name || 'Unknown Contact',
+          status: 'connected', // Person objects mean they're connected
+          type: person.platform === 'browser' ? 'direct' : 'relay',
+          endpoint: person.email || '',
+          lastSeen: new Date(person.connectedAt || person.pairedAt || Date.now()),
+          trustLevel: person.trusted ? 'full' : 'partial'
+        }))
+        
+        setConnections(formattedConnections)
+        console.log(`[ConnectionsView] Updated ${formattedConnections.length} contacts from CHUM sync`)
         return
       }
-
-      // Get connections info from ConnectionsModel
-      const connectionsInfo = appModel.connections.connectionsInfo()
       
-      if (Array.isArray(connectionsInfo)) {
-        const formattedConnections: Connection[] = connectionsInfo.map((conn: any) => ({
+      // Fallback to connections array if no contacts
+      if (settingsData.connections && Array.isArray(settingsData.connections)) {
+        const formattedConnections: Connection[] = settingsData.connections.map((conn: any) => ({
           id: conn.id || `conn-${Math.random()}`,
           personId: conn.personId || '',
           name: conn.name || 'Unknown',
@@ -163,10 +202,17 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
         }))
         
         setConnections(formattedConnections)
+        console.log(`[ConnectionsView] Updated connections from CHUM sync: ${formattedConnections.length} connections`)
       }
     } catch (error) {
-      console.error('[ConnectionsView] Failed to load connections:', error)
+      console.error('[ConnectionsView] Error processing CHUM sync connections:', error)
     }
+  }
+
+  const loadConnections = async () => {
+    // Connections data will come via CHUM sync events
+    // This method is kept for manual refresh if needed
+    console.log('[ConnectionsView] Waiting for connections data via CHUM sync...')
   }
 
   const checkNetworkStatus = async () => {
@@ -201,54 +247,28 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
     setError(null)
     
     try {
-      // Check if ConnectionsModel is available
-      if (!appModel?.connections) {
-        throw new Error('Network system not initialized yet. Please wait a moment and try again.')
+      // Check if user is logged in first
+      if (!appModel?.leuteModel) {
+        throw new Error('Please log in first before creating invitations')
       }
       
-      // Check if pairing manager is available
-      if (!appModel.connections.pairing) {
-        throw new Error('Pairing system not available. Please restart the application.')
-      }
-
-      console.log('[ConnectionsView] Creating proper invitation URL...')
-
-      // Create invitation through ConnectionsModel's pairing manager
-      const invitationData = await appModel.connections.pairing.createInvitation()
+      console.log('[ConnectionsView] Requesting invitation from Node.js instance via IPC...')
       
-      console.log('[ConnectionsView] Raw invitation data:', invitationData)
+      // Request invitation from Node.js instance via IPC
+      const result = await window.electronAPI.createInvitation()
       
-      // Extract the raw invitation data (token, publicKey, url)
-      const token = invitationData.token || ''
-      const publicKey = invitationData.publicKey || ''
-      const wsUrl = invitationData.url || ''
-      
-      if (!token || !publicKey || !wsUrl) {
-        throw new Error('Invalid invitation data: missing required fields')
-      }
-
-      // Create the invitation data object for encoding
-      const invitePayload = {
-        token,
-        publicKey,
-        url: wsUrl
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to create invitation')
       }
       
-      // Encode the invitation data as URL fragment (following one.leute pattern)
-      const encodedData = encodeURIComponent(JSON.stringify(invitePayload))
+      console.log('[ConnectionsView] Received invitation from Node.js:', result.invitation)
       
-      // Create the proper invitation URL following one.leute format
-      // Use edda.one domain for cross-machine compatibility
-      const eddaDomain = getEddaDomain()
-      const fullInvitationUrl = `https://${eddaDomain}/invites/invitePartner/?invited=true/#${encodedData}`
-      
-      console.log('[ConnectionsView] Generated invitation URL:', fullInvitationUrl)
-      
+      // Use the invitation data from Node.js instance
       const invitation: PairingInvitation = {
-        url: fullInvitationUrl,
-        token,
-        publicKey,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
+        url: result.invitation.url,
+        token: result.invitation.token,
+        publicKey: result.invitation.publicKey,
+        expiresAt: new Date(result.invitation.expiresAt)
       }
       
       setCurrentInvitation(invitation)
@@ -271,59 +291,30 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
   }
 
   const acceptInvitation = async () => {
-    if (!invitationUrl) return
+    if (!invitationUrl) {
+      setError('Please enter an invitation URL')
+      return
+    }
     
     setIsRefreshing(true)
     setError(null)
     
     try {
-      if (!appModel?.connections?.pairing) {
-        throw new Error('Pairing manager not available')
+      // Call the Node.js handler to accept the invitation
+      const result = await window.electronAPI.invoke('iom:acceptPairingInvitation', invitationUrl)
+      
+      if (result.success) {
+        console.log('[ConnectionsView] Invitation accepted successfully')
+        // Close dialog and refresh connections
+        setShowAcceptDialog(false)
+        setInvitationUrl('')
+        await loadConnections()
+      } else {
+        setError(result.error || 'Failed to accept invitation')
       }
-
-      // Parse the invitation URL using the utility
-      const { parseInvitationUrl, getPairingInformation } = await import('@/utils/invitation-url-parser')
-      const parsed = parseInvitationUrl(invitationUrl)
-      
-      if (!parsed.invitation) {
-        throw new Error(parsed.error || 'Invalid invitation URL')
-      }
-      
-      // Accept the invitation
-      const result = await appModel.connections.pairing.acceptInvitation(parsed.invitation)
-      
-      // Refresh connections
-      await loadConnections()
-      setShowAcceptDialog(false)
-      setInvitationUrl('')
-      
-      // Try to navigate to chat with the new contact after accepting invitation
-      if (onNavigateToChat && result) {
-        try {
-          // Get the person ID from the result if available
-          const personId = result.personId || result.id
-          
-          if (personId) {
-            // Get or create topic for this contact
-            const topicId = await lamaBridge.getOrCreateTopicForContact(personId)
-            
-            if (topicId) {
-              // Get contact name from result or use default
-              const contactName = result.name || 
-                                result.displayName || 
-                                `Contact ${personId.toString().substring(0, 8)}`
-              
-              console.log('[ConnectionsView] Navigating to chat with accepted contact:', contactName)
-              onNavigateToChat(topicId, contactName)
-            }
-          }
-        } catch (error) {
-          console.error('[ConnectionsView] Failed to navigate to chat after accepting invitation:', error)
-        }
-      }
-    } catch (error) {
+    } catch (error: any) {
       console.error('[ConnectionsView] Failed to accept invitation:', error)
-      setError(error instanceof Error ? error.message : 'Failed to accept invitation')
+      setError(error.message || 'Failed to accept invitation')
     } finally {
       setIsRefreshing(false)
     }

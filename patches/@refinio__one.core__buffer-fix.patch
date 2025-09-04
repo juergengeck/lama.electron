@@ -1,0 +1,29 @@
+--- a/node_modules/@refinio/one.core/lib/util/buffer.js
++++ b/node_modules/@refinio/one.core/lib/util/buffer.js
+@@ -22,10 +22,23 @@
+  * @returns {Uint8Array}
+  */
+ export function getUint8Array(buffer) {
+     if (buffer instanceof Uint8Array) {
+-        return buffer;
++        // Handle compound buffers from Node.js ws library
++        // If the byteOffset is not 0, we need to create a proper slice
++        if (buffer.byteOffset !== 0 || buffer.byteLength !== buffer.buffer.byteLength) {
++            // Create a new Uint8Array with just the actual data
++            const result = new Uint8Array(buffer.byteLength);
++            result.set(buffer);
++            return result;
++        }
++        return buffer;
+     }
+-    return new Uint8Array(buffer);
++    // For ArrayBuffer, create a Uint8Array view
++    // Make sure we handle the full buffer correctly
++    const uint8 = new Uint8Array(buffer);
++    if (uint8.byteOffset !== 0 || uint8.byteLength !== uint8.buffer.byteLength) {
++        const result = new Uint8Array(uint8.byteLength);
++        result.set(uint8);
++        return result;
++    }
++    return uint8;
+ }

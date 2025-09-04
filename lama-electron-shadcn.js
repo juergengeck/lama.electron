@@ -1,13 +1,50 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
-const path = require('path');
-const { spawn } = require('child_process');
-const fs = require('fs');
+import electron from 'electron';
+const { app, BrowserWindow, ipcMain, session } = electron;
+import path from 'path';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import http from 'http';
+
+// Get __dirname equivalent in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Import the main application
-const mainApp = require('./main/app');
+import mainApp from './main/app.js';
+import { autoInitialize } from './main/startup/auto-init.js';
 
 // Set app name
 app.setName('LAMA');
+
+// Handle EPIPE errors gracefully (when renderer disconnects unexpectedly)
+process.on('uncaughtException', (error) => {
+  if (error.code === 'EPIPE' || (error.message && error.message.includes('EPIPE'))) {
+    // Ignore EPIPE errors - these happen when renderer closes while main is writing
+    // Use process.stderr.write to avoid potential console issues
+    try {
+      process.stderr.write('[Main] Caught EPIPE error - renderer disconnected\n');
+    } catch (e) {
+      // Even stderr might fail, just ignore
+    }
+    return;
+  }
+  // For other uncaught exceptions, log and exit gracefully
+  console.error('[Main] Uncaught exception:', error);
+  console.error(error.stack);
+  // Don't re-throw in production, just exit gracefully
+  if (process.env.NODE_ENV === 'production') {
+    app.quit();
+  } else {
+    // In development, allow the error to be seen but don't crash
+    console.error('[Main] Development mode - continuing despite error');
+  }
+});
+
+// Also handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Main] Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 let mainWindow;
 let viteProcess;
@@ -33,11 +70,12 @@ function createWindow() {
       nodeIntegration: false,  // Disable Node in renderer for cleaner browser environment
       contextIsolation: true,   // Enable context isolation for security
       preload: path.join(__dirname, 'electron-preload.js'),
-      webSecurity: false
+      webSecurity: false,
+      partition: 'persist:lama'  // Use persistent partition for IndexedDB
     },
     title: 'LAMA',
     backgroundColor: '#0a0a0a',
-    show: false,
+    show: true,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 20 }
   });
@@ -55,6 +93,34 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // AUTO-LOGIN FOR TESTING FEDERATION
+  if (process.env.AUTO_LOGIN === 'true') {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      console.log('[AutoLogin] Page loaded, waiting before auto-login...')
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      
+      mainWindow.webContents.executeJavaScript(`
+        (async () => {
+          console.log('[AutoLogin] Attempting automatic login...')
+          const usernameInput = document.querySelector('input[name="username"]')
+          const passwordInput = document.querySelector('input[type="password"]')
+          const loginButton = document.querySelector('button[type="submit"]')
+          
+          if (usernameInput && passwordInput && loginButton) {
+            usernameInput.value = 'testuser'
+            passwordInput.value = 'testpass123'
+            usernameInput.dispatchEvent(new Event('input', { bubbles: true }))
+            passwordInput.dispatchEvent(new Event('input', { bubbles: true }))
+            await new Promise(resolve => setTimeout(resolve, 100))
+            loginButton.click()
+            return 'Login triggered'
+          }
+          return 'Login form not found'
+        })()
+      `).then(result => console.log('[AutoLogin]', result))
+    })
+  }
+  
   // Add custom title bar with LAMA text
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.executeJavaScript(`
@@ -108,7 +174,6 @@ function createWindow() {
 function startViteServer() {
   return new Promise((resolve) => {
     // Check if server is already running
-    const http = require('http');
     http.get('http://localhost:5174', (res) => {
       console.log('Vite server already running');
       resolve();
@@ -138,6 +203,11 @@ function startViteServer() {
   });
 }
 
+// Handle browser console logs
+ipcMain.on('browser-log', (event, level, message) => {
+  console.log(`[Browser ${level}]`, message);
+});
+
 app.whenReady().then(async () => {
   // Set dock icon for macOS after app is ready
   if (process.platform === 'darwin') {
@@ -158,6 +228,18 @@ app.whenReady().then(async () => {
   // Start Vite server first if in development
   if (process.env.NODE_ENV !== 'production') {
     await startViteServer();
+  }
+  
+  // Try to auto-initialize instances
+  try {
+    const initResult = await autoInitialize();
+    if (initResult.recovered) {
+      console.log('Auto-recovered existing ONE.core instances');
+    } else if (initResult.needsSetup) {
+      console.log('Need to set up ONE.core instances via UI');
+    }
+  } catch (error) {
+    console.error('Auto-initialization error:', error);
   }
   
   // Start the main application
@@ -209,24 +291,88 @@ ipcMain.handle('create-udp-socket', async (event, options) => {
   return { id: 'socket-' + Date.now() };
 });
 
+// Crypto handlers are now registered via IPCController
+
 // Handler for clearing app data
 ipcMain.handle('app:clearData', async (event) => {
-  console.log('Clearing app data...');
+  console.log('[ClearData] Starting app data reset...');
   
   try {
-    // Shutdown main application first
+    // Clear device manager contacts first
+    try {
+      console.log('[ClearData] Clearing device manager...');
+      const { default: deviceManager } = await import('./main/core/device-manager.js');
+      if (deviceManager && deviceManager.devices) {
+        deviceManager.devices.clear();
+        await deviceManager.saveDevices();
+        console.log('[ClearData] Device manager cleared');
+      }
+    } catch (error) {
+      console.log('[ClearData] DeviceManager error:', error.message);
+    }
+    
+    // Clear Node.js ONE.core storage
+    console.log('[ClearData] Clearing Node.js ONE.core storage...');
+    const nodeStorageDir = path.join(process.cwd(), 'one-core-storage', 'node');
+    if (fs.existsSync(nodeStorageDir)) {
+      try {
+        fs.rmSync(nodeStorageDir, { recursive: true, force: true });
+        console.log('[ClearData] Cleared Node.js storage');
+      } catch (error) {
+        console.error('[ClearData] Error clearing Node.js storage:', error);
+      }
+    } else {
+      console.log('[ClearData] Node storage directory does not exist');
+    }
+    
+    // Reset Node ONE.core instance
+    console.log('[ClearData] Resetting Node ONE.core instance...');
+    const { default: nodeOneCore } = await import('./main/core/node-one-core.js');
+    const wasInitialized = nodeOneCore.initialized;
+    const instanceName = nodeOneCore.instanceName;
+    console.log('[ClearData] Node was initialized:', wasInitialized);
+    
+    // Properly shut down the Node instance if it was initialized
+    if (wasInitialized) {
+      console.log('[ClearData] Shutting down Node ONE.core instance...');
+      await nodeOneCore.shutdown();
+      console.log('[ClearData] Node ONE.core instance shut down');
+    }
+    
+    // Also close the ONE.core instance singleton
+    try {
+      const { closeInstance } = await import('./electron-ui/node_modules/@refinio/one.core/lib/instance.js');
+      closeInstance();
+      console.log('[ClearData] ONE.core instance singleton closed');
+    } catch (error) {
+      console.log('[ClearData] Error closing ONE.core instance:', error.message);
+    }
+    
+    console.log('[ClearData] Node ONE.core instance reset');
+    
+    // Clear any cached state
+    console.log('[ClearData] Clearing state manager...');
+    const { default: stateManager } = await import('./main/state/manager.js');
+    stateManager.clearState();
+    console.log('[ClearData] State manager cleared');
+    
+    // Shutdown main application
     if (mainApp && mainApp.shutdown) {
-      console.log('Shutting down main application...');
+      console.log('[ClearData] Shutting down main application...');
       await mainApp.shutdown();
+      console.log('[ClearData] Main application shut down');
+    } else {
+      console.log('[ClearData] Main app not available or no shutdown method');
     }
     
     const userDataPath = app.getPath('userData');
-    console.log('User data path:', userDataPath);
+    console.log('[ClearData] User data path:', userDataPath);
     
     // Clear session data
-    const session = require('electron').session;
+    console.log('[ClearData] Clearing session data...');
     await session.defaultSession.clearStorageData();
     await session.defaultSession.clearCache();
+    console.log('[ClearData] Session data cleared');
     
     // Delete app data directory contents (but keep the directory itself)
     if (fs.existsSync(userDataPath)) {
@@ -246,6 +392,17 @@ ipcMain.handle('app:clearData', async (event) => {
       }
     }
     
+    // Also clear the Partitions directory which contains IndexedDB
+    const partitionsPath = path.join(userDataPath, '../', 'Partitions');
+    if (fs.existsSync(partitionsPath)) {
+      try {
+        fs.rmSync(partitionsPath, { recursive: true, force: true });
+        console.log('Deleted Partitions directory (IndexedDB)');
+      } catch (e) {
+        console.error('Failed to delete Partitions:', e);
+      }
+    }
+    
     // Also clear LAMA-Desktop data if it exists
     const lamaDesktopPath = path.join(app.getPath('appData'), 'LAMA-Desktop');
     if (fs.existsSync(lamaDesktopPath)) {
@@ -257,24 +414,80 @@ ipcMain.handle('app:clearData', async (event) => {
       }
     }
     
-    console.log('App data cleared successfully');
+    console.log('[ClearData] All cleanup operations completed successfully');
+    
+    // Re-initialize the application after clearing
+    console.log('[ClearData] Re-initializing application...');
+    
+    // Re-initialize the main app
+    const { initializeApp } = await import('./main/app.js');
+    mainApp = await initializeApp();
+    console.log('[ClearData] Main app re-initialized');
+    
+    // Re-initialize IPC controller to register handlers again
+    const { default: IPCController } = await import('./main/ipc/controller.js');
+    const ipcController = new IPCController();
+    await ipcController.initialize();
+    console.log('[ClearData] IPC handlers re-registered');
     
     // Set flag to prevent saving any state on exit
     global.isClearing = true;
     
-    // Start the restart script in a detached process
-    const { spawn } = require('child_process');
-    spawn('node', [path.join(__dirname, 'restart-app.js')], {
-      detached: true,
-      stdio: 'ignore'
-    }).unref();
+    // Wait a moment to ensure all cleanup is complete
+    console.log('[ClearData] Waiting for cleanup to complete...');
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    // Force quit the current instance
-    app.exit(0);
-    
-    return true;
+    // In development, just reload the renderer instead of restarting
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[ClearData] Development mode: Reloading renderer...');
+      // Get the focused window or first window
+      const currentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      if (currentWindow && !currentWindow.isDestroyed()) {
+        // Schedule reload after returning success
+        setTimeout(() => {
+          currentWindow.reload();
+          console.log('[ClearData] Renderer reloaded');
+        }, 100);
+        return { success: true, message: 'App data cleared, reloading...' };
+      } else {
+        console.log('[ClearData] Warning: No window available, attempting app relaunch...');
+        app.relaunch();
+        app.exit(0);
+        return { success: true, message: 'App data cleared and app restarting' };
+      }
+    } else {
+      // In production, restart the app
+      console.log('[ClearData] Production mode: Restarting app...');
+      app.relaunch();
+      app.exit(0);
+      return { success: true, message: 'App data cleared and app restarting' };
+    }
   } catch (error) {
-    console.error('Failed to clear app data:', error);
-    throw error;
+    console.error('[ClearData] FATAL ERROR:', error);
+    console.error('[ClearData] Stack trace:', error.stack);
+    return { success: false, error: error.message || 'Failed to clear app data' };
   }
 });
+
+// Auto-login test function for debugging - DISABLED to avoid redundant control flows
+async function autoLoginTest() {
+  console.log('[AutoLogin] Auto-login disabled to prevent redundant control flows')
+  // setTimeout(async () => {
+  //   console.log('[AutoLogin] Triggering login with demo/demo...')
+  //   try {
+  //     const { default: nodeProvisioning } = await import('./main/hybrid/node-provisioning.js')
+  //     const result = await nodeProvisioning.provision({
+  //       user: {
+  //         name: 'demo',
+  //         password: 'demo'
+  //       }
+  //     })
+  //     console.log('[AutoLogin] Provision result:', JSON.stringify(result, null, 2))
+  //   } catch (error) {
+  //     console.error('[AutoLogin] Error:', error)
+  //   }
+  // }, 5000)
+}
+
+// Uncomment to enable auto-login for testing
+autoLoginTest();

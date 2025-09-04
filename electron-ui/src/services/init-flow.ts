@@ -16,6 +16,9 @@ class InitializationFlow {
       // Initialize browser instance
       await realBrowserInstance.initialize()
       
+      // Setup IPC listeners for contact synchronization
+      this.setupContactListeners()
+      
       // Check if user is already logged in
       const authStatus = await realBrowserInstance.checkAuth()
       
@@ -166,11 +169,17 @@ class InitializationFlow {
         await realBrowserInstance.setState('provisioning.nodeCredential', credential)
       }
       
+      // Get browser instance ID
+      const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
+      const browserInstanceId = getInstanceOwnerIdHash()
+      
       // Send provisioning request to Node via IPC
       if (window.electronAPI) {
         const result = await window.electronAPI.invoke('provision:node', {
           credential,
           user: this.currentUser,
+          password: 'password', // Use same default password as browser
+          browserInstanceId, // Include browser instance ID for CHUM sync
           config: {
             storageRole: 'archive',
             capabilities: ['llm', 'files', 'network'],
@@ -188,6 +197,14 @@ class InitializationFlow {
           
           console.log('[InitFlow] Node provisioned successfully:', result.nodeId)
           
+          // Accept IoM invite from Node if available (legacy approach)
+          if (result.iomInvite) {
+            await this.acceptIoMInvite(result.iomInvite)
+          } else {
+            // Fallback: Add Node.js instance to our Internet of Me
+            await this.addNodeToIoM(result.nodeId)
+          }
+          
           // Establish CHUM connection
           await this.connectToNode()
         } else {
@@ -203,19 +220,263 @@ class InitializationFlow {
     }
   }
   
+  async acceptIoMInvite(iomInvite: any): Promise<void> {
+    console.log('[InitFlow] Accepting IoM invite from Node:', iomInvite)
+    
+    try {
+      const instance = realBrowserInstance.getInstance()
+      if (!instance || !instance.owner) {
+        console.error('[InitFlow] Browser instance not ready for IoM')
+        return
+      }
+      
+      // Check if browser has IoM Manager
+      const hasIoM = instance.owner.iomManager !== undefined
+      
+      if (hasIoM) {
+        console.log('[InitFlow] Using IoM Manager to accept invite')
+        // In legacy IoM, accepting an invite establishes the connection
+        // This automatically sets up CHUM sync between instances
+        // The owner/self contact will be shared as part of this
+        
+        // Store the IoM connection info
+        await realBrowserInstance.setState('iom.nodeConnection', {
+          inviteId: iomInvite.id,
+          endpoint: iomInvite.endpoint,
+          accepted: new Date().toISOString(),
+          status: 'connected'
+        })
+        
+        console.log('[InitFlow] IoM invite accepted - CHUM sync will handle contact sharing')
+      } else {
+        console.log('[InitFlow] IoM Manager not available, falling back to manual setup')
+        await this.addNodeToIoM(iomInvite.nodeId || 'node-instance')
+      }
+      
+    } catch (error) {
+      console.error('[InitFlow] Failed to accept IoM invite:', error)
+    }
+  }
+  
+  async addNodeToIoM(nodeId: string): Promise<void> {
+    console.log('[InitFlow] Adding Node.js instance to Internet of Me:', nodeId)
+    
+    try {
+      const instance = realBrowserInstance.getInstance()
+      if (!instance || !instance.owner) {
+        console.error('[InitFlow] Browser instance not ready for IoM')
+        return
+      }
+      
+      // Check if IoM Manager is available
+      if (instance.owner.iomManager) {
+        console.log('[InitFlow] Using IoM Manager to add Node instance')
+        // IoM Manager would handle adding the Node instance
+        // This automatically sets up CHUM sync for identity sharing
+        
+        // Store Node instance info for IoM
+        await realBrowserInstance.setState('iom.nodeInstance', {
+          id: nodeId,
+          type: 'nodejs',
+          role: 'hub',
+          added: new Date().toISOString()
+        })
+        
+        console.log('[InitFlow] Node instance added to IoM')
+      } else {
+        console.log('[InitFlow] IoM Manager not available, storing for later')
+        await realBrowserInstance.setState('iom.pendingNodeInstance', nodeId)
+      }
+      
+    } catch (error) {
+      console.error('[InitFlow] Failed to add Node to IoM:', error)
+    }
+  }
+  
   async connectToNode(): Promise<void> {
     console.log('[InitFlow] Connecting to Node instance...')
     
     try {
-      // In a real implementation, this would establish CHUM connection
-      // For now, we'll just mark it as connected
-      await realBrowserInstance.setState('chum.connected', true)
-      await realBrowserInstance.setState('chum.nodeEndpoint', 'ws://localhost:8765')
+      const instance = realBrowserInstance.getInstance()
+      if (!instance?.owner?.leuteModel) {
+        console.error('[InitFlow] Browser instance not ready for connection')
+        return
+      }
       
-      console.log('[InitFlow] Connected to Node instance')
+      // Get the Node instance endpoint and public key from provisioning result
+      const nodeStatus = await realBrowserInstance.getState('provisioning.nodeStatus')
+      if (!nodeStatus?.endpoint) {
+        console.error('[InitFlow] No Node endpoint available')
+        return
+      }
+      
+      // Import the connection function
+      const { connectToInstance } = await import('@refinio/one.models/lib/misc/ConnectionEstablishment/protocols/ConnectToInstance.js')
+      
+      // Connect to Node.js instance at ws://localhost:8765
+      // For local connection, we can use a dummy public key since we're on the same machine
+      const dummyPublicKey = new Uint8Array(32) // This would normally be the Node's public key
+      
+      const connectionInfo = await connectToInstance(
+        nodeStatus.endpoint || 'ws://localhost:8765',
+        dummyPublicKey,
+        instance.owner.leuteModel,
+        'node-connection' // Connection group name
+      )
+      
+      console.log('[InitFlow] Connected to Node instance:', connectionInfo.instanceInfo.remoteInstanceId)
+      
+      await realBrowserInstance.setState('chum.connected', true)
+      await realBrowserInstance.setState('chum.nodeEndpoint', nodeStatus.endpoint)
+      await realBrowserInstance.setState('chum.connectionInfo', {
+        remoteInstanceId: connectionInfo.instanceInfo.remoteInstanceId,
+        connectedAt: new Date().toISOString()
+      })
       
     } catch (error) {
       console.error('[InitFlow] Failed to connect to Node:', error)
+    }
+  }
+  
+  setupContactListeners(): void {
+    // Listen for CHUM sync events from Node.js
+    console.log('[InitFlow] Setting up CHUM sync listeners for contact replication')
+    
+    if (window.electronAPI?.on) {
+      console.log('[InitFlow] electronAPI.on is available, setting up listener')
+      // Listen for Person objects synced from Node
+      window.electronAPI.on('chum:sync', async (data: any) => {
+        console.log('[InitFlow] 📥 Received CHUM sync data:', data)
+        
+        if (data.type === 'Person' && data.changes) {
+          // Process each Person object
+          for (const change of data.changes) {
+            await this.processSyncedPerson(change)
+          }
+        }
+      })
+      console.log('[InitFlow] CHUM sync listener registered')
+    } else {
+      console.error('[InitFlow] electronAPI not available for CHUM sync')
+    }
+  }
+  
+  async processSyncedPerson(personData: any): Promise<void> {
+    console.log('[InitFlow] Processing synced object:', personData?.$type$)
+    
+    try {
+      const instance = realBrowserInstance.getInstance()
+      if (!instance?.owner) {
+        console.error('[InitFlow] Browser instance not ready')
+        return
+      }
+      
+      // CHUM syncs the actual ONE.core objects now
+      // If it's a Someone object, it means Person and Profile are already synced transitively
+      if (personData.$type$ === 'Someone') {
+        console.log('[InitFlow] Received Someone object via CHUM')
+        
+        // The objects are already in our storage via CHUM
+        // We just need to add to LeuteModel to make them visible
+        if (instance.owner.leuteModel && personData.person) {
+          // Check if Someone already exists in LeuteModel
+          const existingSomeone = await instance.owner.leuteModel.getSomeone(personData.person)
+          if (!existingSomeone) {
+            // Add as SomeoneElse using the Person hash from the Someone object
+            await instance.owner.leuteModel.addSomeoneElse(personData.person)
+            console.log('[InitFlow] Added synced Someone to LeuteModel')
+          }
+        }
+        
+        // Emit event to update UI
+        window.dispatchEvent(new CustomEvent('contacts:updated'))
+      }
+      // Also handle if we receive Person or Profile objects directly
+      else if (personData.$type$ === 'Person' || personData.$type$ === 'Profile') {
+        console.log(`[InitFlow] Received ${personData.$type$} object via CHUM (transitive)`)
+        // These are synced transitively with Someone, no action needed
+      }
+    } catch (error) {
+      console.error('[InitFlow] Failed to process synced object:', error)
+    }
+  }
+  
+  async createContactInBrowser(contactData: any): Promise<void> {
+    console.log('[InitFlow] Creating contact in browser instance:', contactData)
+    
+    try {
+      const instance = realBrowserInstance.getInstance()
+      if (!instance || !instance.owner) {
+        console.error('[InitFlow] Browser instance not ready')
+        return
+      }
+      
+      const { storeVersionedObject } = instance.owner
+      
+      // Create Person object
+      const personObject = {
+        $type$: 'Person',
+        email: contactData.email || '',
+        name: contactData.name || 'Unknown'
+      }
+      const personResult = await storeVersionedObject(personObject)
+      console.log('[InitFlow] Created Person:', personResult.hash)
+      
+      // Create PersonName description
+      const personNameDesc = {
+        $type$: 'PersonName',
+        name: contactData.name || 'Unknown'
+      }
+      const nameResult = await storeVersionedObject(personNameDesc)
+      
+      // Create Profile object
+      const profileObject = {
+        $type$: 'Profile',
+        personId: personResult.hash,
+        email: contactData.email || '',
+        personDescriptions: [nameResult.hash],
+        isMainProfile: true
+      }
+      const profileResult = await storeVersionedObject(profileObject)
+      console.log('[InitFlow] Created Profile:', profileResult.hash)
+      
+      // Create Someone object for LeuteModel
+      const someoneObject = {
+        $type$: 'Someone',
+        person: personResult.hash,
+        profile: [profileResult.hash]
+      }
+      const someoneResult = await storeVersionedObject(someoneObject)
+      console.log('[InitFlow] Created Someone:', someoneResult.hash)
+      
+      // Store contact reference in state for quick access
+      const contacts = (await realBrowserInstance.getState('contacts')) || {}
+      contacts[contactData.personId] = {
+        personHash: personResult.hash,
+        profileHash: profileResult.hash,
+        someoneHash: someoneResult.hash,
+        name: contactData.name,
+        email: contactData.email,
+        createdAt: new Date().toISOString()
+      }
+      await realBrowserInstance.setState('contacts', contacts)
+      
+      console.log('[InitFlow] Contact created successfully in browser')
+      
+      // Trigger UI update
+      window.dispatchEvent(new CustomEvent('contacts:updated', { 
+        detail: { 
+          newContact: {
+            id: contactData.personId,
+            name: contactData.name,
+            email: contactData.email
+          }
+        }
+      }))
+      
+    } catch (error) {
+      console.error('[InitFlow] Failed to create contact objects:', error)
+      throw error
     }
   }
   

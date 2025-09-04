@@ -3,10 +3,14 @@
  * Provides real-time replication and sync status
  */
 
-const nodeProvisioning = require('../../hybrid/node-provisioning')
-const realNodeInstance = require('../../hybrid/real-node-instance')
-const chumMonitor = require('../../hybrid/chum-monitor')
-const config = require('../../config/iom-config')
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import { execSync } from 'child_process';
+import nodeProvisioning from '../../hybrid/node-provisioning.js';
+import nodeOneCore from '../../core/node-one-core.js';
+import chumMonitor from '../../hybrid/chum-monitor.js';
+import config from '../../config/iom-config.js';
 
 // Track active CHUM connections and sync state
 const iomState = {
@@ -26,16 +30,16 @@ async function getIOMInstances(event) {
     
     // Check if Node instance is provisioned
     if (nodeProvisioning.isProvisioned()) {
-      const nodeInstance = realNodeInstance.getInstance()
-      const nodeState = await realNodeInstance.getState('') || {}
+      const coreInfo = nodeOneCore.getInfo()
+      const nodeState = {}
       
       // Get Node instance info
       const nodeInfo = {
-        id: nodeInstance?.id || 'node-' + Date.now(),
+        id: coreInfo?.ownerId || 'node-' + Date.now(),
         name: 'Desktop Node',
         type: 'node',
         role: nodeState['config.storageRole'] || 'archive',
-        status: nodeInstance ? 'online' : 'offline',
+        status: coreInfo?.initialized ? 'online' : 'offline',
         endpoint: nodeState['config.syncEndpoint'] || 'ws://localhost:8765',
         storage: await getStorageInfo('node'),
         lastSync: iomState.instances.get('node')?.lastSync || null,
@@ -64,15 +68,7 @@ async function getIOMInstances(event) {
         }
       }
       
-      // Also check Node instance for CHUM sync
-      if (nodeInstance?.chumSync) {
-        const chumObj = nodeInstance.chumSync.getChumObject?.()
-        if (chumObj) {
-          nodeInfo.replication.queueSize = chumObj.AtoBUnknown || 0
-          nodeInfo.replication.failedItems = chumObj.errors?.length || 0
-          nodeInfo.replication.errors = chumObj.errors || []
-        }
-      }
+      // CHUM sync will be handled by ChannelManager automatically
       
       instances.push(nodeInfo)
     }
@@ -115,10 +111,6 @@ async function getIOMInstances(event) {
 async function getStorageInfo(type) {
   try {
     if (type === 'node') {
-      const fs = require('fs').promises
-      const path = require('path')
-      const os = require('os')
-      const { execSync } = require('child_process')
       const dataPath = path.join(process.cwd(), 'one-data-node')
       
       let totalSize = 0
@@ -226,14 +218,14 @@ function addReplicationEvent(event) {
   }
   
   // Broadcast to renderer (only if controller is initialized)
-  try {
-    const ipcController = require('../controller')
-    if (ipcController && ipcController.sendUpdate) {
-      ipcController.sendUpdate('iom:replicationEvent', syncEvent)
-    }
-  } catch (e) {
-    // Controller not yet initialized
-  }
+  // TODO: Need to handle this differently to avoid circular dependency
+  // try {
+  //   if (ipcController && ipcController.sendUpdate) {
+  //     ipcController.sendUpdate('iom:replicationEvent', syncEvent)
+  //   }
+  // } catch (e) {
+  //   // Controller not yet initialized
+  // }
   
   return syncEvent
 }
@@ -302,7 +294,7 @@ function monitorChumSync() {
   
   // CHUM sync will be implemented later
   // For now just track that instances are initialized
-  if (realNodeInstance.isInitialized()) {
+  if (nodeOneCore.getInfo().initialized) {
     addReplicationEvent({
       type: 'sync-ready',
       source: 'node',
@@ -419,11 +411,231 @@ async function updateDataStats(event, stats) {
   return { success: true }
 }
 
-module.exports = {
+/**
+ * Accept a pairing invitation in the Node.js ONE.core instance
+ * This is called when THIS instance wants to connect to another instance using their invitation
+ */
+async function acceptPairingInvitation(event, invitationUrl) {
+  try {
+    // Check if Node instance is provisioned
+    if (!nodeProvisioning.isProvisioned()) {
+      return {
+        success: false,
+        error: 'Node instance not provisioned. Please login first.'
+      }
+    }
+    
+    
+    // Check if Node instance has ConnectionsModel with pairing
+    if (!nodeOneCore.connectionsModel || !nodeOneCore.connectionsModel.pairing) {
+      return {
+        success: false,
+        error: 'Pairing not available. Node instance may not be fully initialized.'
+      }
+    }
+    
+    console.log('[IOM] Accepting pairing invitation:', invitationUrl)
+    
+    // Parse the invitation from the URL fragment
+    const hashIndex = invitationUrl.indexOf('#')
+    if (hashIndex === -1) {
+      return {
+        success: false,
+        error: 'Invalid invitation URL: no fragment found'
+      }
+    }
+    
+    const fragment = invitationUrl.substring(hashIndex + 1)
+    const invitationJson = decodeURIComponent(fragment)
+    
+    let invitation
+    try {
+      invitation = JSON.parse(invitationJson)
+    } catch (error) {
+      console.error('[IOM] Failed to parse invitation:', error)
+      return {
+        success: false,
+        error: 'Invalid invitation format'
+      }
+    }
+    
+    // Extract token and URL from invitation
+    const { token, url } = invitation
+    
+    if (!token || !url) {
+      return {
+        success: false,
+        error: 'Invalid invitation: missing token or URL'
+      }
+    }
+    
+    console.log('[IOM] Accepting invitation with token:', token.substring(0, 20) + '...')
+    console.log('[IOM] Connection URL:', url)
+    
+    // Connect using the invitation - this initiates connection TO the remote instance
+    await nodeOneCore.connectionsModel.pairing.connectUsingInvitation(invitation)
+    
+    console.log('[IOM] ✅ Connected using invitation')
+    
+    // Add replication event
+    addReplicationEvent({
+      type: 'pairing-accepted',
+      source: 'node',
+      target: 'remote',
+      details: 'Pairing invitation accepted, establishing connection',
+      status: 'success'
+    })
+    
+    return {
+      success: true,
+      message: 'Invitation accepted successfully'
+    }
+    
+  } catch (error) {
+    console.error('[IOM] Failed to accept invitation:', error)
+    
+    addReplicationEvent({
+      type: 'pairing-failed',
+      source: 'node',
+      target: 'remote',
+      details: error.message || 'Failed to accept invitation',
+      status: 'error'
+    })
+    
+    return {
+      success: false,
+      error: error.message || 'Failed to accept pairing invitation'
+    }
+  }
+}
+
+/**
+ * Create a pairing invitation from the Node.js ONE.core instance
+ */
+async function createPairingInvitation(event) {
+  try {
+    // Check if Node instance is provisioned
+    if (!nodeProvisioning.isProvisioned()) {
+      return {
+        success: false,
+        error: 'Node instance not provisioned. Please login first.'
+      }
+    }
+    
+    
+    // Check if Node instance has ConnectionsModel with pairing
+    if (!nodeOneCore.connectionsModel || !nodeOneCore.connectionsModel.pairing) {
+      return {
+        success: false,
+        error: 'Pairing not available. Node instance may not be fully initialized.'
+      }
+    }
+    
+    // Create invitation - PairingManager handles the invitation lifecycle internally
+    console.log('[IOM] Creating new pairing invitation...')
+    let invitation
+    try {
+      // Get the instance keys that should be registered
+      const { getLocalInstanceOfPerson } = await import('@refinio/one.models/lib/misc/instance.js')
+      const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
+      const { getDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
+      const { getObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
+      
+      const myPersonId = getInstanceOwnerIdHash()
+      const instanceId = await getLocalInstanceOfPerson(myPersonId)
+      const defaultInstanceKeys = await getDefaultKeys(instanceId)
+      const instanceKeys = await getObject(defaultInstanceKeys)
+      
+      console.log('[IOM] Person ID:', myPersonId)
+      console.log('[IOM] Instance ID:', instanceId)
+      console.log('[IOM] Instance keys publicKey:', instanceKeys.publicKey)
+      
+      // The original createInvitation() already uses getLocalInstanceOfPerson() which returns instance ID
+      // No need to override keys - the function names were misleading
+      invitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
+      console.log('[IOM] Created invitation with publicKey:', invitation.publicKey)
+      console.log('[IOM] Invitation publicKey matches instance:', invitation.publicKey === instanceKeys.publicKey)
+      
+      // Verify the WebSocket server listener has this CryptoApi registered
+      if (nodeOneCore.connectionsModel?.leuteConnectionsModule?.connectionRouteManager?.catchAllRoutes) {
+        const catchAllRoutes = nodeOneCore.connectionsModel.leuteConnectionsModule.connectionRouteManager.catchAllRoutes
+        const registeredKeys = [...catchAllRoutes.keys()]
+        const hasMatchingKey = registeredKeys.includes(invitation.publicKey)
+        
+        console.log('[IOM] WebSocket server has matching CryptoApi:', hasMatchingKey)
+        console.log('[IOM] Number of registered keys:', registeredKeys.length)
+        
+        if (!hasMatchingKey) {
+          console.warn('[IOM] WARNING - WebSocket server does not have matching CryptoApi registered!')
+          console.warn('[IOM] Looking for:', invitation.publicKey)
+          console.warn('[IOM] Available keys:', registeredKeys.join(', '))
+          
+          // Check if LeuteConnectionsModule has the key in its map
+          if (nodeOneCore.connectionsModel?.leuteConnectionsModule?.myPublicKeyToInstanceInfoMap) {
+            const instanceMap = nodeOneCore.connectionsModel.leuteConnectionsModule.myPublicKeyToInstanceInfoMap
+            console.log('[IOM] LeuteConnectionsModule has key in map:', instanceMap.has(invitation.publicKey))
+            console.log('[IOM] LeuteConnectionsModule registered keys:', [...instanceMap.keys()])
+          }
+        }
+      }
+      
+    } catch (error) {
+      console.error('[IOM] Failed to create invitation:', error)
+      return {
+        success: false,
+        error: `Failed to create invitation: ${error.message}`
+      }
+    }
+    
+    if (!invitation) {
+      return {
+        success: false,
+        error: 'Failed to create pairing invitation'
+      }
+    }
+    
+    // Override the URL for local federation - use the local WebSocket server
+    // The invitation will have the commserver URL, but we want ws://localhost:8765
+    invitation.url = 'ws://localhost:8765'
+    console.log('[IOM] Overridden invitation URL to:', invitation.url)
+    
+    // ONE.core invitation contains: token, publicKey, url (websocket endpoint)
+    // We need to encode the entire invitation object for the URL fragment
+    const invitationToken = encodeURIComponent(JSON.stringify(invitation))
+    
+    // Construct the edda.dev.refinio.one invitation URL
+    const eddaDomain = 'edda.dev.refinio.one'
+    const invitationUrl = `https://${eddaDomain}/invites/invitePartner/?invited=true/#${invitationToken}`
+    
+    console.log('[IOM] Created pairing invitation URL:', invitationUrl)
+    console.log('[IOM] Returning to UI:', {
+      url: invitationUrl,
+      token: invitationToken
+    })
+    
+    return {
+      success: true,
+      invitation: {
+        url: invitationUrl,
+        token: invitationToken
+      }
+    }
+  } catch (error) {
+    console.error('[IOM] Failed to create pairing invitation:', error)
+    return {
+      success: false,
+      error: error.message || 'Failed to create pairing invitation'
+    }
+  }
+}
+
+export default {
   getIOMInstances,
   getReplicationEvents,
   getDataStats,
   addReplicationEvent,
   updateBrowserStorage,
-  updateDataStats
+  updateDataStats,
+  createPairingInvitation,
+  acceptPairingInvitation
 }

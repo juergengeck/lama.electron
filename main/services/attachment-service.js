@@ -3,9 +3,14 @@
  * Manages file attachments using ONE.core BLOB storage
  */
 
-const fs = require('fs').promises
-const path = require('path')
-const crypto = require('crypto')
+import fs from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+// Get __dirname equivalent in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 class AttachmentService {
   constructor() {
@@ -27,19 +32,16 @@ class AttachmentService {
    */
   async storeAttachment(data, metadata) {
     try {
-      const nodeProvisioning = require('../hybrid/node-provisioning')
+      // Load Node.js platform first
+      await import('../../node_modules/@refinio/one.core/lib/system/load-nodejs.js')
       
-      if (!nodeProvisioning.isProvisioned()) {
-        throw new Error('Node not provisioned - cannot store attachments')
-      }
-
-      // Import ONE.core functions dynamically
-      const { storeArrayBufferAsBlob } = await import('../../electron-ui/node_modules/@refinio/one.core/lib/storage-blob.js')
+      // Import ONE.core functions
+      const { storeArrayBufferAsBlob } = await import('../../node_modules/@refinio/one.core/lib/storage-blob.js')
       
       // Convert Buffer to ArrayBuffer
       const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
       
-      // Store as BLOB
+      // Store as BLOB in ONE.core
       const result = await storeArrayBufferAsBlob(arrayBuffer)
       const hash = result.hash
       
@@ -72,22 +74,19 @@ class AttachmentService {
    */
   async getAttachment(hash) {
     try {
-      const nodeProvisioning = require('../hybrid/node-provisioning')
+      // Load Node.js platform first
+      await import('../../node_modules/@refinio/one.core/lib/system/load-nodejs.js')
       
-      if (!nodeProvisioning.isProvisioned()) {
-        throw new Error('Node not provisioned - cannot retrieve attachments')
-      }
-
+      // Import ONE.core functions
+      const { readBlobAsArrayBuffer } = await import('../../node_modules/@refinio/one.core/lib/storage-blob.js')
+      
       // Get metadata
       const metadata = this.attachments.get(hash)
       if (!metadata) {
         console.warn(`[AttachmentService] No metadata for hash ${hash}, using defaults`)
       }
 
-      // Import ONE.core functions dynamically
-      const { readBlobAsArrayBuffer } = await import('../../electron-ui/node_modules/@refinio/one.core/lib/storage-blob.js')
-      
-      // Read BLOB data
+      // Read BLOB data from ONE.core
       const arrayBuffer = await readBlobAsArrayBuffer(hash)
       const buffer = Buffer.from(arrayBuffer)
       
@@ -150,4 +149,4 @@ class AttachmentService {
   }
 }
 
-module.exports = new AttachmentService()
+export default new AttachmentService()

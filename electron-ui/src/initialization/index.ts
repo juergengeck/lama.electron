@@ -19,6 +19,7 @@ const APP_CONFIG = {
 let authInstance: any | undefined
 let isLoggedIn = false
 let platformInitialized = false
+let userCredentials: { username: string; password: string } | null = null
 
 // We don't need appModel variable anymore - using singleton
 
@@ -122,6 +123,7 @@ export async function login(username: string, password: string): Promise<boolean
     const result = await authInstance.login(username, password)
     if (result.success) {
       isLoggedIn = true
+      userCredentials = { username, password }  // Store credentials for Node.js provisioning
       console.log('[Init] Login successful')
       return true
     } else {
@@ -147,6 +149,7 @@ export async function register(username: string, password: string): Promise<bool
   try {
     const result = await authInstance.register(username, password)
     if (result.success) {
+      userCredentials = { username, password }  // Store credentials for Node.js provisioning
       console.log('[Init] Registration successful')
       return true
     } else {
@@ -230,10 +233,9 @@ async function getOwnerId(): Promise<string> {
     }
   }
   
-  // Final fallback
-  if (!ownerId) {
-    console.warn('[Init] No owner ID found, using fallback')
-    ownerId = 'default-owner'
+  // Don't use fallback - throw error if no valid owner ID
+  if (!ownerId || ownerId === 'default-owner') {
+    throw new Error('No valid owner ID available. User must be authenticated first.')
   }
   
   return ownerId
@@ -243,6 +245,15 @@ async function getOwnerId(): Promise<string> {
  * Initialize app model
  */
 export async function initializeAppModel(): Promise<AppModel> {
+  // Ensure user is logged in before initializing models
+  if (!isLoggedIn || !authInstance) {
+    throw new Error('Cannot initialize AppModel without authenticated user')
+  }
+  
+  // DISABLED - Provisioning is handled by browser-init-simple.ts
+  // This was causing duplicate provisioning attempts
+  // if (window.electronAPI && userCredentials) { ... }
+  
   const ownerId = await getOwnerId()
   return AppModelSingleton.getInstance(ownerId)
 }

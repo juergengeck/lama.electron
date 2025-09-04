@@ -3,7 +3,7 @@
  * Single source of truth for application state
  */
 
-const { EventEmitter } = require('events')
+import { EventEmitter } from 'events';
 
 class StateManager extends EventEmitter {
   constructor() {
@@ -205,6 +205,38 @@ class StateManager extends EventEmitter {
       messages: Array.from(this.state.messages.entries())
     }
   }
+  
+  // Clear all state (for app reset)
+  clearState() {
+    this.state = {
+      user: {
+        authenticated: false,
+        id: null,
+        name: null,
+        email: null
+      },
+      conversations: new Map(),
+      activeConversationId: null,
+      contacts: new Map(),
+      messages: new Map(),
+      settings: {
+        theme: 'dark',
+        notifications: true,
+        aiEnabled: true
+      },
+      network: {
+        connected: false,
+        peers: [],
+        syncStatus: 'idle'
+      }
+    }
+    
+    // Clear any browser instance ID as well
+    delete this.state.browserInstanceId
+    
+    // Emit state cleared event
+    this.emit('stateCleared')
+  }
 }
 
-module.exports = new StateManager()
+export default new StateManager()

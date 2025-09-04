@@ -3,14 +3,20 @@
  * Initializes all services and manages the application lifecycle
  */
 
-const { app, BrowserWindow } = require('electron')
-const path = require('path')
+import { app, BrowserWindow } from 'electron';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// Get __dirname equivalent in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Core modules - now using hybrid architecture
-const nodeProvisioning = require('./hybrid/node-provisioning')
-const ipcController = require('./ipc/controller')
-const llmManager = require('./services/llm-manager')
-const attachmentService = require('./services/attachment-service')
+import nodeProvisioning from './hybrid/node-provisioning.js';
+import ipcController from './ipc/controller.js';
+import llmManager from './services/llm-manager.js';
+import attachmentService from './services/attachment-service.js';
 
 class MainApplication {
   constructor() {
@@ -62,7 +68,7 @@ class MainApplication {
     // Set up window icon
     const iconPath = path.join(__dirname, '..', 'assets', 'icons', 'icon-512.png')
     let windowIcon = undefined
-    if (require('fs').existsSync(iconPath)) {
+    if (fs.existsSync(iconPath)) {
       windowIcon = iconPath
       console.log(`[MainApp] Using window icon: ${iconPath}`)
     } else {
@@ -146,15 +152,15 @@ class MainApplication {
     return this.mainWindow
   }
 
-  getState() {
+  async getState() {
     // State is now managed by ONE.CORE instances
     if (nodeProvisioning.isProvisioned()) {
-      const nodeInstance = require('./hybrid/node-instance')
-      return nodeInstance.models?.state?.getAll() || {}
+      const { default: nodeInstance } = await import('./hybrid/node-instance.js');
+      return nodeInstance.models?.state?.getAll() || {};
     }
-    return {}
+    return {};
   }
 }
 
 // Export singleton instance
-module.exports = new MainApplication()
+export default new MainApplication();

@@ -11,6 +11,7 @@ import { addRecipeToRuntime, hasRecipe } from '@refinio/one.core/lib/object-reci
 import { LLMRecipe } from './llm'
 import { LLMSettingsRecipe } from './LLMSettingsRecipe'
 import { GlobalLLMSettingsRecipe } from './GlobalLLMSettingsRecipe'
+// Settings recipe removed - using direct state sync instead
 
 /**
  * Register all recipes with the ONE platform

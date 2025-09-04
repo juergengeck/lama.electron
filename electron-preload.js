@@ -26,6 +26,52 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // App data management
   clearAppData: () => ipcRenderer.invoke('app:clearData'),
+  
+  // Invitations (via Node.js instance)
+  createInvitation: () => ipcRenderer.invoke('invitation:create'),
+  
+  // Connections management (via Node.js instance)
+  getConnectionsInfo: () => ipcRenderer.invoke('connections:info'),
+  getConnectionsStatus: () => ipcRenderer.invoke('connections:status'),
+  
+  // Device management
+  getDevices: () => ipcRenderer.invoke('devices:list'),
+  getConnectedDevices: () => ipcRenderer.invoke('devices:connected'),
+  registerDevice: (deviceInfo) => ipcRenderer.invoke('devices:register', deviceInfo),
+  removeDevice: (deviceId) => ipcRenderer.invoke('devices:remove', deviceId),
+  
+  // Instance information
+  getInstanceInfo: () => ipcRenderer.invoke('instance:info'),
 });
 
 console.log('Electron preload script loaded with context isolation');
+
+// Forward browser console logs to main process for debugging
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.log = (...args) => {
+  originalLog.apply(console, args);
+  // Forward to main process if it contains EncryptionPlugin
+  const msg = args.join(' ');
+  if (msg.includes('EncryptionPlugin') || msg.includes('evenLocalNonceCounter')) {
+    ipcRenderer.send('browser-log', 'log', msg);
+  }
+};
+
+console.error = (...args) => {
+  originalError.apply(console, args);
+  const msg = args.join(' ');
+  if (msg.includes('EncryptionPlugin') || msg.includes('evenLocalNonceCounter')) {
+    ipcRenderer.send('browser-log', 'error', msg);
+  }
+};
+
+console.warn = (...args) => {
+  originalWarn.apply(console, args);
+  const msg = args.join(' ');
+  if (msg.includes('EncryptionPlugin') || msg.includes('evenLocalNonceCounter')) {
+    ipcRenderer.send('browser-log', 'warn', msg);
+  }
+};

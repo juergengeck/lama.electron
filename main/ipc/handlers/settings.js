@@ -3,7 +3,7 @@
  * Manages settings synchronization between browser and node instances
  */
 
-const realNodeInstance = require('../../hybrid/real-node-instance')
+import nodeOneCore from '../../core/node-one-core.js';
 
 const settingsHandlers = {
   /**
@@ -12,11 +12,11 @@ const settingsHandlers = {
   async getSetting(event, key) {
     console.log('[Settings] Getting setting:', key)
     
-    if (!realNodeInstance.isInitialized()) {
+    if (!nodeOneCore.getInfo().initialized) {
       throw new Error('Node instance not initialized')
     }
     
-    const value = await realNodeInstance.getSetting(key)
+    const value = await nodeOneCore.getSetting(key)
     return value
   },
 
@@ -26,11 +26,11 @@ const settingsHandlers = {
   async setSetting(event, { key, value }) {
     console.log('[Settings] Setting:', key, '=', value)
     
-    if (!realNodeInstance.isInitialized()) {
+    if (!nodeOneCore.getInfo().initialized) {
       throw new Error('Node instance not initialized')
     }
     
-    await realNodeInstance.setSetting(key, value)
+    await nodeOneCore.setSetting(key, value)
     
     // Broadcast the change to all listeners
     return { success: true }
@@ -42,11 +42,11 @@ const settingsHandlers = {
   async getSettings(event, prefix) {
     console.log('[Settings] Getting settings with prefix:', prefix)
     
-    if (!realNodeInstance.isInitialized()) {
+    if (!nodeOneCore.getInfo().initialized) {
       throw new Error('Node instance not initialized')
     }
     
-    const settings = await realNodeInstance.getSettings(prefix)
+    const settings = await nodeOneCore.getSettings(prefix)
     return settings
   },
 
@@ -56,24 +56,24 @@ const settingsHandlers = {
   async syncIoMSettings(event, browserSettings) {
     console.log('[Settings] Syncing IoM settings from browser')
     
-    if (!realNodeInstance.isInitialized()) {
+    if (!nodeOneCore.getInfo().initialized) {
       throw new Error('Node instance not initialized')
     }
     
     // Update browser connection status
-    await realNodeInstance.updateBrowserConnectionStatus(true)
+    await nodeOneCore.updateBrowserConnectionStatus(true)
     
     // Sync browser-specific settings to IoM
     if (browserSettings) {
       for (const [key, value] of Object.entries(browserSettings)) {
         if (key.startsWith('iom.browser.')) {
-          await realNodeInstance.setSetting(key, value)
+          await nodeOneCore.setSetting(key, value)
         }
       }
     }
     
     // Return current IoM settings from node
-    const iomSettings = realNodeInstance.getIoMSettings()
+    const iomSettings = nodeOneCore.getIoMSettings()
     if (iomSettings) {
       const settings = {}
       // Get relevant IoM settings
@@ -93,12 +93,12 @@ const settingsHandlers = {
   async subscribeToSettings(event, prefix) {
     console.log('[Settings] Subscribing to settings with prefix:', prefix)
     
-    if (!realNodeInstance.isInitialized()) {
+    if (!nodeOneCore.getInfo().initialized) {
       throw new Error('Node instance not initialized')
     }
     
-    const nodeSettings = realNodeInstance.getNodeSettings()
-    const iomSettings = realNodeInstance.getIoMSettings()
+    const nodeSettings = nodeOneCore.getNodeSettings()
+    const iomSettings = nodeOneCore.getIoMSettings()
     
     // Subscribe to node settings changes
     if (nodeSettings) {
@@ -129,20 +129,20 @@ const settingsHandlers = {
     
     const config = {
       node: {
-        initialized: realNodeInstance.isInitialized(),
-        hasSettings: !!realNodeInstance.getNodeSettings(),
-        hasIoMSettings: !!realNodeInstance.getIoMSettings()
+        initialized: nodeOneCore.isInitialized(),
+        hasSettings: !!nodeOneCore.getNodeSettings(),
+        hasIoMSettings: !!nodeOneCore.getIoMSettings()
       }
     }
     
-    if (realNodeInstance.isInitialized()) {
-      config.node.instanceId = await realNodeInstance.getSetting('instance.id')
-      config.node.instanceType = await realNodeInstance.getSetting('instance.type')
-      config.node.storageRole = await realNodeInstance.getSetting('storage.role')
-      config.node.syncEnabled = await realNodeInstance.getSetting('sync.enabled')
+    if (nodeOneCore.isInitialized()) {
+      config.node.instanceId = await nodeOneCore.getSetting('instance.id')
+      config.node.instanceType = await nodeOneCore.getSetting('instance.type')
+      config.node.storageRole = await nodeOneCore.getSetting('storage.role')
+      config.node.syncEnabled = await nodeOneCore.getSetting('sync.enabled')
       
       // Get IoM configuration
-      const iomSettings = realNodeInstance.getIoMSettings()
+      const iomSettings = nodeOneCore.getIoMSettings()
       if (iomSettings) {
         config.iom = {
           group: iomSettings.getValue('iom.group'),
@@ -157,4 +157,4 @@ const settingsHandlers = {
   }
 }
 
-module.exports = settingsHandlers
+export default settingsHandlers

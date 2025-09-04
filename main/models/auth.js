@@ -3,8 +3,9 @@
  * Handles user authentication with ONE.CORE
  */
 
-const instanceManager = require('../core/instance')
-const stateManager = require('../state/manager')
+import instanceManager from '../core/instance.js';
+import stateManager from '../state/manager.js';
+import nodeOneCore from '../core/node-one-core.js';
 
 class AuthModel {
   constructor() {
@@ -13,33 +14,24 @@ class AuthModel {
   }
 
   async initialize() {
-    // Initialize ONE.CORE instance
-    await instanceManager.initialize()
-    
-    // Load MultiUser from one.models
-    const { default: MultiUser } = await import('@refinio/one.models/lib/models/Authenticator/MultiUser')
-    
-    // Create MultiUser instance
-    this.multiUser = new MultiUser({
-      instanceManager: instanceManager.getInstance(),
-      storage: instanceManager.getStorage()
-    })
-    
-    await this.multiUser.init()
-    
-    console.log('[AuthModel] Initialized')
+    // AUTH MODEL DOES NOT INITIALIZE NODE
+    // Node initialization happens only through provision:node IPC handler
+    // This prevents competing control flows
+    console.log('[AuthModel] Skipping initialization - handled by provision:node')
+    return
   }
 
   async login(username, password) {
     try {
-      console.log(`[AuthModel] Attempting login for: ${username}`)
+      console.log(`[AuthModel] Login not handled here - browser handles auth`)
       
-      if (!this.multiUser) {
-        await this.initialize()
+      // AUTH MODEL DOES NOT HANDLE LOGIN
+      // Browser handles login and provisions Node via IPC
+      // This prevents competing control flows
+      return {
+        success: false,
+        error: 'Login must be initiated from browser UI'
       }
-      
-      // Attempt login
-      const result = await this.multiUser.login(username, password)
       
       if (result.success) {
         this.currentUser = {
@@ -50,6 +42,10 @@ class AuthModel {
         
         // Update state
         stateManager.setUser(this.currentUser)
+        
+        // Node provisioning is handled separately through provision:node IPC
+        // This prevents duplicate initialization attempts
+        console.log('[AuthModel] Node provisioning will be handled by browser through provision:node')
         
         console.log('[AuthModel] Login successful')
         return {
@@ -74,18 +70,15 @@ class AuthModel {
 
   async register(username, password, email = null) {
     try {
-      console.log(`[AuthModel] Registering new user: ${username}`)
+      console.log(`[AuthModel] Registration not handled here - browser handles auth`)
       
-      if (!this.multiUser) {
-        await this.initialize()
+      // AUTH MODEL DOES NOT HANDLE REGISTRATION
+      // Browser handles registration and provisions Node via IPC
+      // This prevents competing control flows
+      return {
+        success: false,
+        error: 'Registration must be initiated from browser UI'
       }
-      
-      // Create new user
-      const result = await this.multiUser.register({
-        username,
-        password,
-        email: email || `${username}@lama.local`
-      })
       
       if (result.success) {
         // Auto-login after registration
@@ -158,4 +151,4 @@ class AuthModel {
   }
 }
 
-module.exports = new AuthModel()
+export default new AuthModel()

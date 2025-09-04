@@ -51,6 +51,7 @@ export default defineConfig({
     rollupOptions: {
       external: [
         'react-native',
+        'react-native-fs',
         'expo-crypto',
         'expo-file-system', 
         'expo-secure-store',

@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { lamaBridge } from '@/bridge/lama-bridge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ConnectionsView } from './ConnectionsView'
+import InstancesView from './InstancesView'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -578,12 +578,8 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
               
               <Separator />
               
-              {/* Connection Management */}
-              <ConnectionsView 
-                onNavigateToChat={onNavigate ? (topicId, contactName) => {
-                  onNavigate('chats', topicId)
-                } : undefined}
-              />
+              {/* Instance Management */}
+              <InstancesView />
             </CardContent>
           </Card>
 
@@ -674,8 +670,8 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                                   <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary" />
                                 ) : (
                                   <>
-                                    <Users className="h-3 w-3 mr-1" />
-                                    Add Contact
+                                    <Cpu className="h-3 w-3 mr-1" />
+                                    Load Model
                                   </>
                                 )}
                               </Button>
@@ -783,45 +779,71 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                         className="bg-red-600 hover:bg-red-700"
                         onClick={async () => {
                           try {
-                            // Clear localStorage and sessionStorage immediately
+                            // Clear browser-side data first
+                            console.log('Clearing browser-side data...')
+                            
+                            // Clear localStorage and sessionStorage
                             localStorage.clear()
                             sessionStorage.clear()
                             
                             // Clear IndexedDB databases
                             if ('indexedDB' in window) {
-                              const databases = await indexedDB.databases()
-                              for (const db of databases) {
-                                if (db.name) {
-                                  indexedDB.deleteDatabase(db.name)
-                                  console.log(`Deleted IndexedDB database: ${db.name}`)
+                              try {
+                                const databases = await indexedDB.databases()
+                                for (const db of databases) {
+                                  if (db.name) {
+                                    await indexedDB.deleteDatabase(db.name)
+                                    console.log(`Deleted IndexedDB database: ${db.name}`)
+                                  }
                                 }
+                              } catch (e) {
+                                console.error('Error clearing IndexedDB:', e)
                               }
-                            }
-                            
-                            // Clear cache in the bridge (non-blocking)
-                            lamaBridge.clearConversation('default')
-                            
-                            // If we have access to Electron API, request full data clear
-                            // This should handle filesystem cleanup
-                            if (window.electronAPI?.clearAppData) {
-                              await window.electronAPI.clearAppData()
-                              // Don't do anything after this - the app will relaunch
-                              return
                             }
                             
                             // Clear service worker caches if any
                             if ('caches' in window) {
-                              const cacheNames = await caches.keys()
-                              await Promise.all(
-                                cacheNames.map(name => caches.delete(name))
-                              )
+                              try {
+                                const cacheNames = await caches.keys()
+                                await Promise.all(
+                                  cacheNames.map(name => caches.delete(name))
+                                )
+                              } catch (e) {
+                                console.error('Error clearing caches:', e)
+                              }
                             }
                             
-                            // Only reload if we didn't use the Electron API
-                            window.location.href = '/'
+                            // Clear cache in the bridge
+                            try {
+                              lamaBridge.clearConversation('default')
+                            } catch (e) {
+                              console.error('Error clearing bridge cache:', e)
+                            }
+                            
+                            // If we have access to Electron API, request full data clear
+                            // This will handle filesystem cleanup and reload the app
+                            if (window.electronAPI?.clearAppData) {
+                              console.log('Requesting main process to clear all app data...')
+                              const result = await window.electronAPI.clearAppData()
+                              
+                              if (result?.success) {
+                                console.log('App data cleared successfully, app will reload...')
+                                // The main process will reload the window
+                              } else {
+                                console.error('Failed to clear app data:', result?.error)
+                                // Still reload to apply browser-side changes
+                                window.location.href = '/'
+                              }
+                            } else {
+                              // No Electron API available, just reload after clearing browser data
+                              console.log('No Electron API, reloading after browser cleanup...')
+                              window.location.href = '/'
+                            }
                           } catch (error) {
                             console.error('Failed to reset app data:', error)
-                            alert('Failed to reset app data. Please manually delete the app data folder.')
+                            alert('Failed to reset app data completely. Some data may have been cleared. Please restart the app.')
+                            // Try to reload anyway
+                            window.location.href = '/'
                           }
                         }}
                       >

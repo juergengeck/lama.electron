@@ -448,31 +448,14 @@ export class LamaMCPServer {
   }
   
   private async acceptInvitation(invitationUrl: string) {
-    try {
-      if (!this.appModel.connections?.pairing) {
-        throw new Error('Pairing manager not available')
-      }
-      
-      const invitation = await this.appModel.connections.pairing.parseInvitationUrl(invitationUrl)
-      await this.appModel.connections.pairing.acceptInvitation(invitation)
-      
-      return {
-        content: [
-          {
-            type: 'text',
-            text: 'Invitation accepted successfully'
-          }
-        ]
-      }
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Failed to accept invitation: ${error.message}`
-          }
-        ]
-      }
+    // Browser should NOT accept invitations - only Node.js handles pairing
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Browser cannot accept invitations - pairing disabled. Invitations must be handled by the Node.js instance.'
+        }
+      ]
     }
   }
   

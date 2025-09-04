@@ -21,9 +21,33 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
 
   useEffect(() => {
     loadContacts()
-    // Refresh contacts periodically
+    
+    // Listen for contact updates
+    const handleContactsUpdated = () => {
+      console.log('[ContactsView] Contacts updated event received')
+      loadContacts()
+    }
+    
+    // Listen for IPC contact added events from Node.js
+    const handleContactAdded = () => {
+      console.log('[ContactsView] Contact added via IPC')
+      loadContacts()
+    }
+    
+    window.addEventListener('contacts:updated', handleContactsUpdated)
+    
+    // Listen for IPC events if in Electron
+    if (window.electronAPI?.on) {
+      window.electronAPI.on('contact:added', handleContactAdded)
+    }
+    
+    // Also refresh contacts periodically
     const interval = setInterval(loadContacts, 5000)
-    return () => clearInterval(interval)
+    
+    return () => {
+      window.removeEventListener('contacts:updated', handleContactsUpdated)
+      clearInterval(interval)
+    }
   }, [bridge])
 
   const loadContacts = async () => {
@@ -125,10 +149,10 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
       </Card>
 
       {/* Contacts List */}
-      <Card className="flex-1 flex flex-col">
-        <CardContent className="flex-1 p-0">
-          <ScrollArea className="h-full">
-            <div className="p-4 space-y-2">
+      <Card className="flex-1 flex flex-col overflow-hidden">
+        <CardContent className="flex-1 p-0 overflow-hidden">
+          <ScrollArea className="h-full w-full">
+            <div className="p-4 space-y-2 max-h-[calc(100vh-300px)]">
               {filteredContacts.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -142,25 +166,28 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3">
                           <Avatar>
-                            <AvatarFallback>
+                            <AvatarFallback className={contact.isAI ? 'bg-purple-100 dark:bg-purple-900' : ''}>
                               {contact.isAI ? (
-                                <Bot className="h-5 w-5" />
+                                <Bot className="h-5 w-5 text-purple-600 dark:text-purple-400" />
                               ) : (
-                                contact.name.substring(0, 2).toUpperCase()
+                                (contact.displayName || contact.name || 'UN').substring(0, 2).toUpperCase()
                               )}
                             </AvatarFallback>
                           </Avatar>
-                          <div>
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center space-x-2">
-                              <span className="font-medium">{contact.displayName || contact.name}</span>
-                              <Badge variant="outline" className="text-xs">
+                              <span className="font-medium truncate">{contact.displayName || contact.name || 'Unknown'}</span>
+                              <Badge 
+                                variant={contact.isAI ? "secondary" : "outline"} 
+                                className="text-xs flex-shrink-0"
+                              >
                                 {contact.isAI ? 'AI' : 'P2P'}
                               </Badge>
                             </div>
                             <div className="flex items-center space-x-2 mt-1">
                               <Circle className={`h-2 w-2 fill-current ${getStatusColor(contact.status)}`} />
-                              <span className="text-xs text-muted-foreground">
-                                {getStatusLabel(contact.status)}
+                              <span className="text-xs text-muted-foreground truncate">
+                                {contact.isAI ? 'Ready' : getStatusLabel(contact.status)}
                               </span>
                               {contact.lastSeen && (
                                 <span className="text-xs text-muted-foreground">

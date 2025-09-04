@@ -24,7 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 
-interface IOMInstance {
+interface LAMAInstance {
   id: string
   name: string
   type: 'node' | 'browser' | 'mobile'
@@ -72,7 +72,7 @@ interface DataDashboardProps {
 }
 
 export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDashboardProps) {
-  const [instances, setInstances] = useState<IOMInstance[]>([])
+  const [instances, setInstances] = useState<LAMAInstance[]>([])
   const [replicationEvents, setReplicationEvents] = useState<ReplicationEvent[]>([])
   const [dataStats, setDataStats] = useState<DataStats>({
     totalObjects: 0,
@@ -103,7 +103,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
         
         // Send to main process if in Electron
         if (window.electronAPI?.invoke) {
-          await window.electronAPI.invoke('iom:updateBrowserStorage', storageInfo)
+          await window.electronAPI.invoke('lama:updateBrowserStorage', storageInfo)
         }
         
         return storageInfo
@@ -190,7 +190,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       
       // Send stats to main process
       if (window.electronAPI?.invoke) {
-        await window.electronAPI.invoke('iom:updateDataStats', stats)
+        await window.electronAPI.invoke('lama:updateDataStats', stats)
       }
       
       return stats
@@ -200,8 +200,8 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
     }
   }
   
-  // Fetch real IOM data from main process
-  const fetchIOMData = async () => {
+  // Fetch real LAMA data from main process
+  const fetchLAMAData = async () => {
     try {
       setIsLoading(true)
       setError(null)
@@ -217,8 +217,8 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       
       // Check if we're in Electron environment
       if (window.electronAPI?.invoke) {
-        // Fetch real IOM instances
-        const instancesResult = await window.electronAPI.invoke('iom:getInstances')
+        // Fetch real LAMA instances
+        const instancesResult = await window.electronAPI.invoke('lama:getInstances')
         if (instancesResult.success && instancesResult.data) {
           setInstances(instancesResult.data)
         } else if (!instancesResult.success) {
@@ -226,14 +226,14 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
         }
         
         // Fetch replication events
-        const eventsResult = await window.electronAPI.invoke('iom:getReplicationEvents')
+        const eventsResult = await window.electronAPI.invoke('lama:getReplicationEvents')
         if (eventsResult.success && eventsResult.data) {
           setReplicationEvents(eventsResult.data)
         }
         
         // If we didn't get stats from browser, try from main process
         if (!actualStats) {
-          const statsResult = await window.electronAPI.invoke('iom:getDataStats')
+          const statsResult = await window.electronAPI.invoke('lama:getDataStats')
           if (statsResult.success && statsResult.data) {
             setDataStats(statsResult.data)
           }
@@ -254,8 +254,8 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
         })
       }
     } catch (err) {
-      console.error('Failed to fetch IOM data:', err)
-      setError(err instanceof Error ? err.message : 'Failed to fetch IOM data')
+      console.error('Failed to fetch LAMA data:', err)
+      setError(err instanceof Error ? err.message : 'Failed to fetch LAMA data')
       // Show empty state on error
       setInstances([])
       setReplicationEvents([])
@@ -277,13 +277,13 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
   
   useEffect(() => {
     // Initial fetch
-    fetchIOMData()
+    fetchLAMAData()
 
     // Set up auto-refresh
     let interval: NodeJS.Timeout | undefined
     if (autoRefresh) {
       interval = setInterval(() => {
-        fetchIOMData()
+        fetchLAMAData()
       }, 5000)
     }
     
@@ -295,18 +295,18 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
     }
     
     if (window.electronAPI) {
-      window.addEventListener('iom:replicationEvent', handleReplicationEvent)
+      window.addEventListener('lama:replicationEvent', handleReplicationEvent)
     }
     
     return () => {
       if (interval) clearInterval(interval)
       if (window.electronAPI) {
-        window.removeEventListener('iom:replicationEvent', handleReplicationEvent)
+        window.removeEventListener('lama:replicationEvent', handleReplicationEvent)
       }
     }
   }, [autoRefresh])
 
-  const getInstanceIcon = (type: IOMInstance['type']) => {
+  const getInstanceIcon = (type: LAMAInstance['type']) => {
     switch (type) {
       case 'node': return <HardDrive className="h-4 w-4" />
       case 'browser': return <Monitor className="h-4 w-4" />
@@ -314,7 +314,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
     }
   }
 
-  const getStatusIcon = (status: IOMInstance['status']) => {
+  const getStatusIcon = (status: LAMAInstance['status']) => {
     switch (status) {
       case 'online': return <Wifi className="h-4 w-4 text-green-500" />
       case 'offline': return <WifiOff className="h-4 w-4 text-gray-500" />
@@ -363,7 +363,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading IOM replication state...</p>
+          <p className="text-muted-foreground">Loading LAMA replication state...</p>
         </div>
       </div>
     )
@@ -375,8 +375,8 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <Database className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-semibold mb-2">No IOM Instances</h3>
-          <p className="text-muted-foreground">No Internet of Me instances are currently provisioned.</p>
+          <h3 className="text-lg font-semibold mb-2">No LAMA Instances</h3>
+          <p className="text-muted-foreground">No LAMA instances are currently provisioned.</p>
           <p className="text-sm text-muted-foreground mt-2">Deploy a Node instance to start replication monitoring.</p>
         </div>
       </div>
@@ -389,7 +389,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-bold">Data Dashboard</h2>
-          <p className="text-muted-foreground">Monitor your Internet of Me replication and storage</p>
+          <p className="text-muted-foreground">Monitor your LAMA replication and storage</p>
           {error && (
             <div className="mt-2 text-sm text-red-600 flex items-center">
               <AlertCircle className="h-4 w-4 mr-2" />
@@ -472,7 +472,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
       {/* Main Content */}
       <Tabs defaultValue="instances" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="instances">IOM Instances</TabsTrigger>
+          <TabsTrigger value="instances">LAMA Instances</TabsTrigger>
           <TabsTrigger value="replication">Replication Activity</TabsTrigger>
           <TabsTrigger value="storage">Storage Details</TabsTrigger>
         </TabsList>
@@ -542,7 +542,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
           <Card>
             <CardHeader>
               <CardTitle>Recent Replication Events</CardTitle>
-              <CardDescription>Real-time synchronization activity across your IoM</CardDescription>
+              <CardDescription>Real-time synchronization activity across your LAMA network</CardDescription>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[400px]">
