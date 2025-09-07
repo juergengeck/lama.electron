@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import AIContactManager from './ai-contact-manager.js';
 import AIAssistantModel from './ai-assistant-model.js';
 import RefinioApiServer from '../api/refinio-api-server.js';
+import TopicGroupManager from './topic-group-manager.js';
 
 // Get __dirname equivalent in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +24,7 @@ class NodeOneCore {
     this.instanceName = null
     this.ownerId = null
     this.leuteModel = null
+    this.appStateModel = null
     this.connectionsModel = null
     this.channelManager = null
     this.topicModel = null
@@ -31,6 +33,8 @@ class NodeOneCore {
     this.aiContactManager = new AIContactManager(this)
     this.aiAssistantModel = null // Will be initialized after models are ready
     this.apiServer = null // Refinio API server
+    this.topicGroupManager = null // Will be initialized after models are ready
+    this.federationGroup = null // Track federation group for access
   }
 
   /**
@@ -92,8 +96,10 @@ class NodeOneCore {
     await import('@refinio/one.core/lib/system/load-nodejs.js')
     console.log('[NodeOneCore] ✅ Node.js platform loaded')
     
-    // Ensure clean slate - close any existing instance singleton
+    // Now safe to import ONE.core modules
     const { closeInstance } = await import('@refinio/one.core/lib/instance.js')
+    
+    // Ensure clean slate - close any existing instance singleton
     try {
       closeInstance()
       console.log('[NodeOneCore] Closed existing ONE.core singleton for clean init')
@@ -117,6 +123,7 @@ class NodeOneCore {
     const ModelsRecipesStableModule = await import('@refinio/one.models/lib/recipes/recipes-stable.js')
     const ModelsRecipesExperimentalModule = await import('@refinio/one.models/lib/recipes/recipes-experimental.js')
     const { LamaRecipes } = await import('../recipes/index.js')
+    const { StateEntryRecipe, AppStateJournalRecipe } = await import('@refinio/refinio-api/dist/state/index.js')
     
     // Import reverse maps
     const ReverseMapsStableModule = await import('@refinio/one.models/lib/recipes/reversemaps-stable.js')
@@ -132,7 +139,9 @@ class NodeOneCore {
       ...(CORE_RECIPES || []),
       ...(ModelsRecipesStable || []),
       ...(ModelsRecipesExperimental || []),
-      ...(LamaRecipes || [])
+      ...(LamaRecipes || []),
+      StateEntryRecipe,
+      AppStateJournalRecipe
     ].filter(r => r && typeof r === 'object' && r.name)
     
     console.log('[NodeOneCore] Creating SingleUserNoAuth with', allRecipes.length, 'recipes')
@@ -201,6 +210,7 @@ class NodeOneCore {
       // This ensures they're available for storeVersionedObject calls
       const { addRecipeToRuntime, hasRecipe } = await import('@refinio/one.core/lib/object-recipes.js')
       
+      // Register LamaRecipes
       for (const recipe of LamaRecipes) {
         if (!hasRecipe(recipe.name)) {
           console.log(`[NodeOneCore] Registering recipe: ${recipe.name}`)
@@ -214,9 +224,36 @@ class NodeOneCore {
         }
       }
       
+      // Register AppState recipes
+      if (!hasRecipe(StateEntryRecipe.name)) {
+        console.log(`[NodeOneCore] Registering recipe: ${StateEntryRecipe.name}`)
+        addRecipeToRuntime(StateEntryRecipe)
+      }
+      if (!hasRecipe(AppStateJournalRecipe.name)) {
+        console.log(`[NodeOneCore] Registering recipe: ${AppStateJournalRecipe.name}`)
+        addRecipeToRuntime(AppStateJournalRecipe)
+      }
+      
     } catch (e) {
       console.error('[NodeOneCore] Authentication failed:', e)
       throw e
+    }
+  }
+
+  /**
+   * Monitor pairing and CHUM transitions
+   * ConnectionsModel handles the transition automatically
+   */
+  setupConnectionMonitoring() {
+    console.log('[NodeOneCore] Setting up connection monitoring...')
+    
+    // Just monitor what ConnectionsModel is doing - don't interfere
+    if (this.connectionsModel?.pairing) {
+      this.connectionsModel.pairing.onPairingSuccess((initiatedLocally, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, token) => {
+        console.log('[NodeOneCore] ✅ Pairing successful')
+        console.log('[NodeOneCore] Remote person:', remotePersonId?.substring(0, 8))
+        // ConnectionsModel will handle the transition to CHUM automatically
+      })
     }
   }
 
@@ -234,6 +271,16 @@ class NodeOneCore {
     try {
       await objectEvents.init()
       console.log('[NodeOneCore] ✅ ObjectEventDispatcher initialized')
+      
+      // TRACE: Log when ChannelInfo objects are received
+      objectEvents.onNewVersion(async (obj) => {
+        if (obj.$type$ === 'ChannelInfo') {
+          console.log('[NodeOneCore] 📨 NODE: Received ChannelInfo via CHUM!', {
+            channelId: obj.id,
+            owner: obj.owner?.substring(0, 8)
+          })
+        }
+      })
     } catch (error) {
       // If it's already initialized, that's fine
       if (error.message?.includes('already initialized')) {
@@ -299,28 +346,69 @@ class NodeOneCore {
     // Set up proper access rights using AccessRightsManager
     await this.setupProperAccessRights()
     
-    // Set up simplified channel message logging
-    this.channelManager.onUpdated(async (channelInfoIdHash, channelId, channelOwner, timeOfEarliestChange, data) => {
-      console.log(`[NodeOneCore] 📨 Channel updates detected in ${channelId}, ${data.length} changes`)
+    // Set up federation-aware channel sync
+    const { setupChannelSyncListeners } = await import('./federation-channel-sync.js')
+    setupChannelSyncListeners(this.channelManager, 'Node', (channelId, messages) => {
+      console.log('\n' + '='.repeat(60))
+      console.log('📥 MESSAGE FLOW TRACE - NODE RECEIVED via CHUM')
+      console.log('='.repeat(60))
+      console.log(`[TRACE] 📨 NODE: Received ${messages.length} messages in channel ${channelId}`)
+      console.log(`[NodeOneCore] 📨 New messages in channel ${channelId}:`, messages.length)
       
-      // DEBUG: Log all changes with their types
-      for (let i = 0; i < data.length; i++) {
-        const change = data[i]
-        console.log(`[NodeOneCore] Change ${i}: type=${change.$type$}, hasText=${!!change.text}, hasSender=${!!change.sender}`)
-        
-        if (change.$type$ === 'ChatMessage') {
-          console.log(`[NodeOneCore] ✅ ChatMessage from ${change.sender?.substring(0, 8)}: ${change.text?.substring(0, 50)}`)
-        } else {
-          console.log(`[NodeOneCore] ⚠️ Non-ChatMessage type: ${change.$type$}`)
-        }
-      }
+      // Log message details
+      messages.forEach((msg, idx) => {
+        console.log(`[TRACE] Message ${idx + 1}:`, {
+          text: msg.text?.substring(0, 50),
+          sender: msg.sender?.substring(0, 8),
+          timestamp: msg.timestamp
+        })
+      })
       
-      // Check if we have access to read this channel
-      if (data.length > 0 && !data.some(change => change.$type$ === 'ChatMessage')) {
-        console.log(`[NodeOneCore] ❌ No ChatMessages found in ${data.length} changes - possible access rights issue`)
+      // Check if this is an AI-enabled topic and respond if needed
+      if (this.aiAssistantModel && this.aiAssistantModel.isAITopic(channelId)) {
+        console.log(`[TRACE] 🤖 NODE: AI topic detected, processing...`)
+        console.log(`[NodeOneCore] AI topic detected, processing messages...`)
+        // AI response will be handled by AIMessageListener
       }
     })
-    console.log('[NodeOneCore] ✅ Channel event listener registered')
+    console.log('[NodeOneCore] ✅ Federation channel sync listener registered')
+    
+    // Add more detailed CHUM data reception logging
+    console.log('[NodeOneCore] 🎯🎯🎯 NODE: Setting up detailed CHUM data reception logging')
+    this.channelManager.onUpdated((channelInfoIdHash, channelId, owner, time, data) => {
+      console.log('[NodeOneCore] 🔔🔔🔔 NODE CHUM DATA RECEIVED!', {
+        channelId,
+        owner: owner?.substring(0, 8),
+        dataLength: data?.length,
+        timestamp: new Date(time).toISOString(),
+        myOwnerId: this.ownerId?.substring(0, 8),
+        isMyChannel: owner === this.ownerId
+      })
+      
+      // Log what's actually in the data
+      if (data && data.length > 0) {
+        data.forEach((item, idx) => {
+          console.log(`[NodeOneCore]   CHUM Data[${idx}]:`, {
+            type: item.$type$,
+            content: item.content ? item.content.substring(0, 50) + '...' : undefined,
+            author: item.author?.substring(0, 8),
+            timestamp: item.creationTime
+          })
+        })
+        
+        // Check if this is a ChatMessage
+        const chatMessages = data.filter(d => d.$type$ === 'ChatMessage')
+        if (chatMessages.length > 0) {
+          console.log(`[NodeOneCore] 💬 NODE RECEIVED ${chatMessages.length} CHAT MESSAGES via CHUM!`)
+          chatMessages.forEach(msg => {
+            console.log('[NodeOneCore]   Message:', {
+              content: msg.content?.substring(0, 100),
+              author: msg.author?.substring(0, 8)
+            })
+          })
+        }
+      }
+    })
     
     // Initialize TopicModel - needs channelManager and leuteModel
     const { default: TopicModel } = await import('@refinio/one.models/lib/models/Chat/TopicModel.js')
@@ -328,9 +416,31 @@ class NodeOneCore {
     await this.topicModel.init()
     console.log('[NodeOneCore] ✅ TopicModel initialized')
     
+    // TODO: Fix AppStateModel - AppStateJournal recipe needs to be versioned
+    // Initialize AppStateModel for CRDT-based state journaling
+    // const { AppStateModel } = await import('@refinio/refinio-api/dist/state/index.js')
+    // // Pass the current ONE instance (oneAuth) to AppStateModel
+    // this.appStateModel = new AppStateModel(this.oneAuth, 'nodejs')
+    // await this.appStateModel.init(this.ownerId)
+    // console.log('[NodeOneCore] ✅ AppStateModel initialized')
+    
+    // // Record initial Node.js state
+    // await this.appStateModel.recordStateChange(
+    //   'nodejs.initialized',
+    //   true,
+    //   false,
+    //   { action: 'init', description: 'Node.js ONE.core instance initialized' }
+    // )
+    
+    console.log('[NodeOneCore] ⚠️  AppStateModel disabled - recipe issue needs fixing')
+    
     // Create contacts channel for CHUM sync
     await this.channelManager.createChannel('contacts')
     console.log('[NodeOneCore] ✅ Contacts channel created')
+    
+    // Create default channel for conversations
+    await this.channelManager.createChannel('default')
+    console.log('[NodeOneCore] ✅ Default channel created')
     
     // Initialize ConnectionsModel with commserver for external connections
     // ConnectionsModel will be imported later when needed
@@ -359,109 +469,95 @@ class NodeOneCore {
     // when the browser is invited (in node-provisioning.js)
     console.log('[NodeOneCore] Federation API initialized')
     
-    // Create ConnectionsModel which will handle all connections
-    // Configure both socket and commserver
-    const socketConfig = {
-      type: 'socket',
-      host: 'localhost', 
-      port: 8765,
-      url: 'ws://localhost:8765',  // Required: URL for others to connect to us
-      catchAll: true  // Accept connections from unknown persons (browser with different ID)
-    }
-    
-    const commServerConfig = {
-      type: 'commserver',
-      url: commServerUrl,
-      catchAll: true
-    }
-    
-    // Use the enhanced ConnectionsModel that now supports multiple transports
+    // Create ConnectionsModel with standard configuration matching one.leute
     const { default: ConnectionsModel } = await import('@refinio/one.models/lib/models/ConnectionsModel.js')
     
-    // Create ConnectionsModel with standard configuration
+    // ConnectionsModel configuration with separate sockets for pairing and CHUM
+    // Port 8765: Pairing only (accepts unknown instances)
+    // Port 8766: CHUM sync only (known instances only)
+    
     this.connectionsModel = new ConnectionsModel(this.leuteModel, {
       commServerUrl,                      
       acceptIncomingConnections: true,    
-      acceptUnknownInstances: false,      // Standard one.leute setting
-      acceptUnknownPersons: false,        // FIXED: Match one.leute - use catch-all for pairing
-      allowPairing: true,                 
-      establishOutgoingConnections: true,
-      allowDebugRequests: true,
-      pairingTokenExpirationDuration: 2147483647,
-      noImport: false,
-      noExport: false,
-      // Add WebSocket listener configuration
+      // Configure multiple incoming connection methods
       incomingConnectionConfigurations: [
-        socketConfig,      // Local WebSocket on port 8765
-        commServerConfig   // CommServer for external connections
-      ]
+        // CommServer for external connections
+        {
+          type: 'commserver',
+          url: commServerUrl,
+          catchAll: true  // Handle all unknown connections
+        },
+        // Direct socket for local federation
+        {
+          type: 'socket', 
+          host: 'localhost',
+          port: 8765,
+          url: 'ws://localhost:8765',
+          catchAll: true  // Accept all connections
+        }
+      ],
+      acceptUnknownInstances: true,       // Accept new instances via pairing
+      acceptUnknownPersons: false,        // Require pairing for new persons
+      allowPairing: true,                 // Enable pairing protocol
+      establishOutgoingConnections: true,  // Auto-connect to discovered endpoints
+      allowDebugRequests: true,
+      pairingTokenExpirationDuration: 60000 * 15,  // 15 minutes
+      noImport: false,
+      noExport: false
     })
     
-    console.log('[NodeOneCore] ConnectionsModel created with config:', {
-      commServerUrl,
+    console.log('[NodeOneCore] ConnectionsModel created:', {
+      commServer: commServerUrl,
+      directSocket: 'ws://localhost:8765',  // Single port for pairing and CHUM
+      acceptUnknownInstances: true,      // Required for pairing
       acceptUnknownPersons: false,
       allowPairing: true
     })
     
     console.log('[NodeOneCore] Initializing ConnectionsModel with blacklist group...')
     
+    // Monitor connections (ConnectionsModel handles transitions automatically)
+    this.setupConnectionMonitoring()
+    
     // Initialize with blacklist group (standard one.leute pattern)
     await this.connectionsModel.init(blacklistGroup)
     
-    // ConnectionsModel handles WebSocket server internally through LeuteConnectionsModule
-    // The socket configuration was passed in the constructor options
+    console.log('[NodeOneCore] ✅ ConnectionsModel initialized with dual listeners')
+    console.log('[NodeOneCore]   - CommServer:', commServerUrl, '(for pairing & external connections)')
+    console.log('[NodeOneCore]   - Direct socket: ws://localhost:8765 (for browser-node federation)')
     
-    console.log('[NodeOneCore] ✅ ConnectionsModel initialized with commserver:', commServerUrl)
-    
-    // Set up detailed connection event logging AFTER init when leuteConnectionsModule is available
-    if (this.connectionsModel.leuteConnectionsModule && this.connectionsModel.leuteConnectionsModule.onUnknownConnection) {
-      // Check if onUnknownConnection has the .on method (OEvent pattern)
-      if (typeof this.connectionsModel.leuteConnectionsModule.onUnknownConnection.on === 'function') {
-        // Log when unknown connections come in (pairing)
-        this.connectionsModel.leuteConnectionsModule.onUnknownConnection.on((conn, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, initiatedLocally, connectionGroupName) => {
-        console.log('[NodeOneCore] 📨 Unknown connection (pairing):', {
-          connectionId: conn?.id,
-          connectionState: conn?.state?.currentState,
-          localPerson: localPersonId?.substring(0, 8),
-          remotePerson: remotePersonId?.substring(0, 8),
-          initiatedLocally,
-          connectionGroupName
-        })
-      })
-      } else {
-        console.log('[NodeOneCore] WARNING: onUnknownConnection.on is not a function')
+    // Register CHUM protocol explicitly if needed
+    if (this.connectionsModel.leuteConnectionsModule) {
+      console.log('[NodeOneCore] Checking CHUM protocol registration...')
+      
+      // CHUM should be auto-registered, but let's verify
+      const protocols = this.connectionsModel.leuteConnectionsModule.getRegisteredProtocols?.()
+      if (protocols && !protocols.includes('chum')) {
+        console.warn('[NodeOneCore] CHUM protocol not registered, attempting manual registration...')
+        // CHUM is typically auto-registered by LeuteConnectionsModule
+        // If not, there may be an issue with the module initialization
+      } else if (protocols) {
+        console.log('[NodeOneCore] ✅ CHUM protocol is registered:', protocols.includes('chum'))
       }
       
-      // Log known connections
-      if (typeof this.connectionsModel.leuteConnectionsModule.onKnownConnection?.on === 'function') {
-        this.connectionsModel.leuteConnectionsModule.onKnownConnection.on((conn, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, initiatedLocally, connectionGroupName) => {
-        console.log('[NodeOneCore] 🤝 Known connection established:', {
-          connectionId: conn?.id,
-          connectionState: conn?.state?.currentState,
-          localPerson: localPersonId?.substring(0, 8),
-          remotePerson: remotePersonId?.substring(0, 8),
-          initiatedLocally,
-          connectionGroupName
-        })
+      // Monitor for CHUM connections
+      this.connectionsModel.onConnectionsChange(() => {
+        const connections = this.connectionsModel.connectionsInfo()
+        const chumConnections = connections.filter(c => c.protocolName === 'chum' && c.isConnected)
+        if (chumConnections.length > 0) {
+          console.log('[NodeOneCore] 🔄 Active CHUM connections:', chumConnections.length)
+          chumConnections.forEach(conn => {
+            console.log('[NodeOneCore]   - CHUM with:', conn.remotePersonId?.substring(0, 8))
+          })
+        }
       })
-      }
-      
-      // Log connection errors
-      if (typeof this.connectionsModel.leuteConnectionsModule.onConnectionError?.on === 'function') {
-        this.connectionsModel.leuteConnectionsModule.onConnectionError.on((error, conn, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, initiatedLocally, connectionGroupName) => {
-        console.log('[NodeOneCore] ❌ Connection error:', {
-          error: error?.message,
-          connectionId: conn?.id,
-          connectionState: conn?.state?.currentState,
-          connectionGroupName,
-          initiatedLocally
-        })
-      })
-      }
-      console.log('[NodeOneCore] Connection event listeners registered')
-    } else {
-      console.log('[NodeOneCore] WARNING: leuteConnectionsModule not available for event listeners')
     }
+    
+    // Both listeners are now configured through incomingConnectionConfigurations
+    // No need for manual listenForDirectConnections - ConnectionsModel handles both
+    
+    // Let ConnectionsModel handle all connection events internally
+    // We don't need to manually manage connections - that's what caused the spare connection issue
     
     // Log pairing events
     if (this.connectionsModel.pairing && typeof this.connectionsModel.pairing.onPairingSuccess?.on === 'function') {
@@ -507,8 +603,6 @@ class NodeOneCore {
     console.log('[NodeOneCore] ✅ ConnectionsModel initialized and ready for connections')
     
     // ConnectionsModel should automatically handle socket listener startup
-    console.log('[NodeOneCore] ✅ Socket configuration passed to ConnectionsModel - listener should start automatically')
-    
     // Add debug listeners for incoming connections
     if (this.connectionsModel.leuteConnectionsModule) {
       const originalAcceptConnection = this.connectionsModel.leuteConnectionsModule.acceptConnection.bind(this.connectionsModel.leuteConnectionsModule)
@@ -708,97 +802,50 @@ class NodeOneCore {
       }
     }
     
-    // ConnectionsModel handles direct socket listener automatically via socketConfig
-    console.log('[NodeOneCore] Direct socket listener managed by ConnectionsModel')
-    
-    // Note: Catch-all routes are listeners, not connections
-    // They only become connections when someone connects via pairing
-    
-    // Verify catch-all routes are enabled
-    if (this.connectionsModel.leuteConnectionsModule?.connectionRouteManager) {
-      console.log('[NodeOneCore] Ensuring catch-all routes are enabled...')
-      
-      // Log the catch-all routes before enabling
-      const catchAllRoutes = this.connectionsModel.leuteConnectionsModule.connectionRouteManager.catchAllRoutes
-      console.log('[NodeOneCore] Catch-all routes before enable:', catchAllRoutes.size)
-      
-      for (const [key, value] of catchAllRoutes) {
-        console.log('[NodeOneCore] Catch-all route key:', key)
-        if (value.knownRoutes) {
-          for (const route of value.knownRoutes) {
-            console.log('[NodeOneCore] Route:', {
-              type: route.route.type,
-              id: route.route.id,
-              disabled: route.disabled,
-              active: route.route.active
-            })
-          }
-        }
-      }
-      
-      await this.connectionsModel.leuteConnectionsModule.connectionRouteManager.enableCatchAllRoutes()
-      console.log('[NodeOneCore] Catch-all routes enabled')
-      
-      // Log the routes after enabling
-      console.log('[NodeOneCore] Checking route status after enable...')
-      for (const [key, value] of catchAllRoutes) {
-        if (value.knownRoutes) {
-          for (const route of value.knownRoutes) {
-            console.log('[NodeOneCore] Route after enable:', {
-              type: route.route.type,
-              id: route.route.id,
-              disabled: route.disabled,
-              active: route.route.active
-            })
-          }
-        }
-      }
-      
-      // Wait a bit for catch-all connections to be established
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      // Check if port 8765 is listening and start it if not
-      try {
-        const { default: net } = await import('net')
-        const isListening = await new Promise((resolve) => {
-          const socket = net.createConnection({ port: 8765, host: 'localhost' })
-          socket.on('connect', () => {
-            socket.end()
-            resolve(true)
-          })
-          socket.on('error', () => {
-            resolve(false)
-          })
+    // Check if port 8765 is listening for internal federation
+    try {
+      const { default: net } = await import('net')
+      const isListening = await new Promise((resolve) => {
+        const socket = net.createConnection({ port: 8765, host: 'localhost' })
+        socket.on('connect', () => {
+          socket.end()
+          resolve(true)
         })
-        console.log('[NodeOneCore] Port 8765 listening:', isListening)
-        
-        // If not listening, try to start the direct socket route
-        if (!isListening && this.connectionsModel.leuteConnectionsModule?.connectionRouteManager) {
-          console.log('[NodeOneCore] Port 8765 not listening, starting direct socket route...')
-          const allRoutes = this.connectionsModel.leuteConnectionsModule.connectionRouteManager.getAllRoutes()
-          for (const route of allRoutes) {
-            if (route.type === 'IncomingWebsocketRouteDirect' && route.port === 8765 && !route.active) {
-              console.log('[NodeOneCore] Starting direct socket route...')
-              await route.start()
-              console.log('[NodeOneCore] ✅ Direct socket listener started on ws://localhost:8765')
-            }
+        socket.on('error', () => {
+          resolve(false)
+        })
+      })
+      console.log('[NodeOneCore] Port 8765 listening:', isListening)
+      
+      // If not listening, try to start the direct socket route
+      if (!isListening && this.connectionsModel.leuteConnectionsModule?.connectionRouteManager) {
+        console.log('[NodeOneCore] Port 8765 not listening, starting direct socket route...')
+        const allRoutes = this.connectionsModel.leuteConnectionsModule.connectionRouteManager.getAllRoutes()
+        for (const route of allRoutes) {
+          if (route.type === 'IncomingWebsocketRouteDirect' && route.port === 8765 && !route.active) {
+            console.log('[NodeOneCore] Starting direct socket route...')
+            await route.start()
+            console.log('[NodeOneCore] ✅ Direct socket listener started on ws://localhost:8765')
           }
         }
-      } catch (error) {
-        console.log('[NodeOneCore] Could not check port 8765:', error.message)
       }
-      
-      // Re-check connections after enabling catch-all
-      const updatedConnections = this.connectionsModel.connectionsInfo()
-      const catchAllAfterEnable = updatedConnections.filter(c => c.isCatchAll)
-      console.log('[NodeOneCore] Catch-all connections after enable:', catchAllAfterEnable.length)
-      
-      if (catchAllAfterEnable.length > 0) {
-        console.log('[NodeOneCore] ✅ Catch-all connections ready for pairing')
-      }
-    } else {
-      console.error('[NodeOneCore] WARNING: No connectionRouteManager available!')
+    } catch (error) {
+      console.log('[NodeOneCore] Could not check port 8765:', error.message)
     }
+    
+    // ConnectionsModel handles CommServer automatically with allowPairing: true
+    // Pairing will transition to CHUM after successful handshake
+    
+    // Ensure CHUM protocol is registered and enabled
+    console.log('[NodeOneCore] Ensuring CHUM protocol is available...')
+    if (this.connectionsModel.leuteConnectionsModule) {
+      // CHUM should be auto-registered by ConnectionsModel
+      const protocols = this.connectionsModel.leuteConnectionsModule.getRegisteredProtocols?.()
+      if (protocols) {
+        console.log('[NodeOneCore] Available protocols:', protocols)
+      }
+    }
+    console.log('[NodeOneCore] ConnectionsModel initialized with CommServer and direct socket')
     
     console.log('[NodeOneCore] ✅ ConnectionsModel initialized')
     
@@ -928,10 +975,53 @@ class NodeOneCore {
     // Set up message sync handling for AI responses
     await this.setupMessageSync()
     
+    // Create channels for existing conversations so Node receives CHUM updates
+    await this.createChannelsForExistingConversations()
+    
     // AI contacts will be set up later after LLMManager is initialized
     // This is called from setupAIContactsWhenReady()
     
     console.log('[NodeOneCore] All models initialized successfully')
+  }
+
+  /**
+   * Create channels for existing conversations so Node participates in CHUM sync
+   */
+  async createChannelsForExistingConversations() {
+    console.log('[NodeOneCore] Creating channels for existing conversations...')
+    
+    if (!this.channelManager) {
+      console.warn('[NodeOneCore] ChannelManager not available')
+      return
+    }
+    
+    try {
+      // Get existing conversations from state
+      const { default: stateManager } = await import('../state/manager.js')
+      const conversationsMap = stateManager.getState('conversations')
+      
+      if (conversationsMap && conversationsMap.size > 0) {
+        console.log(`[NodeOneCore] Found ${conversationsMap.size} existing conversations`)
+        
+        for (const [id, conversation] of conversationsMap) {
+          try {
+            // Create a channel for each conversation
+            // This ensures the Node instance receives CHUM updates for messages in these conversations
+            await this.channelManager.createChannel(id, this.ownerId)
+            console.log(`[NodeOneCore] Created channel for conversation: ${id}`)
+          } catch (error) {
+            // Channel might already exist, that's fine
+            if (!error.message?.includes('already exists')) {
+              console.warn(`[NodeOneCore] Could not create channel for ${id}:`, error.message)
+            }
+          }
+        }
+      } else {
+        console.log('[NodeOneCore] No existing conversations found')
+      }
+    } catch (error) {
+      console.error('[NodeOneCore] Error creating channels for existing conversations:', error)
+    }
   }
 
   /**
@@ -945,9 +1035,22 @@ class NodeOneCore {
       return
     }
     
-    // Import and create the AI message listener
+    // Import and create the AI message listener FIRST
     const AIMessageListener = await import('./ai-message-listener.js')
     const { default: llmManager } = await import('../services/llm-manager.js')
+    
+    // Create the AI message listener before AIAssistantModel
+    this.aiMessageListener = new AIMessageListener.default(
+      this.channelManager, 
+      llmManager,  // Use the actual LLM manager from main process
+      this.aiContactManager // Pass the AI contact manager for personId lookup
+    )
+    
+    // Initialize Topic Group Manager for proper group topics
+    if (!this.topicGroupManager) {
+      this.topicGroupManager = new TopicGroupManager(this)
+      console.log('[NodeOneCore] ✅ Topic Group Manager initialized')
+    }
     
     // Initialize AI Assistant Model to orchestrate everything
     if (!this.aiAssistantModel) {
@@ -962,12 +1065,6 @@ class NodeOneCore {
       // The API server will use THIS instance, not create a new one
       await this.apiServer.start()
     }
-    
-    this.aiMessageListener = new AIMessageListener.default(
-      this.channelManager, 
-      llmManager,  // Use the actual LLM manager from main process
-      this.aiContactManager // Pass the AI contact manager for personId lookup
-    )
     
     // Start the listener
     this.aiMessageListener.start()
@@ -1191,13 +1288,48 @@ class NodeOneCore {
   }
   
   /**
+   * Setup channel access for browser-node federation
+   * Called when browser Person ID becomes available
+   */
+  async setupBrowserAccess(browserPersonId) {
+    try {
+      if (!this.channelManager || !browserPersonId) {
+        console.warn('[NodeOneCore] Cannot setup browser access - missing requirements')
+        return false
+      }
+      
+      console.log('\n' + '='.repeat(60))
+      console.log('🔐 NODE: Setting up Browser Access')
+      console.log('='.repeat(60))
+      console.log(`[TRACE] 🔐 NODE: Browser Person ID received: ${browserPersonId.substring(0, 8)}`)
+      console.log(`[NodeOneCore] Setting up direct channel access for browser: ${browserPersonId.substring(0, 8)}`)
+      
+      // Grant direct person-to-person access to channels
+      const { setupBrowserNodeChannelAccess } = await import('./channel-access-manager.js')
+      await setupBrowserNodeChannelAccess(this.ownerId, browserPersonId, this.channelManager)
+      
+      // Store browser person ID for future use
+      this.browserPersonId = browserPersonId
+      
+      console.log('[TRACE] ✅ NODE: Browser access setup complete')
+      console.log('[NodeOneCore] ✅ Browser access setup complete')
+      console.log('='.repeat(60) + '\n')
+      return true
+    } catch (error) {
+      console.error('[NodeOneCore] Failed to setup browser access:', error)
+      return false
+    }
+  }
+  
+  /**
    * Get current instance info
    */
   getInfo() {
     return {
       initialized: this.initialized,
       name: this.instanceName,
-      ownerId: this.ownerId
+      ownerId: this.ownerId,
+      browserPersonId: this.browserPersonId
     }
   }
   
@@ -1373,22 +1505,20 @@ class NodeOneCore {
       const everyoneGroup = await LeuteModel.everyoneGroup()
       
       // Create federation group for instance-to-instance communication
-      let federationGroup
       try {
-        federationGroup = await GroupModel.constructFromLatestProfileVersionByGroupName('federation')
+        this.federationGroup = await GroupModel.constructFromLatestProfileVersionByGroupName('federation')
         console.log('[NodeOneCore] Using existing federation group')
       } catch {
-        federationGroup = await this.leuteModel.createGroup('federation')
+        this.federationGroup = await this.leuteModel.createGroup('federation')
         console.log('[NodeOneCore] Created new federation group')
       }
       
       // Create replicant group for inter-instance sync
-      let replicantGroup
       try {
-        replicantGroup = await GroupModel.constructFromLatestProfileVersionByGroupName('replicant')
+        this.replicantGroup = await GroupModel.constructFromLatestProfileVersionByGroupName('replicant')
         console.log('[NodeOneCore] Using existing replicant group')
       } catch {
-        replicantGroup = await this.leuteModel.createGroup('replicant')
+        this.replicantGroup = await this.leuteModel.createGroup('replicant')
         console.log('[NodeOneCore] Created new replicant group')
       }
       
@@ -1404,8 +1534,8 @@ class NodeOneCore {
       
       await this.accessRightsManager.init({
         everyone: everyoneGroup.groupIdHash,
-        federation: federationGroup.groupIdHash,
-        replicant: replicantGroup.groupIdHash
+        federation: this.federationGroup.groupIdHash,
+        replicant: this.replicantGroup.groupIdHash
       })
       
       console.log('[NodeOneCore] ✅ Access rights manager initialized with proper groups')
@@ -1445,10 +1575,8 @@ class NodeOneCore {
     console.log('[NodeOneCore] Shutdown complete')
   }
 
-  // REMOVED: startLocalFederationServer() 
-  // Now using IncomingConnectionManager.listenForDirectConnections() instead
-  // which properly integrates with the ConnectionRouteManager and handles
-  // the full protocol flow automatically
+  // WebSocket listening is handled by IncomingConnectionManager.listenForDirectConnections()
+  // which is called after ConnectionsModel.init()
 }
 
 // Singleton

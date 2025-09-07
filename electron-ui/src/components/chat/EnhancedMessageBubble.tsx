@@ -16,6 +16,7 @@ export interface EnhancedMessageData {
   senderName: string;
   timestamp: Date;
   isOwn: boolean;
+  topicName?: string; // The topic/channel this message belongs to
   
   // Subject hashtags
   subjects: string[];
@@ -378,6 +379,12 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
     <div className={`enhanced-message-bubble ${message.isOwn ? 'own' : 'other'} ${theme}`}>
       <div className="message-header">
         <span className="sender-name">{message.senderName}</span>
+        {/* Show topic/channel if not General Chat */}
+        {message.topicName && message.topicName !== 'General Chat' && (
+          <span className="topic-name" style={{ fontSize: '0.75rem', opacity: 0.7, marginLeft: '0.5rem' }}>
+            #{message.topicName}
+          </span>
+        )}
         <TrustLevelIndicator 
           trustLevel={message.trustLevel} 
           compact 

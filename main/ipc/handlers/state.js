@@ -16,6 +16,18 @@ const stateHandlers = {
     return stateManager.toJSON()
   },
 
+  async setState(event, { key, value }) {
+    console.log('[StateHandler] Set state request:', key, '=', value)
+    
+    try {
+      stateManager.setState(key, value)
+      return { success: true, key, value }
+    } catch (error) {
+      console.error('[StateHandler] Error setting state:', error)
+      return { success: false, error: error.message }
+    }
+  },
+
   async subscribe(event, { paths = [] }) {
     console.log('[StateHandler] Subscribe to state changes:', paths)
     

@@ -14,6 +14,7 @@ import settingsHandlers from './handlers/settings.js';
 import aiHandlers from './handlers/ai.js';
 import attachmentHandlers from './handlers/attachments.js';
 import oneCoreHandlers from './handlers/one-core.js';
+import messageHandlers from './handlers/messages.js';
 import { initializeDeviceHandlers } from './handlers/devices.js';
 
 class IPCController {
@@ -78,6 +79,7 @@ class IPCController {
     
     // State handlers
     this.handle('state:get', stateHandlers.getState)
+    this.handle('state:set', stateHandlers.setState)
     this.handle('state:subscribe', stateHandlers.subscribe)
     
     // Chat handlers
@@ -123,6 +125,13 @@ class IPCController {
     this.handle('attachment:get', attachmentHandlers.getAttachment)
     this.handle('attachment:getMetadata', attachmentHandlers.getAttachmentMetadata)
     this.handle('attachment:storeMultiple', attachmentHandlers.storeAttachments)
+    
+    // Message handlers for browser-node sync
+    this.handle('messages:send', messageHandlers.sendMessage)
+    this.handle('messages:get', messageHandlers.getMessages)
+    this.handle('messages:subscribe', messageHandlers.subscribeToTopic)
+    this.handle('messages:unsubscribe', messageHandlers.unsubscribeFromTopic)
+    this.handle('messages:createTopic', messageHandlers.createTopic)
     
     // ONE.core handlers
     this.handle('onecore:initializeNode', oneCoreHandlers.initializeNode)

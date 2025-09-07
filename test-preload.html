@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Preload Test</title>
+</head>
+<body>
+    <h1>Testing Electron Preload</h1>
+    <div id="result"></div>
+    <script>
+        const result = document.getElementById('result');
+        if (window.electronAPI) {
+            result.innerHTML = '<p style="color: green;">✅ window.electronAPI is available!</p>';
+            result.innerHTML += '<p>Methods: ' + Object.keys(window.electronAPI).join(', ') + '</p>';
+            if (window.electronAPI.log) {
+                window.electronAPI.log('TEST HTML: electronAPI confirmed working!');
+            }
+        } else {
+            result.innerHTML = '<p style="color: red;">❌ window.electronAPI is NOT available</p>';
+        }
+    </script>
+</body>
+</html>

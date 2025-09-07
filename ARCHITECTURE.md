@@ -2,7 +2,7 @@
 
 ## Core Principle
 
-**Hybrid architecture with Internet of Me (IoM)**. Business logic is distributed between Node.js main process (with full ONE.CORE + IoM) and browser renderer (with sparse ONE.CORE for UI state).
+**Hybrid architecture with separate user instances**. Business logic is distributed between Node.js main process (with full ONE.CORE archive) and browser renderer (with sparse ONE.CORE for UI state). The browser and Node instances have **different users by design** and communicate via WebSocket federation.
 
 ## Architecture Overview
 
@@ -70,62 +70,90 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
+## ONE.core Concepts: Contacts vs Connections
+
+### Contact (Persistent Relationship)
+A **Contact** in ONE.core is a persistent trust relationship between two Person identities, stored as ONE objects:
+- Created through successful pairing (exchange of trust certificates)
+- Persists across application restarts
+- Contains Profile information (Person object with name, keys, etc.)
+- Enables automatic reconnection when both parties are online
+- Stored in the ONE.core database as versioned objects
+
+### Connection (Active Network Link)
+A **Connection** is an active, encrypted network link between two instances:
+- Temporary WebSocket or TCP connection
+- Encrypted with instance keys (established during pairing)
+- Can be closed and reopened without losing the Contact relationship
+- Multiple connections can exist to the same Contact (different devices)
+- ConnectionInfo provides metadata: remotePersonId, remoteInstanceId, protocol, status
+
+### Pairing Process
+1. **Invitation Creation**: One party creates a time-limited invitation token
+2. **Pairing Protocol**: Exchange of identity information and trust certificates
+3. **Contact Creation**: Both parties store each other's Profile as trusted Contact
+4. **Connection Transition**: Pairing connection transitions to CHUM protocol for data sync
+5. **Persistent Relationship**: Contact survives connection close, enables auto-reconnect
+
+### In LAMA Electron Context
+- **Browser-Node Pairing**: Creates a Contact relationship between browser and node users
+- **CHUM Protocol**: Runs over the Connection to sync data between Contacts
+- **Federation**: Browser discovers Node's OneInstanceEndpoint and connects automatically
+- **Connection Reuse**: Direct sockets must reuse pairing connection for CHUM (no spare connections)
+
 ## Key Design Decisions
 
-### 1. Hybrid Architecture with IoM
+### 1. Hybrid Architecture with Separate Users
 
-The app uses a **hybrid approach** combining:
+The app uses a **hybrid approach** with intentionally separate users:
 
-- **Node.js Process**: Full ONE.CORE archive with IoM for device synchronization
-- **Browser Process**: Sparse ONE.CORE for UI state and local operations
-- **CHUM Synchronization**: Automatic state sync between instances
+- **Node.js Process**: Full ONE.CORE archive with its own user identity
+- **Browser Process**: Sparse ONE.CORE with a different user identity
+- **WebSocket Federation**: Browser connects to Node via ws://localhost:8765
+- **CHUM Synchronization**: Cross-user data sync via federation protocol
+- **No Internal IoM**: IoM is for external device sync, not internal architecture
 
-### 2. Internet of Me (IoM) Integration
+### 2. Internet of Me (IoM) - External Only
 
-The Node.js backend establishes a full IoM:
+The Node.js backend provides IoM for **external device synchronization only**:
 
-- **IoMManager**: Manages device connections and synchronization
+- **IoMManager**: Manages connections to user's other devices (phones, tablets, etc.)
 - **LeuteModel**: Identity management with trust certificates
 - **ChannelManager**: Data channels for multi-device sync
 - **MultiUser Auth**: Secure multi-user support with encryption
 - **Trust Certificates**: Automatic trusted key management
 - **P2P Mesh Network**: Direct device-to-device communication
+- **NOT for Internal**: IoM is never used between browser and Node instances
 
-### 3. Dual Instance Strategy
+### 3. Dual Instance Strategy with Different Users
 
-Both processes maintain ONE.CORE instances:
+Both processes maintain ONE.CORE instances with **separate user identities**:
 
-- **Node.js**: Archive storage with full history (main/hybrid/real-node-instance.js)
-- **Browser**: Sparse storage for active data (services/real-browser-instance.ts)
-- **Provisioning**: Browser provisions Node instance on startup
-- **Sync**: CHUM protocol keeps instances synchronized
+- **Node.js**: Archive storage with Node user (main/hybrid/real-node-instance.js)
+- **Browser**: Sparse storage with Browser user (services/real-browser-instance.ts)
+- **Provisioning**: Browser provisions Node instance with credentials on startup
+- **Federation**: Browser connects to Node's WebSocket listener (port 8765)
+- **Sync**: CHUM protocol synchronizes data between different users
 
 ### 4. Communication Pattern
 
+**IPC is for orchestration only**, not for data transfer:
+
 ```typescript
-// Renderer: User clicks "Send Message"
-await ipc.invoke('action:sendMessage', {
-  conversationId: '123',
-  text: 'Hello'
+// IPC: Orchestration commands only
+await ipc.invoke('orchestrate:startConversation', {
+  participants: ['alice', 'bob']
 })
 
-// Main Process: Handles the action
-ipcMain.handle('action:sendMessage', async (event, { conversationId, text }) => {
-  // 1. Validate input
-  // 2. Create message object using one.models
-  // 3. Store in one.core
-  // 4. Update conversation state
-  // 5. Broadcast to peers
-  // 6. Return updated state
-  return getConversationState(conversationId)
-})
+// WebSocket Federation: Actual data synchronization
+// Browser instance connects to Node instance on ws://localhost:8765
+// Data flows via CHUM protocol between the two user instances
 
-// Main Process: Pushes updates to renderer
-mainWindow.webContents.send('state:conversationUpdated', {
-  conversationId: '123',
-  messages: [...],
-  participants: [...]
-})
+// Example: Message sending
+// 1. Browser creates message in its ONE.CORE
+// 2. CHUM syncs to Node via WebSocket federation
+// 3. Node processes and stores in archive
+// 4. Updates sync back to browser via CHUM
 ```
 
 ## Worker Processes
@@ -166,6 +194,8 @@ For compute-intensive tasks, we use dedicated worker processes:
 - Handles prompt processing
 - Generates embeddings
 - Can use GPU if available
+- MCP tool execution
+- Multi-provider support (Ollama, LM Studio, Claude API)
 
 #### 2. Crypto Worker
 - Performs heavy cryptographic operations
@@ -368,48 +398,53 @@ Main Process                          Renderer
      │                                   │ Update UI
 ```
 
-## IPC Protocol
+## IPC Protocol (Orchestration Only)
 
-### Actions (Renderer → Main)
+**IPC is exclusively for orchestration**, not data transfer. Data flows through WebSocket federation.
 
-All user-initiated actions:
+### Orchestration Commands (Renderer → Main)
 
-- `action:login` - User login
-- `action:logout` - User logout
-- `action:sendMessage` - Send a message
-- `action:createConversation` - Start new conversation
-- `action:addContact` - Add a contact
-- `action:updateSettings` - Change settings
+- `orchestrate:provision` - Provision Node instance with credentials
+- `orchestrate:startFederation` - Initialize WebSocket connection
+- `orchestrate:resetStorage` - Clear Node instance storage
+- `orchestrate:backup` - Trigger backup operation
+- `orchestrate:restore` - Restore from backup
 
-### Queries (Renderer → Main)
+### Status Updates (Main → Renderer)
 
-Request current state:
+- `status:nodeProvisioned` - Node instance ready
+- `status:federationConnected` - WebSocket connection established
+- `status:syncProgress` - CHUM sync status
 
-- `query:getState` - Get full app state
-- `query:getConversation` - Get conversation details
-- `query:getContacts` - Get contact list
-- `query:getMessages` - Get message history
+### Data Flow Architecture
 
-### Updates (Main → Renderer)
+```
+Browser User Instance          Node User Instance
+        │                             │
+        │  WebSocket Federation       │
+        ├─────────────────────────────┤
+        │  ws://localhost:8765        │
+        │                             │
+        │  CHUM Protocol Sync         │
+        ├─────────────────────────────┤
+        │  - Messages                 │
+        │  - Conversations            │
+        │  - Contacts                 │
+        │  - AI Responses             │
+        └─────────────────────────────┘
+```
 
-Push state changes:
+## Internet of Me (IoM) Architecture - External Devices Only
 
-- `update:stateChanged` - Full state update
-- `update:messageReceived` - New message
-- `update:contactOnline` - Contact status change
-- `update:syncProgress` - Sync status
-
-## Internet of Me (IoM) Architecture
-
-### IoM Initialization Flow
+### IoM Initialization Flow - External Devices
 
 ```javascript
 // main/hybrid/real-node-instance.js
 class RealNodeInstance {
-  async initialize(user, credential) {
-    // 1. Create ONE.CORE instance with archive storage
+  async initialize(nodeUser, credential) {
+    // 1. Create ONE.CORE instance for Node user (different from browser user)
     this.instance = new Instance({ 
-      name: `lama-node-${user.id}`,
+      name: `lama-node-${nodeUser.id}`,  // Node's own user
       directory: dataDir 
     })
     
@@ -424,14 +459,17 @@ class RealNodeInstance {
     this.leuteModel = new LeuteModel(this.channelManager)
     this.channelManager = new ChannelManager(this.instance)
     
-    // 4. Create IoMManager for device synchronization
+    // 4. Create IoMManager for EXTERNAL device synchronization
+    // This connects to user's phones, tablets, other computers
+    // NOT used for browser-node communication
     this.iomManager = new IoMManager(this.leuteModel, commServerUrl)
     await this.iomManager.init()
     
-    // 5. Establish IoM group for device mesh
-    const iomGroup = await this.iomManager.iomGroup()
+    // 5. Setup WebSocket listener for browser federation
+    // Browser instance will connect here as a different user
+    await this.setupDirectListener(8765)
     
-    // 6. Grant trust certificates
+    // 6. Grant trust certificates for external devices
     await this.leuteModel.trust.certify(
       'RightToDeclareTrustedKeysForEverybodyCertificate',
       { beneficiary: myMainId }
@@ -440,23 +478,26 @@ class RealNodeInstance {
 }
 ```
 
-### IoM Features
+### IoM Features (External Only)
 
-1. **Device Discovery**: Automatic discovery of user's devices
-2. **Secure Pairing**: QR code or link-based device pairing
-3. **Data Synchronization**: Real-time sync across all devices
-4. **Trust Management**: Cryptographic trust certificates
-5. **Offline Support**: Devices sync when reconnected
-6. **Backup & Restore**: Any device can restore from IoM
+1. **External Device Discovery**: Discovery of user's phones, tablets, other computers
+2. **Secure Pairing**: QR code or link-based pairing with external devices
+3. **Multi-Device Sync**: Real-time sync across user's device ecosystem
+4. **Trust Management**: Cryptographic trust certificates for external devices
+5. **Offline Support**: External devices sync when reconnected
+6. **Backup & Restore**: Any external device can restore from IoM
+7. **Not Internal**: IoM is never used for browser-node communication
 
 ## Benefits
 
-1. **Multi-Device Support**: Seamless experience across devices via IoM
-2. **Data Sovereignty**: Full control with distributed storage
-3. **Security**: End-to-end encryption with trust certificates
-4. **Performance**: Dual instance strategy optimizes for both storage and UI
-5. **Offline-First**: Both instances work offline with later sync
-6. **Flexibility**: Hybrid architecture supports various deployment models
+1. **Separation of Concerns**: Browser and Node have distinct user identities
+2. **Multi-Device Support**: External devices sync via IoM (phones, tablets, etc.)
+3. **Data Sovereignty**: Full control with distributed storage
+4. **Security**: End-to-end encryption with trust certificates
+5. **Performance**: Dual instance strategy optimizes for both storage and UI
+6. **Clean Architecture**: IPC for orchestration, WebSocket for data
+7. **Offline-First**: Both instances work offline with later sync
+8. **Flexibility**: Hybrid architecture supports various deployment models
 
 ## Migration Path
 
@@ -466,12 +507,171 @@ class RealNodeInstance {
 4. **Phase 4**: Refactor UI to be stateless
 5. **Phase 5**: Remove all business logic from renderer
 
+## AI Architecture
+
+### Core Components
+
+#### AIAssistantModel (`/main/core/ai-assistant-model.js`)
+The central orchestrator that coordinates all AI functionality:
+- **LLM Management**: Integrates with LLMManager for model operations
+- **AI Identity**: Creates AI contacts as full ONE.core Person objects
+- **Message Listening**: Monitors CHUM events for AI conversations  
+- **Topic Management**: Associates AI models with conversation topics
+- **Tool Interface**: Unified access to AI tools (MCP and custom)
+- **Response Generation**: Handles conversation context and history
+- **Federation Support**: AI objects sync across browser/node instances
+
+#### LLMManager (`/main/services/llm-manager.js`)
+Handles actual LLM operations and provider integration:
+- **Multi-Provider Support**:
+  - Ollama: Local models via REST API
+  - LM Studio: Local models with streaming support
+  - Claude: Anthropic API integration
+- **MCP Integration**: 
+  - Filesystem tools via `@modelcontextprotocol/server-filesystem`
+  - Tool discovery and registration
+  - Automatic tool descriptions in prompts
+- **Response Processing**:
+  - Tool call detection in responses
+  - Automatic tool execution
+  - Result integration back into response
+
+#### AI Contact System
+AI models are represented as full contacts in ONE.core:
+```javascript
+// Each AI model becomes a Person with:
+{
+  $type$: 'LLM',
+  name: 'claude-3-5-sonnet',
+  personId: SHA256Hash,  // Full Person identity
+  modelType: 'remote',
+  provider: 'anthropic',
+  capabilities: ['chat', 'analysis', 'reasoning'],
+  maxTokens: 8192,
+  temperature: 0.7
+}
+```
+
+### AI Data Flow
+
+```
+User Input → Browser UI → IPC → AIAssistantModel
+                                      ↓
+                              Check AI Topic/Model
+                                      ↓
+                              Get Conversation History
+                                      ↓
+                              LLMManager.chat()
+                                      ↓
+                              Enhance with Tools (MCP)
+                                      ↓
+                              Provider API Call
+                                      ↓
+                              Process Tool Calls
+                                      ↓
+                              Store Response (ONE.core)
+                                      ↓
+                              CHUM Sync → Browser UI
+```
+
+### MCP (Model Context Protocol) Integration
+
+The app integrates MCP for tool use:
+
+```javascript
+// MCP Server Initialization
+const fsTransport = new StdioClientTransport({
+  command: 'npx',
+  args: ['-y', '@modelcontextprotocol/server-filesystem', '/Users/gecko/src/lama.electron']
+})
+
+// Tool Registration
+tools.tools.forEach(tool => {
+  this.mcpTools.set(tool.name, {
+    ...tool,
+    server: 'filesystem'
+  })
+})
+
+// Automatic tool enhancement in prompts
+const enhancedMessages = this.enhanceMessagesWithTools(messages)
+```
+
+Available MCP tools:
+- `read_file`: Read file contents
+- `write_file`: Write to files
+- `list_directory`: List directory contents
+- `create_directory`: Create directories
+- `delete_file`: Delete files
+- `move_file`: Move/rename files
+
+### AI Federation Architecture
+
+AI components participate in the federated architecture:
+
+1. **Node Instance**: Hosts AIAssistantModel and LLMManager
+2. **LLM Objects**: Stored as versioned objects in ONE.core
+3. **Federation Access**: Granted to federation group for sync
+4. **Browser Discovery**: Finds AI contacts via CHUM sync
+5. **Message Routing**: AIMessageListener handles AI responses
+
+### AI Message Listener
+
+Monitors CHUM events for AI-relevant messages:
+```javascript
+class AIMessageListener {
+  registerAITopic(topicId, modelId) {
+    // Associates topics with AI models
+  }
+  
+  handleMessage(event) {
+    if (this.isAITopic(event.topicId)) {
+      // Trigger AI response generation
+    }
+  }
+}
+```
+
+### Tool Interface Architecture
+
+Unified interface for all tool types:
+```javascript
+class AIToolInterface {
+  async handleToolCall(toolName, input, context) {
+    // Route to appropriate tool handler:
+    // - MCP tools (filesystem)
+    // - Custom LAMA tools
+    // - Future: Web search, code execution, etc.
+  }
+}
+```
+
+### Key Features
+
+1. **Identity-Based AI**: AI models are full citizens with Person IDs
+2. **Federated Sync**: AI conversations sync across all devices
+3. **Tool-Augmented**: MCP integration for filesystem operations
+4. **Multi-Model**: Support for multiple providers simultaneously
+5. **Context-Aware**: Maintains conversation history per topic
+6. **Streaming Support**: Real-time response streaming (LM Studio)
+7. **Offline Capable**: Local models work without internet
+
+### Future AI Enhancements
+
+- **RAG (Retrieval Augmented Generation)**: Search user's data
+- **Custom MCP Servers**: LAMA-specific tools
+- **Voice Integration**: Speech-to-text and text-to-speech
+- **Multi-Modal**: Image understanding and generation
+- **Agent Workflows**: Complex multi-step AI tasks
+- **Fine-Tuning**: Custom models trained on user data
+
 ## Testing Strategy
 
 ### Main Process
 - Unit tests for models
 - Integration tests for state management
 - Mock IPC for testing handlers
+- AI model mocking for testing
 
 ### Renderer
 - Component tests with mocked IPC
@@ -482,3 +682,4 @@ class RealNodeInstance {
 - Full IPC flow tests
 - User journey tests
 - Performance tests
+- AI conversation flow tests

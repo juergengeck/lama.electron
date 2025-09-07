@@ -1,11 +1,38 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Listen for Node.js logs and forward to browser console
+ipcRenderer.on('node-log', (event, data) => {
+  const { level, message, timestamp } = data;
+  const time = timestamp ? timestamp.split('T')[1].split('.')[0] : '';
+  const prefix = `[NODE ${time}]`;
+  
+  // Style the logs to distinguish them from browser logs
+  const style = 'color: #007ACC; font-weight: bold;';
+  
+  switch(level) {
+    case 'error':
+      console.error(`%c${prefix}`, style, message);
+      break;
+    case 'warn':
+      console.warn(`%c${prefix}`, style, message);
+      break;
+    case 'info':
+      console.info(`%c${prefix}`, style, message);
+      break;
+    default:
+      console.log(`%c${prefix}`, style, message);
+  }
+});
+
 // Use contextBridge to safely expose APIs to renderer
 // This maintains context isolation and prevents Node.js detection in renderer
 contextBridge.exposeInMainWorld('electronAPI', {
   // Platform info
   platform: process.platform,
   isElectron: true,
+  
+  // Debug logging to main process
+  log: (message) => ipcRenderer.send('browser-log', 'log', message),
   
   // IPC invoke wrapper
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),

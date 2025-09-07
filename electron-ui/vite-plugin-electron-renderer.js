@@ -207,6 +207,12 @@ export function electronRenderer() {
           /import\s+util\s+from\s+['"]util['"]/g,
           "const util = window.require('util')"
         );
+        
+        // Fix destructuring with 'as' keyword in require statements
+        transformed = transformed.replace(
+          /const\s+{\s*(\w+)\s+as\s+(\w+)\s*}\s*=\s*window\.require\(['"](\w+)['"]\)/g,
+          "const $2 = window.require('$3').$1"
+        );
       }
       
       // Replace dynamic imports of node modules
@@ -226,8 +232,32 @@ export function electronRenderer() {
               // Default import
               return `const ${capture} = window.require('${module}')`;
             } else if (index === 1) {
-              // Named imports
-              return `const {${capture}} = window.require('${module}')`;
+              // Named imports - handle 'as' keyword
+              const imports = capture.split(',').map(imp => imp.trim());
+              const processedImports = imports.map(imp => {
+                if (imp.includes(' as ')) {
+                  const [original, alias] = imp.split(' as ').map(s => s.trim());
+                  return `${alias}: ${original}`;
+                }
+                return imp;
+              });
+              
+              // Check if any imports have 'as'
+              if (imports.some(imp => imp.includes(' as '))) {
+                // Create individual const declarations for aliased imports
+                const declarations = imports.map(imp => {
+                  if (imp.includes(' as ')) {
+                    const [original, alias] = imp.split(' as ').map(s => s.trim());
+                    return `const ${alias} = window.require('${module}').${original}`;
+                  } else {
+                    return `const { ${imp} } = window.require('${module}')`;
+                  }
+                });
+                return declarations.join(';\n');
+              } else {
+                // No aliases, use destructuring
+                return `const {${capture}} = window.require('${module}')`;
+              }
             } else {
               // Namespace import
               return `const ${capture} = window.require('${module}')`;

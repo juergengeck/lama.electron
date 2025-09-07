@@ -5,12 +5,17 @@
 
 declare module '@OneObjectInterfaces' {
     import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+    import type { Person } from '@refinio/one.core/lib/recipes.js';
+
+    // No unversioned objects - StateEntry is now versioned
 
     // Merge our versioned objects into the ONE.core type system
     export interface OneVersionedObjectInterfaces {
         LLM: LLM;
         LLMSettings: LLMSettings;
         GlobalLLMSettings: GlobalLLMSettings;
+        AppStateJournal: AppStateJournal;
+        StateEntry: StateEntry;
     }
 
     // Define ID objects for versioned objects
@@ -70,5 +75,30 @@ declare module '@OneObjectInterfaces' {
         defaultProvider?: string;
         autoSelectBestModel?: boolean;
         maxConcurrentRequests?: number;
+    }
+
+    // State Entry for the journal
+    export interface StateEntry {
+        $type$: 'StateEntry';
+        timestamp: number;
+        source: 'browser' | 'nodejs';
+        path: string;
+        value: string;
+        previousValue?: string;
+        author: SHA256IdHash<Person>;
+        metadata?: {
+            action?: string;
+            description?: string;
+        };
+    }
+
+    // App State Journal - CRDT for state synchronization
+    export interface AppStateJournal {
+        $type$: 'AppStateJournal';
+        id: 'AppStateJournal';
+        entries: Set<SHA256Hash<StateEntry>>;
+        lastSync?: number;
+        browserState?: string;
+        nodejsState?: string;
     }
 }

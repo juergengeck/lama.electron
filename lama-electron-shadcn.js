@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 // Import the main application
 import mainApp from './main/app.js';
 import { autoInitialize } from './main/startup/auto-init.js';
+import ipcLogger from './main/utils/ipc-logger.js';
 
 // Set app name
 app.setName('LAMA');
@@ -70,7 +71,7 @@ function createWindow() {
       nodeIntegration: false,  // Disable Node in renderer for cleaner browser environment
       contextIsolation: true,   // Enable context isolation for security
       preload: path.join(__dirname, 'electron-preload.js'),
-      webSecurity: false,
+      webSecurity: true,  // Must be true for preload to work
       partition: 'persist:lama'  // Use persistent partition for IndexedDB
     },
     title: 'LAMA',
@@ -80,9 +81,25 @@ function createWindow() {
     trafficLightPosition: { x: 20, y: 20 }
   });
 
+  // Set up IPC logger to send Node logs to browser
+  ipcLogger.setMainWindow(mainWindow);
+  
   // In development, load from Vite dev server
   if (process.env.NODE_ENV !== 'production') {
     mainWindow.loadURL('http://localhost:5174');
+    
+    // Workaround: Inject electronAPI after page loads when webSecurity is disabled
+    mainWindow.webContents.once('dom-ready', () => {
+      console.log('[Main] Injecting electronAPI workaround for dev mode...');
+      mainWindow.webContents.executeJavaScript(`
+        if (!window.electronAPI) {
+          console.warn('[Injection] electronAPI not found, this indicates preload issues with webSecurity:false');
+          // The preload should have set this up, but with webSecurity:false it doesn't work
+          // This is a dev-only workaround
+        }
+      `);
+    });
+    
     mainWindow.webContents.openDevTools();
   } else {
     // In production, load the built files

@@ -54,7 +54,7 @@ class NodeProvisioning {
           instanceId: instanceId,
           personKeys: personKeys,
           instanceKeys: instanceKeys,
-          url: 'ws://localhost:8765'  // Direct socket listener
+          url: 'ws://localhost:8765'  // Direct socket listener port
         }
         
         // Get or create profile for the Node's owner
@@ -176,17 +176,16 @@ class NodeProvisioning {
           // This ensures the invitation is properly registered with the correct keys
           const invitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
           
-          // The invitation from createInvitation() already has the correct format:
-          // {token, publicKey, url} but the URL will be for CommServer
-          // We need to override it to use the local socket listener
+          // For internal federation, we use the local WebSocket server, NOT CommServer
+          // The invitation URL must point to our local socket listener
           pairingInvite = {
             ...invitation,
-            url: 'ws://localhost:8765'  // Override to use local socket instead of CommServer
+            url: 'ws://localhost:8765'  // Local socket for Browser ↔ Node.js federation
           }
           
           console.log('[NodeProvisioning] PAIRING INVITATION:', JSON.stringify(pairingInvite, null, 2))
           console.log('[NodeProvisioning] Created invitation through proper API with token:', pairingInvite.token)
-          console.log('[NodeProvisioning] Pairing invitation ready for ws://localhost:8765')
+          console.log('[NodeProvisioning] Pairing invitation ready at:', pairingInvite.url)
         }
       } catch (error) {
         console.error('[NodeProvisioning] Failed to create pairing invitation:', error)

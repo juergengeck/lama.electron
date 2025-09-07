@@ -30,10 +30,36 @@ const chatHandlers = {
       let topicRoom
       try {
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+        
+        // For default topic, ensure it has the group configuration
+        if (conversationId === 'default' && nodeOneCore.topicGroupManager) {
+          console.log('[ChatHandler] Ensuring default topic has group participants')
+          try {
+            // Get or create the conversation group for default topic
+            const groupIdHash = await nodeOneCore.topicGroupManager.getOrCreateConversationGroup('default')
+            
+            // Get the topic object
+            const topic = await nodeOneCore.topicModel.topics.queryById('default')
+            if (topic) {
+              // Add the group to the topic
+              await nodeOneCore.topicModel.addGroupToTopic(groupIdHash, topic)
+              console.log('[ChatHandler] Added group to default topic')
+            }
+          } catch (groupError) {
+            console.log('[ChatHandler] Could not add group to default topic:', groupError.message)
+          }
+        }
       } catch (error) {
-        // Topic doesn't exist, create it
-        console.log('[ChatHandler] Topic does not exist, creating:', conversationId)
-        await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
+        // Topic doesn't exist, create it with proper group
+        console.log('[ChatHandler] Topic does not exist, creating with group participants:', conversationId)
+        
+        // Use TopicGroupManager to create topic with proper group
+        if (nodeOneCore.topicGroupManager) {
+          await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId)
+        } else {
+          // Fallback to old method
+          await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
+        }
         
         // CRITICAL: Also create the channel so we can post messages
         if (nodeOneCore.channelManager) {
@@ -42,8 +68,9 @@ const chatHandlers = {
             await nodeOneCore.channelManager.createChannel(conversationId, nodeOneCore.ownerId)
             console.log('[ChatHandler] Channel created successfully')
             
-            // Grant IoM group access for sync between local instances
-            if (nodeOneCore.iomGroup) {
+            // Grant access to browser Person ID for CHUM sync
+            const browserPersonId = stateManager.getState('browserPersonId')
+            if (browserPersonId) {
               const { createAccess } = await import('@refinio/one.core/lib/access.js')
               const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
               const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
@@ -54,14 +81,15 @@ const chatHandlers = {
                 owner: nodeOneCore.ownerId
               })
               
+              // Grant direct person-to-person access to browser
               await createAccess([{
                 id: channelInfoHash,
-                person: [],
-                group: [nodeOneCore.iomGroup.groupIdHash],
+                person: [browserPersonId], // Direct access to browser person
+                group: [],
                 mode: SET_ACCESS_MODE.ADD
               }])
               
-              console.log('[ChatHandler] IoM group access granted for channel:', conversationId)
+              console.log(`[ChatHandler] Granted channel access to browser person: ${browserPersonId.substring(0, 8)}`)
             }
           } catch (channelErr) {
             console.log('[ChatHandler] Channel creation result:', channelErr?.message || 'May already exist')
@@ -74,8 +102,9 @@ const chatHandlers = {
       // Send message through TopicModel (this syncs via ChannelManager)
       // TopicRoom.sendMessage expects (message, author, channelOwner)
       // undefined author means "use my main identity"
-      // undefined channelOwner means "use my channel"
-      await topicRoom.sendMessage(text, undefined, undefined)
+      // For proper federation sync, we need to specify the channel owner
+      const channelOwner = nodeOneCore.ownerId
+      await topicRoom.sendMessage(text, undefined, channelOwner)
       
       // Create message object for UI
       const message = {
@@ -91,8 +120,11 @@ const chatHandlers = {
       // Add to state for UI
       stateManager.addMessage(conversationId, message)
       
-      // Notify renderer
+      // Notify renderer about the new message
       event.sender.send('chat:messageSent', message)
+      
+      // Also emit a message update event so UI refreshes from source
+      event.sender.send('message:updated', { conversationId })
       
       return {
         success: true,
@@ -131,29 +163,57 @@ const chatHandlers = {
       try {
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
       } catch (error) {
-        // Topic doesn't exist yet
-        return {
-          success: true,
-          data: {
-            messages: [],
-            total: 0,
-            hasMore: false
+        console.log('[ChatHandler] Topic does not exist yet:', conversationId)
+        // Topic doesn't exist yet - try to create it with proper group
+        try {
+          // Use TopicGroupManager to create topic with proper group
+          if (nodeOneCore.topicGroupManager) {
+            await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId)
+          } else {
+            // Fallback to old method
+            await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
+          }
+          
+          // Create the channel too
+          if (nodeOneCore.channelManager) {
+            await nodeOneCore.channelManager.createChannel(conversationId, nodeOneCore.ownerId)
+          }
+          
+          topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+        } catch (createError) {
+          console.error('[ChatHandler] Could not create topic:', createError)
+          return {
+            success: true,
+            data: {
+              messages: [],
+              total: 0,
+              hasMore: false
+            }
           }
         }
       }
       
       // Get messages from the topic room
-      const messages = await topicRoom.getRecentMessages(limit, offset)
+      const rawMessages = await topicRoom.retrieveAllMessages()
+      console.log('[ChatHandler] Retrieved', rawMessages.length, 'messages from TopicRoom')
+      
+      // Filter for actual ChatMessage objects - they have data.text
+      const validMessages = rawMessages.filter(msg => 
+        msg.data?.text && typeof msg.data.text === 'string' && msg.data.text.trim() !== ''
+      )
       
       // Transform messages to UI format
-      const formattedMessages = messages.map(msg => ({
-        id: msg.hash || msg.id,
+      const formattedMessages = validMessages.map(msg => ({
+        id: msg.id || msg.channelEntryHash || `msg-${Date.now()}`,
         conversationId,
-        text: msg.text || msg.content,
-        sender: msg.sender || msg.author,
-        timestamp: msg.timestamp || new Date().toISOString(),
+        text: msg.data?.text || '',
+        sender: msg.data?.sender || msg.data?.author || msg.author || nodeOneCore.ownerId,
+        timestamp: msg.creationTime ? new Date(msg.creationTime).toISOString() : new Date().toISOString(),
         status: 'received'
       }))
+      
+      // Apply pagination
+      const messages = formattedMessages.slice(offset, offset + limit)
       
       const paginated = formattedMessages
       
@@ -221,10 +281,39 @@ const chatHandlers = {
         unreadCount: 0
       }
       
-      // TODO: Create in TopicModel when properly initialized
-      // if (nodeOneCore.topicModel) {
-      //   await nodeOneCore.topicModel.createTopic({type, participants, name})
-      // }
+      // Create topic with proper group participants using TopicGroupManager
+      if (nodeOneCore.topicGroupManager) {
+        try {
+          console.log('[ChatHandler] Creating topic with conversation group for:', conversation.id)
+          
+          // This will create the topic with a group containing browser owner, node owner, and AI
+          await nodeOneCore.topicGroupManager.createGroupTopic(
+            conversation.name,
+            conversation.id
+          )
+          console.log('[ChatHandler] Created topic with proper group participants')
+          
+        } catch (error) {
+          console.error('[ChatHandler] Error creating topic with group:', error)
+          // Fallback to creating channel only
+          if (nodeOneCore.channelManager) {
+            try {
+              await nodeOneCore.channelManager.createChannel(conversation.id, nodeOneCore.ownerId)
+            } catch (channelError) {
+              console.log('[ChatHandler] Channel might already exist:', channelError.message)
+            }
+          }
+        }
+      } else if (nodeOneCore.channelManager) {
+        // Fallback if TopicGroupManager not available
+        try {
+          console.log('[ChatHandler] Creating Node.js channel for conversation:', conversation.id)
+          await nodeOneCore.channelManager.createChannel(conversation.id, nodeOneCore.ownerId)
+          console.log('[ChatHandler] Created Node.js channel with owner:', nodeOneCore.ownerId)
+        } catch (error) {
+          console.error('[ChatHandler] Error creating channel in Node.js:', error)
+        }
+      }
       
       // Add to state for UI
       stateManager.addConversation(conversation)

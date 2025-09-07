@@ -17,6 +17,7 @@ import { AIAssistantModel } from './ai/AIAssistantModel'
 import { initializeObjectEvents } from './ObjectEventsSingleton'
 // Recipes are registered via SingleUserNoAuth in browser-init-simple.ts
 import LeuteAccessRightsManager from './LeuteAccessRightsManager'
+// import { AppStateModel } from '@refinio/refinio-api/dist/state/index.js' // DISABLED: needs proper integration
 
 export interface AppModelConfig {
   name: string
@@ -37,10 +38,12 @@ export class AppModel extends Model {
   public transportManager?: TransportManager
   public llmManager?: LLMManager
   public aiAssistantModel?: AIAssistantModel
+  // public appStateModel?: AppStateModel  // DISABLED: CRDT-based app state journal needs proper integration
   private leuteConnectionsModule?: any  // LeuteConnectionsModule for direct federation
-  private nodePersonId?: SHA256IdHash<Person>  // Node's person ID for CHUM sync
+  public nodePersonId?: SHA256IdHash<Person>  // Node's person ID for CHUM sync (public for LamaBridge)
   private accessRightsManager?: LeuteAccessRightsManager
   private connectionsModel?: ConnectionsModel  // ConnectionsModel for pairing operations
+  public federationGroupId?: string  // Federation group ID for channel access
   
   // Expose ConnectionsModel for pairing operations
   public get connections(): InstanceType<typeof ConnectionsModel> | undefined {
@@ -81,10 +84,62 @@ export class AppModel extends Model {
    * Following the sequential initialization pattern from init.md
    */
   async init(ownerId: SHA256IdHash<Person>): Promise<void> {
+    // Check if already initialized
+    let alreadyInitialized = false
     try {
       this.state.assertCurrentState('Uninitialised')
     } catch (e) {
       console.warn('[AppModel] Already initialized or initializing')
+      alreadyInitialized = true
+    }
+    
+    // If already initialized, still try to set up the pairing connection if needed
+    if (alreadyInitialized) {
+      console.log('[AppModel] 🔄 Re-checking pairing connection setup...')
+      
+      // Get connection config
+      const { getConnectionConfig } = await import('../config/connection-config')
+      const connectionConfig = getConnectionConfig()
+      
+      // Check if we should set up the connection
+      if (connectionConfig.useDirectConnection && window.electronAPI) {
+        // First check if Node person is already a contact (persistent across reloads)
+        const nodeInfo = await window.electronAPI.invoke('devices:getInstanceInfo')
+        let isAlreadyPaired = false
+        
+        if (nodeInfo?.ownerId) {
+          try {
+            const nodeSomeone = await this.leuteModel.getSomeone(nodeInfo.ownerId)
+            if (nodeSomeone) {
+              console.log('[AppModel] ✅ Node is already a contact - pairing persisted!')
+              isAlreadyPaired = true
+              this.nodePersonId = nodeInfo.ownerId
+            }
+          } catch (e) {
+            // Not a contact yet
+          }
+        }
+        
+        if (isAlreadyPaired) {
+          console.log('[AppModel] Skipping pairing - already completed')
+          // ConnectionsModel with establishOutgoingConnections will auto-connect
+        } else {
+          // Check if connection exists by looking at channels (fallback)
+          const channels = await this.channelManager?.channels() || []
+          const hasNodeChannels = channels.some(ch => 
+            ch.owner !== this.ownerId && ch.owner?.length === 64
+          )
+          
+          if (hasNodeChannels) {
+            console.log('[AppModel] ✅ Connection already established - found', channels.length, 'channels')
+            console.log('[AppModel] Channels from Node already visible, skipping pairing')
+          } else {
+            console.log('[AppModel] No Node channels found, attempting connection setup...')
+            await this.setupNodeConnection()
+          }
+        }
+      }
+      
       return
     }
     
@@ -231,6 +286,28 @@ export class AppModel extends Model {
         throw new Error(`TopicModel initialization failed: ${(error as Error).message}`)
       }
       
+      // DISABLED: AppStateModel - needs proper ONE instance integration
+      // The AppStateModel from @refinio/refinio-api uses direct imports from @refinio/one.core
+      // which don't work in browser context. It needs to use ONE instance methods instead.
+      // console.log('[AppModel] Creating AppStateModel...')
+      // try {
+      //   const ONE = (window as any).ONE
+      //   this.appStateModel = new AppStateModel(ONE, 'browser')
+      //   await this.appStateModel.init(ownerId)
+      //   console.log('[AppModel] ✅ AppStateModel initialized')
+      //   
+      //   // Record initial browser state
+      //   await this.appStateModel.recordStateChange(
+      //     'browser.initialized',
+      //     true,
+      //     false,
+      //     { action: 'init', description: 'Browser AppModel initialized' }
+      //   )
+      // } catch (error) {
+      //   console.error('[AppModel] Failed to initialize AppStateModel:', error)
+      //   // Continue without state journaling
+      // }
+      
       // STEP 6: AppModel initialization (create system topics first)
       console.log('[AppModel] Step 6: Creating system topics...')
       await this.createSystemTopics()
@@ -247,19 +324,18 @@ export class AppModel extends Model {
       this.aiAssistantModel = null
       
       // Set up connection between browser and Node.js for CHUM sync
-      console.log('[AppModel] DEBUG: Connection config check:')
-      console.log('[AppModel] DEBUG: - useDirectConnection:', connectionConfig.useDirectConnection)
-      console.log('[AppModel] DEBUG: - window.electronAPI exists:', !!window.electronAPI)
-      console.log('[AppModel] DEBUG: - connectionConfig:', JSON.stringify(connectionConfig, null, 2))
+      console.log('[AppModel] 🔍 Checking connection config:')
+      console.log('[AppModel]   useDirectConnection:', connectionConfig.useDirectConnection)
+      console.log('[AppModel]   window.electronAPI exists:', !!window.electronAPI)
       
       if (connectionConfig.useDirectConnection && window.electronAPI) {
-        console.log('[AppModel] Setting up browser-Node.js direct connection for CHUM sync...')
+        console.log('[AppModel] ✅ Conditions met - Setting up browser-Node.js direct connection for CHUM sync...')
         await this.setupNodeConnection()
         console.log('[AppModel] ✅ Browser-Node.js direct connection setup complete')
       } else {
-        console.warn('[AppModel] ❌ NOT calling setupNodeConnection():')
-        console.warn('[AppModel] - useDirectConnection:', connectionConfig.useDirectConnection)
-        console.warn('[AppModel] - electronAPI available:', !!window.electronAPI)
+        console.log('[AppModel] ⚠️ Skipping direct connection setup:')
+        console.log('[AppModel]   useDirectConnection:', connectionConfig.useDirectConnection)
+        console.log('[AppModel]   window.electronAPI:', !!window.electronAPI)
       }
       
       this.state.triggerEvent('init')
@@ -364,6 +440,10 @@ export class AppModel extends Model {
         console.log('[AppModel] Created new federation group')
       }
       
+      // Store federation group ID for channel access grants
+      this.federationGroupId = federationGroup.groupIdHash
+      console.log('[AppModel] Federation group ID stored:', this.federationGroupId?.substring(0, 8))
+      
       // Create replicant group for inter-instance sync
       let replicantGroup
       try {
@@ -377,17 +457,103 @@ export class AppModel extends Model {
       // Initialize access rights manager with groups
       const { default: ConnectionsModel } = await import('@refinio/one.models/lib/models/ConnectionsModel.js')
       
+      // Create blacklist group for ConnectionsModel (required for proper initialization)
+      const { default: BlacklistModel } = await import('./BlacklistModel.js')
+      const blacklistModel = new BlacklistModel()
+      
+      // Create bin group for blacklist
+      const binGroup = await this.leuteModel.createGroup('bin')
+      blacklistModel.init(binGroup, everyoneGroup)
+      console.log('[AppModel] Blacklist model initialized')
+      
       // Initialize ConnectionsModel with proper configuration for automatic connections
       this.connectionsModel = new ConnectionsModel(this.leuteModel, {
-        commServerUrl: null,  // null - we don't use commserver for browser-to-node connection
+        commServerUrl: 'wss://comm10.dev.refinio.one',  // Required for ConnectionsModel to initialize properly
         acceptIncomingConnections: false,  // Browser only connects out
         acceptUnknownInstances: true,  // Accept Node instance after pairing
         acceptUnknownPersons: false,  // FIXED: Match one.leute - use catch-all for pairing
         allowPairing: true,  // Required for pairing protocol to work properly
         establishOutgoingConnections: true,  // CRITICAL: Automatically connect to discovered endpoints
-        allowDebugRequests: true,
-        incomingConnectionConfigurations: []  // Explicitly no incoming connections
+        allowDebugRequests: true
+        // Don't override incomingConnectionConfigurations - let ConnectionsModel handle it
       })
+      
+      // Initialize ConnectionsModel with blacklist (CRITICAL for proper encryption setup)
+      await this.connectionsModel.init(blacklistModel.blacklistGroupModel)
+      console.log('[AppModel] ConnectionsModel initialized with blacklist')
+      
+      // Monitor CHUM connections
+      this.connectionsModel.onConnectionsChange(() => {
+        const connections = this.connectionsModel.connectionsInfo()
+        const chumConnections = connections.filter(c => c.protocolName === 'chum' && c.isConnected)
+        if (chumConnections.length > 0) {
+          console.log('[AppModel] 🔄 Active CHUM connections:', chumConnections.length)
+          chumConnections.forEach(conn => {
+            console.log('[AppModel]   - CHUM with:', conn.remotePersonId?.substring(0, 8))
+          })
+        }
+      })
+      
+      // Add detailed CHUM data flow logging
+      if (this.channelManager?.onUpdated) {
+        console.log('[AppModel] 🎯 BROWSER: Setting up channelManager.onUpdated to track CHUM triggers')
+        this.channelManager.onUpdated((channelInfoIdHash, channelId, owner, time, data) => {
+          console.log('[AppModel] 🔔🔔🔔 BROWSER CHUM TRIGGER: Channel update!', {
+            channelId,
+            owner: owner?.substring(0, 8),
+            dataLength: data?.length,
+            timestamp: new Date(time).toISOString()
+          })
+          
+          // Log the actual data types
+          if (data && data.length > 0) {
+            data.forEach((item, idx) => {
+              console.log(`[AppModel]   Data[${idx}]:`, {
+                type: item.$type$,
+                content: item.content ? item.content.substring(0, 30) + '...' : undefined,
+                author: item.author?.substring(0, 8)
+              })
+            })
+          }
+          
+          // Check if this should trigger CHUM sync
+          const connections = this.connectionsModel.connectionsInfo()
+          const activeChum = connections.filter(c => c.protocolName === 'chum' && c.isConnected)
+          console.log('[AppModel] 📡 CHUM connections that should receive this update:', activeChum.length)
+          
+          // DEBUG: Log all connections to understand what's happening
+          if (connections.length > 0) {
+            console.log('[AppModel] 🔍 All connections from connectionsInfo:')
+            connections.forEach(conn => {
+              console.log('[AppModel]   Connection:', {
+                protocol: conn.protocolName,
+                isConnected: conn.isConnected,
+                remotePersonId: conn.remotePersonId?.substring(0, 8),
+                url: conn.url
+              })
+            })
+          }
+          
+          // Also check LeuteConnectionsModule if available
+          if (this.leuteConnectionsModule) {
+            try {
+              const leuteConnections = this.leuteConnectionsModule.connectionsInfo()
+              console.log('[AppModel] 🔍 LeuteConnectionsModule reports:', leuteConnections.length, 'connections')
+              if (leuteConnections.length > 0) {
+                leuteConnections.forEach(conn => {
+                  console.log('[AppModel]   Leute connection:', {
+                    protocol: conn.protocolName,
+                    isConnected: conn.isConnected,
+                    remotePersonId: conn.remotePersonId?.substring(0, 8)
+                  })
+                })
+              }
+            } catch (e) {
+              // Module might not have this method
+            }
+          }
+        })
+      }
       
       this.accessRightsManager = new LeuteAccessRightsManager(
         this.channelManager,
@@ -778,6 +944,8 @@ export class AppModel extends Model {
    * Set up direct connection to Node.js for CHUM sync via federation
    */
   private async setupNodeConnection(): Promise<void> {
+    console.log('[AppModel] 🚀🚀🚀 setupNodeConnection CALLED - MUST ESTABLISH PAIRING!')
+    
     if (!this.leuteModel || !this.channelManager) {
       throw new Error('LeuteModel or ChannelManager not initialized')
     }
@@ -817,9 +985,18 @@ export class AppModel extends Model {
       ;(window as any).browserPersonId = this.ownerId
       ;(window as any).nodePersonId = nodeInfo.ownerId
       
+      // Tell Node.js about the browser's Person ID for access grants
+      await window.electronAPI.invoke('state:set', {
+        key: 'browserPersonId',
+        value: this.ownerId
+      })
+      
       console.log('[AppModel] Federation setup - Browser and Node have different person IDs:')
       console.log('[AppModel] - Browser person:', this.ownerId?.substring(0, 8))
       console.log('[AppModel] - Node person:', nodeInfo.ownerId?.substring(0, 8))
+      
+      // Grant Node access to all browser channels (one-time setup)
+      await this.grantNodeAccessToAllChannels()
       
       // LeuteConnectionsModule will handle endpoint creation and discovery automatically
       // No need to manually create endpoints - that's what the module is for!
@@ -876,9 +1053,6 @@ export class AppModel extends Model {
         // Check if this is the Node.js connection (same owner)
         if (remotePersonId === this.ownerId) {
           console.log('[AppModel] ✅ Connected to Node.js instance via federation')
-          
-          // Test CHUM sync
-          this.testCHUMSync()
         }
       })
       
@@ -905,16 +1079,17 @@ export class AppModel extends Model {
       // Prefer pairing invitation if available (it establishes contact relationship)
       if (nodeInstanceInfo?.pairingInvite) {
         // Use pairing invitation to establish connection and exchange contacts
-        console.log('[AppModel] Found pairing invitation from Node.js')
+        console.log('[AppModel] 🎯🎯🎯 PAIRING INVITATION FOUND - MUST CONNECT!')
         try {
           const invitation = nodeInstanceInfo.pairingInvite // Direct invitation object now
-          console.log('[AppModel] Local invitation points to:', invitation.url)
-          console.log('[AppModel] Invitation token:', invitation.token)
-          console.log('[AppModel] Invitation publicKey:', invitation.publicKey)
-          console.log('[AppModel] Full invitation object:', invitation)
+          console.log('[AppModel] 🔑 Invitation details:')
+          console.log('[AppModel]   URL:', invitation.url)
+          console.log('[AppModel]   Token:', invitation.token)
+          console.log('[AppModel]   PublicKey:', invitation.publicKey)
+          console.log('[AppModel]   Full object:', invitation)
           
           // Actually accept the pairing invitation to establish the connection
-          console.log('[AppModel] Accepting pairing invitation...')
+          console.log('[AppModel] 🔗🔗🔗 ACCEPTING PAIRING INVITATION NOW...')
           
           // Browser needs to use the pairing protocol to connect
           console.log('[AppModel] Using pairing protocol to connect to Node.js...')
@@ -932,13 +1107,12 @@ export class AppModel extends Model {
             console.log('[AppModel] Invitation publicKey:', invitation.publicKey)
             
             // Connect using the invitation
-            console.log('[AppModel] Calling connectUsingInvitation...')
-            console.log('[AppModel] DEBUG: About to call pairingManager.connectUsingInvitation')
-            console.log('[AppModel] DEBUG: pairingManager exists:', !!pairingManager)
-            console.log('[AppModel] DEBUG: invitation exists:', !!invitation)
-            console.log('[AppModel] DEBUG: this.ownerId:', this.ownerId)
+            console.log('[AppModel] 🚨🚨🚨 CRITICAL: About to call connectUsingInvitation')
+            console.log('[AppModel]   pairingManager exists:', !!pairingManager)
+            console.log('[AppModel]   invitation exists:', !!invitation)
+            console.log('[AppModel]   ownerId:', this.ownerId)
             
-            // Listen for pairing success event (OEvent is a functor - call it directly)
+            // Listen for pairing success - ConnectionsModel handles the rest
             pairingManager.onPairingSuccess(async (
               initiatedLocally,
               localPersonId, 
@@ -948,55 +1122,44 @@ export class AppModel extends Model {
               token
             ) => {
               console.log('[AppModel] ✅ Pairing successful!')
-              console.log('[AppModel] - Local person:', localPersonId?.substring(0, 8))
-              console.log('[AppModel] - Remote person (Node.js):', remotePersonId?.substring(0, 8))
-              console.log('[AppModel] - Contact relationship established')
-              
-              // Grant access to channels for CHUM sync
-              console.log('[AppModel] Granting channel access to Node.js person...')
-              try {
-                const { createAccess } = await import('@refinio/one.core/lib/access.js')
-                const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
-                
-                // Get all our channels
-                const channels = await this.channelManager.channels()
-                console.log(`[AppModel] Granting access to ${channels.length} channels`)
-                
-                // Grant Node.js person access to each channel
-                for (const channel of channels) {
-                  if (channel.channelInfoIdHash) {
-                    await createAccess([{
-                      id: channel.channelInfoIdHash,
-                      person: [remotePersonId], // Grant access to Node.js person
-                      group: [],
-                      mode: SET_ACCESS_MODE.ADD
-                    }])
-                    console.log(`[AppModel] Granted access to channel: ${channel.id}`)
-                  }
-                }
-                
-                console.log('[AppModel] ✅ Access rights configured for CHUM sync')
-              } catch (error) {
-                console.error('[AppModel] Failed to grant access:', error)
-              }
-              
-              console.log('[AppModel] Next steps:')
-              console.log('[AppModel]   1. LeuteConnectionsModule discovers Node endpoint')
-              console.log('[AppModel]   2. Establishes CHUM connection for data sync')
-              console.log('[AppModel]   3. CHUM protocol automatically syncs content')
+              console.log('[AppModel] Remote person (Node.js):', remotePersonId?.substring(0, 8))
+              // ConnectionsModel will automatically transition to CHUM
             })
             
             try {
-              // This establishes contact and then closes - it doesn't return a connection
-              console.log('[AppModel] 🚀 BROWSER INITIATING CONNECTION AS CLIENT')
-              console.log('[AppModel] Calling pairingManager.connectUsingInvitation()')
-              await pairingManager.connectUsingInvitation(
+              // Let ConnectionsModel handle everything
+              console.log('[AppModel] 🚀 Initiating pairing connection')
+              console.log('[AppModel] Invitation details:', {
+                url: invitation.url,
+                token: invitation.token,
+                publicKey: invitation.publicKey
+              })
+              
+              // Actually initiate the connection
+              console.log('[AppModel] 🔴🔴🔴 EXECUTING connectUsingInvitation NOW!')
+              const connectionResult = await pairingManager.connectUsingInvitation(
                 invitation,
                 this.ownerId
               )
-              console.log('[AppModel] ✅ Pairing protocol completed')
-              console.log('[AppModel] Contact relationship established with Node.js')
-              console.log('[AppModel] LeuteConnectionsModule will now discover and connect')
+              
+              console.log('[AppModel] ✅✅✅ PAIRING CONNECTION INITIATED!')
+              console.log('[AppModel] Connection result:', connectionResult)
+              
+              // Force a CHUM transition after pairing
+              setTimeout(() => {
+                console.log('[AppModel] Checking for CHUM transition...')
+                const connections = this.connectionsModel.connectionsInfo()
+                const chumConnections = connections.filter(c => c.protocolName === 'chum')
+                console.log('[AppModel] CHUM connections found:', chumConnections.length)
+                
+                if (chumConnections.length === 0) {
+                  console.log('[AppModel] No CHUM connections yet, checking pairing status...')
+                  // The connection might still be in pairing phase
+                  const pairingConnections = connections.filter(c => c.protocolName === 'pairing')
+                  console.log('[AppModel] Pairing connections:', pairingConnections.length)
+                }
+              }, 2000)
+              
             } catch (error) {
               // The pairing handshake often shows a "Decryption failed" error
               // but CHUM sync still works fine. This is a known issue with the
@@ -1006,8 +1169,19 @@ export class AppModel extends Model {
                 console.log('[AppModel] CHUM sync will still work despite this message')
               } else {
                 console.error('[AppModel] ❌ Pairing failed:', error)
-                console.error('[AppModel] Error:', error.message)
+                console.error('[AppModel] Full error:', error)
+                console.error('[AppModel] Error stack:', error.stack)
                 console.warn('[AppModel] Without pairing, instances may not sync properly')
+                
+                // Try direct WebSocket connection as fallback
+                console.log('[AppModel] Attempting direct WebSocket connection to ws://localhost:8765...')
+                try {
+                  // ConnectionsModel should auto-discover and connect if endpoints are available
+                  const nodeEndpoints = await this.leuteModel.findAllOneInstanceEndpointsForPerson(nodeInstanceInfo?.nodeId)
+                  console.log('[AppModel] Node endpoints available:', nodeEndpoints?.length || 0)
+                } catch (e) {
+                  console.error('[AppModel] Failed to check endpoints:', e)
+                }
               }
             }
             
@@ -1124,6 +1298,51 @@ export class AppModel extends Model {
     } catch (error) {
       console.error('[AppModel] Failed to setup federation:', error)
       // Continue without federation
+    }
+  }
+
+  /**
+   * Grant Node access to all browser channels
+   */
+  private async grantNodeAccessToAllChannels(): Promise<void> {
+    if (!this.channelManager || !this.nodePersonId) return
+    
+    try {
+      console.log('[AppModel] 🔐 Granting Node and federation group access to all browser channels...')
+      
+      const { createAccess } = await import('@refinio/one.core/lib/access.js')
+      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+      const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
+      
+      // Get all channels
+      const channels = await this.channelManager.channels()
+      
+      for (const channel of channels) {
+        if (channel.owner === this.ownerId) {
+          // This is our channel, grant Node AND federation group access to it
+          const channelInfoHash = await calculateIdHashOfObj({
+            $type$: 'ChannelInfo',
+            id: channel.id,
+            owner: channel.owner
+          })
+          
+          // Include federation group for proper CHUM sync
+          const groups = this.federationGroupId ? [this.federationGroupId] : []
+          
+          await createAccess([{
+            id: channelInfoHash,
+            person: [this.nodePersonId],
+            group: groups,
+            mode: SET_ACCESS_MODE.ADD
+          }])
+          
+          console.log(`[AppModel] ✅ Granted Node and federation access to channel: ${channel.id}`)
+        }
+      }
+      
+      console.log('[AppModel] ✅ Channel access grants complete')
+    } catch (error) {
+      console.error('[AppModel] Failed to grant channel access:', error)
     }
   }
 

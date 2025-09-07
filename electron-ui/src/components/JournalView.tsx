@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MessageView } from './MessageView'
+import { AppStateJournal } from './AppStateJournal'
 import { type Message } from '@/bridge/lama-bridge'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, FileText, Activity, Shield, Database } from 'lucide-react'
 
 export function JournalView() {
+  const [activeTab, setActiveTab] = useState('personal')
   const [entries, setEntries] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -66,15 +69,64 @@ export function JournalView() {
           <CardTitle>Journal</CardTitle>
         </div>
       </CardHeader>
-      <CardContent className="flex-1 flex flex-col p-0">
-        <MessageView
-          messages={entries}
-          currentUserId="user-1"
-          onSendMessage={handleAddEntry}
-          placeholder="Write your thoughts..."
-          showSender={false}
-          loading={loading}
-        />
+      <CardContent className="flex-1 flex flex-col p-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+          <TabsList className="grid w-full grid-cols-4 mb-4">
+            <TabsTrigger value="personal" className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Personal
+            </TabsTrigger>
+            <TabsTrigger value="state" className="flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              App State
+            </TabsTrigger>
+            <TabsTrigger value="security" className="flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              Security
+            </TabsTrigger>
+            <TabsTrigger value="data" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Data Sync
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="personal" className="flex-1 flex flex-col mt-0 -mx-4">
+            <MessageView
+              messages={entries}
+              currentUserId="user-1"
+              onSendMessage={handleAddEntry}
+              placeholder="Write your thoughts..."
+              showSender={false}
+              loading={loading}
+            />
+          </TabsContent>
+          
+          <TabsContent value="state" className="flex-1 mt-0">
+            <AppStateJournal />
+          </TabsContent>
+          
+          <TabsContent value="security" className="flex-1 mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Security Journal</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground">Security events and access logs will appear here</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          
+          <TabsContent value="data" className="flex-1 mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Data Sync Journal</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground">CHUM synchronization events will appear here</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   )

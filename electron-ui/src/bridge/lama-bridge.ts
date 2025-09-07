@@ -54,6 +54,8 @@ export interface Message {
   encrypted: boolean
   isAI?: boolean // Flag to indicate if the sender is an AI
   attachments?: MessageAttachment[] // Attachment references
+  topicId?: string // The topic/channel ID this message belongs to
+  topicName?: string // Human-readable name of the topic/channel
 }
 
 export interface Peer {
@@ -201,6 +203,12 @@ class LamaBridge implements LamaAPI {
       const conversationId = recipientId // Use the actual recipient/topic ID
       const messageId = `msg-${Date.now()}`
       
+      console.log('\n' + '='.repeat(60))
+      console.log('🚀 MESSAGE FLOW TRACE - BROWSER SEND START')
+      console.log('='.repeat(60))
+      console.log('[TRACE] Message ID:', messageId)
+      console.log('[TRACE] Content:', content.substring(0, 50))
+      console.log('[TRACE] Conversation:', conversationId)
       console.log('[PERF] 🏁 Starting sendMessageInternal')
       console.log('[LamaBridge] sendMessageInternal called for conversation:', conversationId)
       
@@ -242,6 +250,9 @@ class LamaBridge implements LamaAPI {
                   await this.appModel.channelManager.createChannel(conversationId, myPersonId)
                   channelOwner = myPersonId
                   console.log('[LamaBridge] Created channel with owner:', myPersonId)
+                  
+                  // Grant federation access for CHUM sync with Node.js
+                  await this.grantChannelAccessToNode(conversationId, myPersonId)
                 } catch (err) {
                   console.error('[LamaBridge] Failed to create channel:', err)
                   throw new Error('Cannot send message - failed to create channel')
@@ -281,15 +292,69 @@ class LamaBridge implements LamaAPI {
             } else {
               // From Chat.tsx line 215: undefined author means 'use my main identity'
               // channelOwner ?? null handles the case where no owner was found
-              await topicRoom.sendMessage(
+              console.log('[LamaBridge] 📤 BROWSER: Calling topicRoom.sendMessage...')
+              console.log('[LamaBridge] 📊 Channel details:', {
+                channelId: conversationId,
+                channelOwner: channelOwner?.substring(0, 8) || 'null',
+                content: content.substring(0, 50)
+              })
+              
+              const messageResult = await topicRoom.sendMessage(
                 content,
                 undefined,  // author: undefined means 'use my main identity'  
                 channelOwner ?? null  // channelOwner or null if no owner found
               )
+              
+              console.log('[LamaBridge] ✅ BROWSER: topicRoom.sendMessage completed, result:', messageResult)
+              
+              // Immediately check if message is in channel
+              if (this.appModel?.channelManager) {
+                console.log('[LamaBridge] 🔍 BROWSER: Checking if message is actually in channel...')
+                const channelData = await this.appModel.channelManager.getMatchingChannelInfos({
+                  channelId: conversationId
+                })
+                console.log('[LamaBridge] 📦 BROWSER: Channel has', channelData?.length || 0, 'channel infos')
+                
+                // Try to get channel entries to see if message is there
+                for (const channelInfo of (channelData || [])) {
+                  try {
+                    const entries = await this.appModel.channelManager.getChannelEntries?.(
+                      channelInfo.channelInfoHash,
+                      channelInfo.owner
+                    )
+                    console.log('[LamaBridge] 📋 BROWSER: Channel entries for owner', channelInfo.owner?.substring(0, 8), ':', entries?.length || 0, 'entries')
+                    if (entries && entries.length > 0) {
+                      const lastEntry = entries[entries.length - 1]
+                      console.log('[LamaBridge] 📝 BROWSER: Last entry type:', lastEntry?.data?.$type$, 'content preview:', lastEntry?.data?.content?.substring(0, 30))
+                    }
+                  } catch (err) {
+                    console.log('[LamaBridge] Could not get entries for owner', channelInfo.owner?.substring(0, 8))
+                  }
+                }
+              }
             }
             
-            // Grant access rights after sending
+            // Set up listener to trace channelManager.onUpdated
+            if (this.appModel?.channelManager?.onUpdated) {
+              console.log('[LamaBridge] 🔍 BROWSER: Setting up onUpdated listener to trace message flow')
+              const unsubscribe = this.appModel.channelManager.onUpdated((channelInfoIdHash, channelId, owner, time, data) => {
+                console.log('[LamaBridge] 🔔 BROWSER: channelManager.onUpdated fired!', {
+                  channelId,
+                  owner: owner?.substring(0, 8),
+                  dataLength: data?.length,
+                  hasNewMessage: data?.some(d => d.$type$ === 'ChatMessage')
+                })
+              })
+              // Clean up after 5 seconds
+              setTimeout(() => unsubscribe(), 5000)
+            }
+            
+            // Grant comprehensive access rights after sending
+            // This ensures Node can see the message via CHUM
+            console.log('[LamaBridge] 🔑 BROWSER: Granting access rights to Node...')
             await this.grantAccessForPersonToPersonTopic(conversationId)
+            await this.grantMessageAccessToNode(topicRoom, conversationId)
+            console.log('[LamaBridge] ✅ BROWSER: Access rights granted')
           } else {
             // For group topics, follow the same pattern as one.leute
             // Group topics typically have a single owner (the creator)
@@ -324,11 +389,33 @@ class LamaBridge implements LamaAPI {
                 channelOwner ?? null  // channelOwner or null if no owner found
               )
             } else {
-              await topicRoom.sendMessage(
+              console.log('[LamaBridge] 🔴🔴🔴 ABOUT TO SEND MESSAGE:', {
+                content,
+                channelOwner: channelOwner || 'null',
+                topicRoomExists: !!topicRoom
+              })
+              
+              // Set up channelManager listener BEFORE sending
+              if (this.appModel?.channelManager?.onUpdated) {
+                console.log('[LamaBridge] 🎯 Setting up channelManager.onUpdated listener')
+                const unsubscribe = this.appModel.channelManager.onUpdated((channelInfoIdHash, channelId, owner, time, data) => {
+                  console.log('[LamaBridge] 🔔🔔🔔 channelManager.onUpdated FIRED!', {
+                    channelId,
+                    owner: owner?.substring(0, 8),
+                    dataLength: data?.length,
+                    hasNewMessage: data?.some((d: any) => d.$type$ === 'ChatMessage')
+                  })
+                  // Don't unsubscribe to see multiple events
+                })
+              }
+              
+              const messageId = await topicRoom.sendMessage(
                 content,
                 undefined,  // author: undefined means 'use my main identity'
                 channelOwner ?? null  // channelOwner or null if no owner found
               )
+              
+              console.log('[LamaBridge] 🔴🔴🔴 MESSAGE SENT, ID:', messageId)
             }
           }
           
@@ -535,7 +622,9 @@ class LamaBridge implements LamaAPI {
                   content: msg.data?.text || '',
                   timestamp: msg.creationTime ? new Date(msg.creationTime) : new Date(),
                   encrypted: false,
-                  isAI: this.isAIPersonId(senderId)
+                  isAI: this.isAIPersonId(senderId),
+                  topicId: conversationId,
+                  topicName: topicName
                 }
               })
             } catch (e) {
@@ -550,11 +639,16 @@ class LamaBridge implements LamaAPI {
                   content: welcomeContent,
                   timestamp: new Date(),
                   encrypted: false,
-                  isAI: true
+                  isAI: true,
+                  topicId: conversationId,
+                  topicName: topicName
                 }
               ]
             }
           }
+          
+          // Get topic name for all messages
+          const topicName = await this.getTopicName(conversationId)
           
           // Transform ONE ChatMessage objects to our Message format (use validMessages)
           return validMessages.map((msg: any) => {
@@ -598,7 +692,9 @@ class LamaBridge implements LamaAPI {
               content: content,
               timestamp: msg.creationTime ? new Date(msg.creationTime) : new Date(),
               encrypted: false,
-              isAI: isAI
+              isAI: isAI,
+              topicId: conversationId, // Add the topic/channel ID
+              topicName: topicName // Use the resolved topic name
             }
             
             // Add attachments if present
@@ -621,7 +717,9 @@ class LamaBridge implements LamaAPI {
           content: 'Hello! I\'m your local AI assistant. How can I help you today?',
           timestamp: new Date(),
           encrypted: false,
-          isAI: true
+          isAI: true,
+          topicId: conversationId,
+          topicName: 'General Chat'
         }
       ]
     } catch (error) {
@@ -924,6 +1022,9 @@ class LamaBridge implements LamaAPI {
         console.log('[LamaBridge] Creating channel for topic:', topic.id)
         await this.appModel.channelManager.createChannel(topic.id, myPersonId)
         console.log('[LamaBridge] ✅ Channel created successfully with owner:', myPersonId)
+        
+        // Grant federation access for CHUM sync
+        await this.grantChannelAccessToNode(topic.id, myPersonId)
       } catch (channelError) {
         // Channel might already exist, which is fine
         console.log('[LamaBridge] Channel creation result:', channelError?.message || 'Channel may already exist')
@@ -1012,6 +1113,106 @@ class LamaBridge implements LamaAPI {
     return false
   }
 
+  private async grantChannelAccessToNode(channelId: string, channelOwner: string): Promise<void> {
+    try {
+      if (!this.appModel?.nodePersonId) {
+        return
+      }
+      
+      const nodePersonId = this.appModel.nodePersonId
+      const federationGroupId = this.appModel.federationGroupId
+      
+      const { createAccess } = await import('@refinio/one.core/lib/access.js')
+      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+      const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
+      
+      const channelInfoHash = await calculateIdHashOfObj({
+        $type$: 'ChannelInfo',
+        id: channelId,
+        owner: channelOwner
+      })
+      
+      // Grant both Node person AND federation group access for proper CHUM sync
+      const groups = federationGroupId ? [federationGroupId] : []
+      await createAccess([{
+        id: channelInfoHash,
+        person: [nodePersonId],
+        group: groups,
+        mode: SET_ACCESS_MODE.ADD
+      }])
+      
+      console.log(`[LamaBridge] Granted channel ${channelId} access to Node and federation group`)
+    } catch (error) {
+      console.error('[LamaBridge] Failed to grant access:', error)
+    }
+  }
+  
+  private async grantMessageAccessToNode(topicRoom: any, channelId: string): Promise<void> {
+    try {
+      if (!this.appModel?.nodePersonId || !this.appModel?.channelManager) {
+        return
+      }
+      
+      const nodePersonId = this.appModel.nodePersonId
+      const federationGroupId = this.appModel.federationGroupId
+      const { createAccess } = await import('@refinio/one.core/lib/access.js')
+      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+      
+      // Get ALL messages from the channel to grant comprehensive access
+      const channelInfos = await this.appModel.channelManager.getMatchingChannelInfos({
+        channelId: channelId
+      })
+      
+      console.log(`[LamaBridge] Granting message access for ${channelInfos.length} channel(s)`)
+      
+      for (const channelInfo of channelInfos) {
+        const entries = channelInfo.obj?.data || []
+        console.log(`[LamaBridge] Processing ${entries.length} entries in channel ${channelInfo.idHash.substring(0, 8)}...`)
+        
+        // Grant access to ALL entries, not just the latest one
+        // This ensures Node can see the complete conversation history
+        const accessGrants = []
+        
+        for (const entry of entries) {
+          // Grant access to each component of the message
+          if (entry.channelEntryHash) {
+            accessGrants.push({
+              id: entry.channelEntryHash,
+              person: [nodePersonId],
+              group: federationGroupId ? [federationGroupId] : [],
+              mode: SET_ACCESS_MODE.ADD
+            })
+          }
+          
+          if (entry.dataHash) {
+            accessGrants.push({
+              id: entry.dataHash,
+              person: [nodePersonId],
+              group: federationGroupId ? [federationGroupId] : [],
+              mode: SET_ACCESS_MODE.ADD
+            })
+          }
+          
+          if (entry.creationTimeHash) {
+            accessGrants.push({
+              id: entry.creationTimeHash,
+              person: [nodePersonId],
+              group: federationGroupId ? [federationGroupId] : [],
+              mode: SET_ACCESS_MODE.ADD
+            })
+          }
+        }
+        
+        if (accessGrants.length > 0) {
+          await createAccess(accessGrants)
+          console.log(`[LamaBridge] Granted Node access to ${accessGrants.length} message objects`)
+        }
+      }
+    } catch (error) {
+      console.error('[LamaBridge] Failed to grant message access to Node:', error)
+    }
+  }
+  
   private async grantAccessForPersonToPersonTopic(topicId: string): Promise<void> {
     try {
       if (!this.appModel?.channelManager || !this.appModel?.leuteModel) {
@@ -1053,14 +1254,40 @@ class LamaBridge implements LamaAPI {
         // This ensures messages are accessible
         const entries = channelInfo.obj?.data || []
         for (const entry of entries) {
-          if (entry.dataHash) {
-            // Grant access for ALL participants at once
-            await createAccess([{
-              object: entry.dataHash,
-              person: participants,  // Pass array of participants
+          const accessGrants = []
+          
+          // Grant access to the channel entry hash itself
+          if (entry.channelEntryHash) {
+            accessGrants.push({
+              id: entry.channelEntryHash,
+              person: participants,
               group: [],
               mode: SET_ACCESS_MODE.ADD
-            }])
+            })
+          }
+          
+          // Grant access to the data hash
+          if (entry.dataHash) {
+            accessGrants.push({
+              id: entry.dataHash,
+              person: participants,
+              group: [],
+              mode: SET_ACCESS_MODE.ADD
+            })
+          }
+          
+          // Grant access to the creation time hash
+          if (entry.creationTimeHash) {
+            accessGrants.push({
+              id: entry.creationTimeHash,
+              person: participants,
+              group: [],
+              mode: SET_ACCESS_MODE.ADD
+            })
+          }
+          
+          if (accessGrants.length > 0) {
+            await createAccess(accessGrants)
           }
         }
       }
@@ -1143,6 +1370,9 @@ class LamaBridge implements LamaAPI {
               console.log('[LamaBridge] Ensuring channel exists for existing topic')
               await this.appModel.channelManager?.createChannel(conversationId, myPersonId)
               console.log('[LamaBridge] Channel created/verified for user')
+              
+              // Grant federation access for CHUM sync
+              await this.grantChannelAccessToNode(conversationId, myPersonId)
             } catch (err) {
               console.log('[LamaBridge] Channel may already exist:', err)
             }
@@ -1264,6 +1494,9 @@ class LamaBridge implements LamaAPI {
             try {
               await this.appModel.channelManager.createChannel(conversationId, myPersonId)
               console.log('[LamaBridge] ✅ Channel created successfully')
+              
+              // Grant federation access for CHUM sync
+              await this.grantChannelAccessToNode(conversationId, myPersonId)
             } catch (err) {
               console.error('[LamaBridge] Failed to create channel:', err)
               // Try to create topic which will create the channel
@@ -1365,6 +1598,102 @@ class LamaBridge implements LamaAPI {
     }
   }
   
+  private async getTopicName(topicId: string): Promise<string> {
+    // Special cases for known topic IDs
+    if (topicId === 'default' || topicId === 'default-ai-chat') {
+      return 'General Chat'
+    }
+    
+    // Handle LAMA-style AI chat topics: chat-with-[model-name]
+    if (topicId.startsWith('chat-with-')) {
+      const modelSlug = topicId.substring(10) // Remove 'chat-with-' prefix
+      // Convert slug back to readable format
+      const modelName = modelSlug
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ')
+      return `Chat with ${modelName}`
+    }
+    
+    // Handle one-to-one topic IDs: [personId1]<->[personId2]
+    if (topicId.includes('<->')) {
+      const participants = topicId.split('<->')
+      if (participants.length === 2) {
+        // Try to resolve person names
+        try {
+          const contacts = await this.getContacts()
+          const names = participants.map(personId => {
+            const contact = contacts.find(c => c.id === personId)
+            return contact?.name || contact?.displayName || personId.substring(0, 8)
+          })
+          return names.join(' & ')
+        } catch (error) {
+          // Fallback to abbreviated IDs
+          return participants.map(id => id.substring(0, 8)).join(' & ')
+        }
+      }
+    }
+    
+    // Handle system topics
+    if (topicId === 'everyone') {
+      return 'Everyone'
+    }
+    if (topicId === 'glue') {
+      return 'System'
+    }
+    
+    // Try to get topic info from TopicModel
+    if (this.appModel?.topicModel) {
+      try {
+        const topics = await this.appModel.topicModel.getTopics?.()
+        const topic = topics?.find((t: any) => t.id === topicId)
+        if (topic?.name) {
+          return topic.name
+        }
+      } catch (error) {
+        console.warn('[LamaBridge] Could not get topic name:', error)
+      }
+    }
+    
+    // Try to get from cached conversation info
+    const savedConversations = localStorage.getItem('lama-conversations')
+    if (savedConversations) {
+      try {
+        const conversations = JSON.parse(savedConversations)
+        const conversation = conversations.find((c: any) => c.id === topicId)
+        if (conversation?.name) {
+          return conversation.name
+        }
+      } catch (error) {
+        console.warn('[LamaBridge] Could not get conversation name:', error)
+      }
+    }
+    
+    // Default formatting - capitalize and clean up
+    return topicId
+      .replace(/[-_]/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
+  }
+
+  private createAITopicId(modelName: string): string {
+    // Convert model name to LAMA-style slug format
+    const slug = modelName
+      .toLowerCase()
+      .replace(/\s+/g, '-')           // Replace spaces with hyphens
+      .replace(/[^a-z0-9-]/g, '')     // Remove non-alphanumeric chars except hyphens
+      .replace(/-+/g, '-')            // Collapse multiple hyphens
+      .replace(/^-|-$/g, '')          // Remove leading/trailing hyphens
+    
+    return `chat-with-${slug}`
+  }
+
+  private createOneToOneTopicId(personId1: string, personId2: string): string {
+    // LAMA convention: sort person IDs alphabetically and join with '<->'
+    return [personId1, personId2].sort().join('<->')
+  }
+
   private isAIPersonId(personId: string): boolean {
     return this.allAIPersonIds.has(personId)
   }

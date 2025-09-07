@@ -594,10 +594,9 @@ async function createPairingInvitation(event) {
       }
     }
     
-    // Override the URL for local federation - use the local WebSocket server
-    // The invitation will have the commserver URL, but we want ws://localhost:8765
-    invitation.url = 'ws://localhost:8765'
-    console.log('[IOM] Overridden invitation URL to:', invitation.url)
+    // Keep the original URL from createInvitation() - it will be the CommServer URL
+    // This allows external peers to connect through CommServer relay
+    console.log('[IOM] Using invitation URL:', invitation.url)
     
     // ONE.core invitation contains: token, publicKey, url (websocket endpoint)
     // We need to encode the entire invitation object for the URL fragment

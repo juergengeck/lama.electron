@@ -89,6 +89,19 @@ class StateManager extends EventEmitter {
         callback(value, oldValue)
       })
     }
+    
+    // Special handling for browser Person ID
+    if (path === 'browserPersonId' && value) {
+      console.log('[StateManager] Browser Person ID received:', value.substring(0, 8))
+      
+      // Setup channel access for browser-node federation
+      import('../core/node-one-core.js').then(module => {
+        const nodeOneCore = module.default
+        if (nodeOneCore.initialized) {
+          nodeOneCore.setupBrowserAccess(value)
+        }
+      })
+    }
   }
 
   // Watch for changes to a specific path

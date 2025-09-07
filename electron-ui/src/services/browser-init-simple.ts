@@ -20,6 +20,7 @@ import RecipesExperimental from '@refinio/one.models/lib/recipes/recipes-experim
 import { LamaRecipes } from '../recipes/index.js'
 import { ReverseMapsStable } from '@refinio/one.models/lib/recipes/reversemaps-stable.js'
 import { ReverseMapsExperimental } from '@refinio/one.models/lib/recipes/reversemaps-experimental.js'
+import { StateEntryRecipe, AppStateJournalRecipe } from '@refinio/refinio-api/dist/state/index.js'
 
 import { AppModel } from '../models/AppModel'
 
@@ -58,7 +59,7 @@ export class SimpleBrowserInit {
       loggedInAt: new Date().toISOString()
     }
 
-    // Initialize AppModel after successful login
+    // Initialize AppModel in the onLogin handler - this is the ONLY place it should be initialized
     try {
       console.log('[BrowserInitSimple] DEBUG: About to initialize AppModel')
       console.log('[BrowserInitSimple] DEBUG: nodeInstanceInfo on window exists:', !!((window as any).nodeInstanceInfo))
@@ -70,7 +71,44 @@ export class SimpleBrowserInit {
         console.log('  - pairingInvite exists:', !!nodeInfo.pairingInvite)
       }
       
-      await this.initializeAppModel()
+      // Get owner ID from ONE.CORE  
+      const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
+      const ownerId = getInstanceOwnerIdHash()
+      
+      if (!ownerId) {
+        throw new Error('No owner ID available from ONE.CORE')
+      }
+      
+      console.log('[BrowserInitSimple] Browser instance owner ID:', ownerId)
+      
+      // Also send to Node.js for comparison  
+      if (window.electronAPI && window.electronAPI.send) {
+        window.electronAPI.send('debug', {
+          type: 'browser-owner-id',
+          ownerId: ownerId,
+          timestamp: new Date().toISOString()
+        })
+      }
+      
+      // Create AppModel only if it doesn't exist
+      if (!this.appModel) {
+        console.log('[BrowserInitSimple] Creating AppModel...')
+        this.appModel = new AppModel({
+          name: 'LAMA-Browser',
+          version: '1.0.0',
+          commServerUrl: '' // Browser instance doesn't use comm server directly
+        })
+        
+        // Initialize AppModel - this should only happen ONCE per login
+        console.warn('[BrowserInitSimple] Starting AppModel.init() from onLogin handler...')
+        await this.appModel.init(ownerId)
+        console.log('[BrowserInitSimple] ✅ AppModel initialized successfully')
+        
+        // Make AppModel globally available for debugging
+        ;(window as any).appModel = this.appModel
+      } else {
+        console.log('[BrowserInitSimple] AppModel already exists, skipping initialization')
+      }
     } catch (error) {
       console.error('[BrowserInitSimple] Failed to initialize AppModel:', error)
       // Don't throw - allow basic functionality without full AppModel
@@ -92,61 +130,6 @@ export class SimpleBrowserInit {
     }
   }
 
-  private async initializeAppModel(): Promise<void> {
-    if (this.appModel) {
-      console.log('[BrowserInitSimple] AppModel already initialized')
-      return
-    }
-
-    console.log('[BrowserInitSimple] Initializing AppModel...')
-
-    try {
-      // Get owner ID from ONE.CORE
-      const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
-      const ownerId = getInstanceOwnerIdHash()
-      
-      if (!ownerId) {
-        throw new Error('No owner ID available from ONE.CORE')
-      }
-      
-      console.log('[BrowserInitSimple] Browser instance owner ID:', ownerId)
-      
-      // Also send to Node.js for comparison  
-      if (window.electronAPI && window.electronAPI.send) {
-        window.electronAPI.send('debug', {
-          type: 'browser-owner-id',
-          ownerId: ownerId,
-          timestamp: new Date().toISOString()
-        })
-      }
-
-      // Create AppModel with browser-specific config
-      this.appModel = new AppModel({
-        name: 'LAMA-Browser',
-        version: '1.0.0',
-        commServerUrl: '' // Browser instance doesn't use comm server directly
-      })
-
-      // Node.js was already provisioned in login() before browser ONE.core init
-      // Just retrieve the stored info for connection
-      const nodeInfo = (window as any).nodeInstanceInfo
-      if (nodeInfo) {
-        console.log('[BrowserInitSimple] Node.js instance available:', nodeInfo.nodeId)
-        console.log('[BrowserInitSimple] Will connect to Node at:', nodeInfo.endpoint)
-      }
-      
-      // Initialize the AppModel - Node.js is already ready
-      console.warn('[BrowserInitSimple] Starting AppModel.init()...')
-      await this.appModel.init(ownerId)
-      console.log('[BrowserInitSimple] ✅ AppModel initialized successfully')
-      console.warn('[BrowserInitSimple] AppModel.init() completed')
-
-    } catch (error) {
-      console.error('[BrowserInitSimple] AppModel initialization failed:', error)
-      this.appModel = null
-      throw error
-    }
-  }
 
   async login(username: string, password: string): Promise<{ success: boolean; user?: any }> {
     console.log('[BrowserInitSimple] Login attempt:', username)
@@ -204,12 +187,15 @@ export class SimpleBrowserInit {
       const { CORE_RECIPES } = await import('@refinio/one.core/lib/recipes.js')
       
       // Create the authenticator NOW (after Node is ready) - same config as Node.js
+      // INCLUDE AppState recipes at initialization
       this.one = new SingleUserNoAuth({
         recipes: [
           ...(CORE_RECIPES || []),
           ...RecipesStable,
           ...RecipesExperimental,
-          ...LamaRecipes
+          ...LamaRecipes,
+          StateEntryRecipe,
+          AppStateJournalRecipe
         ],
         reverseMaps: new Map([
           ...ReverseMapsStable,
@@ -246,6 +232,7 @@ export class SimpleBrowserInit {
 
       if (this.currentUser) {
         console.log('[BrowserInitSimple] ✅ Browser instance logged in')
+        console.log('[BrowserInitSimple] AppState recipes registered during initialization')
         
         // STEP 3: Accept pairing invitation to establish contact relationship
         // NOTE: We'll use AppModel's ConnectionsModel which is created during AppModel.init()

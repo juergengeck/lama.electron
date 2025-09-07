@@ -30,6 +30,14 @@ export function useLamaMessages(conversationId: string) {
           setLoading(true)
         }
         const msgs = await lamaBridge.getMessages(conversationId)
+        console.log('🔵🔵🔵 MESSAGES LOADED from lamaBridge.getMessages:', msgs.length, 'messages')
+        msgs.forEach((msg, idx) => {
+          console.log(`  Message ${idx + 1}:`, {
+            content: msg.content.substring(0, 30),
+            senderId: msg.senderId?.substring(0, 8),
+            timestamp: msg.timestamp
+          })
+        })
         
         if (mounted) {
           setMessages(msgs)

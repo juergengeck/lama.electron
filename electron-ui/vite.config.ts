@@ -24,19 +24,7 @@ export default defineConfig({
   optimizeDeps: {
     include: ['tweetnacl'],
     exclude: [
-      'electron',
-      'react-native', 
-      'react-native-fs',
-      '@react-native',
-      '@react-native-community',
-      '@react-native-async-storage',
-      '@react-native-clipboard',
-      '@react-native-picker',
-      'expo',
-      'expo-crypto',
-      'expo-file-system',
-      'expo-secure-store',
-      '@react-native-async-storage/async-storage'
+      'electron'
     ],
     esbuildOptions: {
       define: {
@@ -50,12 +38,8 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       external: [
-        'react-native',
-        'react-native-fs',
-        'expo-crypto',
-        'expo-file-system', 
-        'expo-secure-store',
-        '@react-native-async-storage/async-storage'
+        'ws',
+        'dgram'
       ],
       output: {
         format: 'cjs',

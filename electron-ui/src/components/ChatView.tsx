@@ -175,7 +175,9 @@ export function ChatView({
   }, [conversationId, messages, peers])
 
   const handleSendMessage = async (content: string, attachments?: any[]) => {
+    console.log('\n🔴🔴🔴 CRITICAL TRACE: handleSendMessage CALLED 🔴🔴🔴')
     console.log('[ChatView] handleSendMessage called with:', content, 'attachments:', attachments?.length || 0, 'for conversation:', conversationId)
+    console.trace('Call stack for message send')
     setIsProcessing(true)
     onProcessingChange?.(true)
     

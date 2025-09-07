@@ -3,7 +3,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Send, Loader2, Copy, Edit, Trash2, MoreVertical, Check, CheckCheck } from 'lucide-react'
-import { type Message } from '@/bridge/lama-bridge'
+import { type Message, lamaBridge } from '@/bridge/lama-bridge'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -285,7 +285,8 @@ export function MessageView({
                 isOwn: isCurrentUser,
                 subjects: subjects,
                 trustLevel: 3, // Default colleague level
-                attachments: messageAttachmentsList
+                attachments: messageAttachmentsList,
+                topicName: message.topicName // Pass topic name to enhanced bubble
               }
               
               return (
@@ -314,6 +315,12 @@ export function MessageView({
                   </Avatar>
                 )}
                 <div className="flex flex-col max-w-[70%]">
+                  {/* Show topic/channel name if available and different from default */}
+                  {message.topicName && message.topicName !== 'General Chat' && (
+                    <div className="text-xs text-muted-foreground mb-1 px-2">
+                      #{message.topicName}
+                    </div>
+                  )}
                   <div
                     className={`message-bubble relative group ${
                       isCurrentUser

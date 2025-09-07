@@ -1,4 +1,20 @@
 console.log('[MAIN] Starting LAMA app...')
+console.log('[MAIN] window.electronAPI available?', typeof window !== 'undefined' && !!window.electronAPI)
+if (typeof window !== 'undefined' && window.electronAPI) {
+  console.log('[MAIN] ✅ electronAPI is available with methods:', Object.keys(window.electronAPI))
+  // Force a test message to main process
+  if (window.electronAPI.log) {
+    window.electronAPI.log('[MAIN] TEST - electronAPI is working!')
+  }
+} else {
+  console.error('[MAIN] ❌ electronAPI is NOT available - preload script may not have run')
+  // Try again after a delay
+  setTimeout(() => {
+    if (window.electronAPI && window.electronAPI.log) {
+      window.electronAPI.log('[MAIN] DELAYED TEST - electronAPI now available!')
+    }
+  }, 1000)
+}
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
