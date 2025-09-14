@@ -1,63 +1,49 @@
 /**
  * AppModel Context Provider
- * Provides access to the initialized AppModel throughout the application
+ * Browser uses IPC only - NO AppModel, NO ONE.core
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { AppModel } from '../models/AppModel'
-import type { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks'
-import type { Person } from '@refinio/one.core/lib/recipes'
 
 interface AppModelContextType {
-  appModel: AppModel | null
+  // NO AppModel in browser - everything via IPC
   isInitialized: boolean
   error: Error | null
-  initializeApp: (userId: SHA256IdHash<Person>) => Promise<void>
+  initializeApp: (userId: string) => Promise<void>
 }
 
 const AppModelContext = createContext<AppModelContextType | undefined>(undefined)
 
 export function AppModelProvider({ children }: { children: React.ReactNode }) {
-  const [appModel, setAppModel] = useState<AppModel | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
-  const initializeApp = async (userId: SHA256IdHash<Person>) => {
+  const initializeApp = async (userId: string) => {
     try {
-      console.log('[AppModelProvider] Initializing app...')
+      console.log('[AppModelProvider] Browser UI ready - using IPC only')
       
-      // Create and initialize AppModel
-      const model = new AppModel({
-        name: 'LAMA Electron',
-        version: '1.0.0'
-      })
-      
-      await model.init(userId)
-      
-      setAppModel(model)
+      // Browser doesn't initialize AppModel - just marks as ready
+      // All operations go through IPC to Node.js
       setIsInitialized(true)
       setError(null)
       
-      console.log('[AppModelProvider] App initialized successfully')
+      console.log('[AppModelProvider] UI initialized successfully')
     } catch (err) {
-      console.error('[AppModelProvider] Failed to initialize app:', err)
+      console.error('[AppModelProvider] Failed to initialize:', err)
       setError(err as Error)
       setIsInitialized(false)
     }
   }
 
-  // Cleanup on unmount
+  // No cleanup needed - browser has no AppModel
   useEffect(() => {
     return () => {
-      if (appModel) {
-        console.log('[AppModelProvider] Shutting down app model...')
-        appModel.shutdown().catch(console.error)
-      }
+      console.log('[AppModelProvider] UI context cleanup')
     }
-  }, [appModel])
+  }, [])
 
   return (
-    <AppModelContext.Provider value={{ appModel, isInitialized, error, initializeApp }}>
+    <AppModelContext.Provider value={{ isInitialized, error, initializeApp }}>
       {children}
     </AppModelContext.Provider>
   )

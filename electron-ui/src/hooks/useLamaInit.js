@@ -2,7 +2,7 @@
  * React hook for LAMA initialization with proper ONE.CORE
  */
 import { useState, useEffect, useCallback } from 'react';
-import { simpleBrowserInit as browserInit } from '../services/browser-init-simple';
+import { browserInit } from '../services/browser-init';
 export function useLamaInit() {
     const [state, setState] = useState({
         isInitialized: false,

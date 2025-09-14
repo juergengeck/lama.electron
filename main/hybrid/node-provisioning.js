@@ -48,13 +48,16 @@ class NodeProvisioning {
         const personKeys = await getDefaultKeys(personId)
         const instanceKeys = await getDefaultKeys(instanceId)
         
+        // Get commServerUrl from nodeOneCore directly
+        const commServerUrl = nodeOneCore.commServerUrl || 'wss://comm10.dev.refinio.one'
+        
         const endpoint = {
           $type$: 'OneInstanceEndpoint',
           personId: personId,
           instanceId: instanceId,
           personKeys: personKeys,
           instanceKeys: instanceKeys,
-          url: 'ws://localhost:8765'  // Direct socket listener port
+          url: commServerUrl  // Use configured commserver URL
         }
         
         // Get or create profile for the Node's owner
@@ -112,11 +115,8 @@ class NodeProvisioning {
           // Use the proper API - let the Node instance create its own invitation
           const invitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
           
-          // Override URL to use local socket instead of CommServer
-          pairingInvite = {
-            ...invitation,
-            url: 'ws://localhost:8765'
-          }
+          // Use CommServer for pairing
+          pairingInvite = invitation  // Don't override URL, use what the invitation provides
           
           console.log('[NodeProvisioning] Created pairing invitation for already-initialized Node')
           console.log('[NodeProvisioning] Pairing token:', pairingInvite.token)
@@ -128,14 +128,14 @@ class NodeProvisioning {
       console.log('[NodeProvisioning] IPC returning result:', JSON.stringify({
         success: true,
         nodeId: nodeInfo.ownerId,
-        endpoint: 'ws://localhost:8765',
+        endpoint: nodeOneCore.commServerUrl || 'wss://comm10.dev.refinio.one',
         pairingInvite: pairingInvite
       }, null, 2))
       
       return {
         success: true,
         nodeId: nodeInfo.ownerId,
-        endpoint: 'ws://localhost:8765',
+        endpoint: nodeOneCore.commServerUrl || 'wss://comm10.dev.refinio.one',
         pairingInvite: pairingInvite  // Include pairing invitation
       }
     } else if (nodeInfo.initialized && !nodeInfo.ownerId) {
@@ -147,6 +147,12 @@ class NodeProvisioning {
       // Simple validation - just need username and password
       if (!provisioningData?.user?.name || !provisioningData?.user?.password) {
         throw new Error('Username and password required for provisioning')
+      }
+      
+      // If we're already provisioning, don't start another one
+      if (this.user && this.user.name === provisioningData.user.name) {
+        console.log('[NodeProvisioning] Already provisioning for user:', provisioningData.user.name)
+        throw new Error('Provisioning already in progress')
       }
       
       // Store user info (ID will be set after ONE.core initialization)
@@ -176,11 +182,10 @@ class NodeProvisioning {
           // This ensures the invitation is properly registered with the correct keys
           const invitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
           
-          // For internal federation, we use the local WebSocket server, NOT CommServer
-          // The invitation URL must point to our local socket listener
+          // Use commserver URL from nodeOneCore for the invitation
           pairingInvite = {
             ...invitation,
-            url: 'ws://localhost:8765'  // Local socket for Browser ↔ Node.js federation
+            url: nodeOneCore.commServerUrl || 'wss://comm10.dev.refinio.one'  // Use configured commserver URL
           }
           
           console.log('[NodeProvisioning] PAIRING INVITATION:', JSON.stringify(pairingInvite, null, 2))
@@ -226,12 +231,14 @@ class NodeProvisioning {
       return {
         success: true,
         nodeId: nodeOwnerId || 'node-' + Date.now(),
-        endpoint: 'ws://localhost:8765',
+        endpoint: nodeOneCore.commServerUrl || 'wss://comm10.dev.refinio.one',
         pairingInvite: pairingInvite  // Include pairing invitation
       }
       
     } catch (error) {
       console.error('[NodeProvisioning] Provisioning failed:', error)
+      // Reset state on failure
+      this.user = null
       return {
         success: false,
         error: error.message
@@ -270,7 +277,7 @@ class NodeProvisioning {
     // Check if Node is already initialized
     const currentInfo = nodeOneCore.getInfo()
     if (currentInfo.initialized) {
-      console.log('[NodeProvisioning] Node already initialized, skipping')
+      console.log('[NodeProvisioning] Node already initialized')
       return
     }
     
@@ -372,6 +379,12 @@ class NodeProvisioning {
         console.log('[NodeProvisioning] Archive storage capability enabled')
         break
     }
+  }
+
+  reset() {
+    // Reset provisioning state
+    this.user = null
+    console.log('[NodeProvisioning] Reset provisioning state')
   }
 
   async createUserObjects(user) {

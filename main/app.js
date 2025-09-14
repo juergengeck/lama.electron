@@ -92,6 +92,9 @@ class MainApplication {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 20, y: 20 }
     })
+    
+    // Set global reference for IPC handlers to use
+    global.mainWindow = this.mainWindow
 
     // Initialize IPC controller with window
     ipcController.initialize(this.mainWindow)
@@ -112,6 +115,7 @@ class MainApplication {
     // Handle window closed
     this.mainWindow.on('closed', () => {
       this.mainWindow = null
+      global.mainWindow = null
     })
   }
 

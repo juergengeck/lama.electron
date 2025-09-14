@@ -25,7 +25,7 @@ import './index.css'
 import './initialization/platform'
 
 // Initialize browser ONE.CORE instance (simple version)
-import { simpleBrowserInit as browserInit } from './services/browser-init-simple.ts'
+import { browserInit as browserInit } from './services/browser-init.ts'
 
 async function startApp() {
   try {

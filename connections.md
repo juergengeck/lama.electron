@@ -4,6 +4,41 @@
 
 This document describes the connection establishment between Browser (Renderer) and Node.js (Main) instances in LAMA Electron, tracing the actual code paths and phases based on ONE.core architecture.
 
+## Profile-Based Chat Management
+
+### Key Principle: Someone Objects as Address Book Containers
+
+Someone objects are containers for the address book - they represent contacts as profiles. Chat topics and channels are managed by profile (Someone ID), not by underlying Person IDs.
+
+### Topic Creation with Profile IDs
+
+When creating P2P conversations:
+1. **Topic ID = Someone ID**: The topic uses the Someone hash as its identifier
+2. **Channel ID = Someone ID**: Channels also use the Someone hash
+3. **Person IDs for permissions only**: Person IDs are used for access control and CHUM sync
+
+Example:
+```javascript
+// Profile-based topic creation
+const someoneId = "e466cc4a..."  // Someone hash (profile)
+const personId = "650f45cb..."   // Person ID (for permissions)
+
+// Create topic with profile ID
+await topicModel.createGroupTopic(
+  someoneId,  // Topic name = Someone ID
+  someoneId,  // Topic ID = Someone ID  
+  myPersonId  // Owner for permissions
+)
+
+// Create channel with profile ID
+await channelManager.createChannel(someoneId, myPersonId)
+```
+
+This ensures:
+- One conversation per profile (no duplicates)
+- Topics exist for TopicModel operations
+- CHUM sync works with Person IDs for permissions
+
 ## Key Concepts
 
 ### Instance vs Person vs Keys
@@ -128,7 +163,7 @@ Both use the SAME protocol above, just different transports:
 
 #### Browser (Renderer)
 ```javascript
-// browser-init-simple.ts
+// browser-init.ts
 1. User logs in: authenticator.loginOrRegister(username, password)
 2. Creates instance with owner: demo@lama.local
 3. Instance gets its own encryption/sign keys
@@ -163,7 +198,7 @@ Both use the SAME protocol above, just different transports:
 
 #### Browser Accepts Invitation
 ```javascript
-// browser-init-simple.ts
+// browser-init.ts
 1. Receive invitation from IPC response
 2. Store invitation for later connection:
    window.nodeInstanceInfo = {

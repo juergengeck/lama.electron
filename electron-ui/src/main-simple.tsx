@@ -1,9 +1,8 @@
 /**
- * Simplified Main Entry - Following one.leute pattern
+ * Simplified Main Entry - Browser UI only (no ONE.core)
  */
 
-// Load browser platform FIRST
-import '@refinio/one.core/lib/system/load-browser.js'
+// NO ONE.core in browser - everything via IPC
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'

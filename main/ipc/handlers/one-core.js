@@ -13,13 +13,19 @@ const oneCoreHandlers = {
    * Initialize Node.js ONE.core instance
    * This is called from the browser UI during setup
    */
-  async initializeNode(event, { name, password }) {
+  async initializeNode(event, params) {
+    // Handle both formats: { name, password } and { user: { name, password } }
+    const { name, password } = params.user || params;
     console.log('[OneCoreHandler] Initialize Node.js ONE.core instance:', name)
     
     try {
       // Use the nodeProvisioning module to handle initialization
       const { default: nodeProvisioning } = await import('../../hybrid/node-provisioning.js')
-      const result = await nodeProvisioning.provisionNode(name, password)
+      
+      // Call the provision method with the user data
+      const result = await nodeProvisioning.provision({
+        user: { name, password }
+      })
       
       return result
     } catch (error) {
@@ -253,7 +259,9 @@ const oneCoreHandlers = {
    * This acts as our "CHUM sync" via IPC instead of WebSocket
    */
   async getContacts(event) {
-    console.log('[OneCoreHandler] Getting contacts from Node.js ONE.core (IPC sync)')
+    console.log('\n' + '='.repeat(60))
+    console.log('[OneCoreHandler] 📋 GETTING CONTACTS - START')
+    console.log('='.repeat(60))
     
     try {
       if (!nodeOneCore.initialized || !nodeOneCore.leuteModel) {
@@ -286,6 +294,7 @@ const oneCoreHandlers = {
         
         contacts.push({
           id: myId,
+          personId: myId,  // Add personId for UI display
           name: myName + ' (Owner)',
           displayName: myName + ' (Owner)',
           status: 'owner',
@@ -295,53 +304,53 @@ const oneCoreHandlers = {
         console.warn('[OneCoreHandler] Error getting owner info:', error)
       }
       
-      // Get contacts from connections instead of LeuteModel.others()
-      // because pairing connections don't automatically add to LeuteModel
-      const connections = nodeOneCore.connectionsModel ? 
-        nodeOneCore.connectionsModel.connectionsInfo() : []
-      
-      // Get unique person IDs from connections
-      const contactPersonIds = new Set()
-      for (const conn of connections) {
-        if (conn.isConnected && conn.remotePersonId !== nodeOneCore.ownerId) {
-          contactPersonIds.add(conn.remotePersonId)
-        }
-      }
-      
-      console.log(`[OneCoreHandler] Found ${contactPersonIds.size} connected contacts`)
-      
-      // Also check LeuteModel.others() for imported contacts
+      // Get ALL contacts from LeuteModel.others() - this is the ONLY source of truth
+      // Following one.leute pattern - no connection checking for contact list
+      console.log('[OneCoreHandler] Step 1: Calling LeuteModel.others()...')
       const others = await nodeOneCore.leuteModel.others()
-      console.log(`[OneCoreHandler] Found ${others.length} other contacts in LeuteModel`)
+      console.log(`[OneCoreHandler] ✅ LeuteModel.others() returned ${others.length} contacts`)
       
-      // Add contacts from connections
-      for (const personId of contactPersonIds) {
+      // Log each Someone object and check for duplicates
+      const seenIds = new Map()
+      for (let i = 0; i < others.length; i++) {
         try {
-          // Find connection info for this person
-          const conn = connections.find(c => c.remotePersonId === personId)
+          // Use mainIdentity() not person() - Someone objects have mainIdentity
+          const personId = await others[i].mainIdentity()
+          const someoneId = others[i].idHash
+          const personIdStr = personId?.substring(0, 8) || 'NO_ID'
+          const someoneIdStr = someoneId?.substring(0, 8) || 'NO_HASH'
           
-          contacts.push({
-            id: `contact-${personId}`,
-            personId: personId,
-            name: `Contact ${personId.substring(0, 8)}`,
-            email: `${personId.substring(0, 8)}@lama.network`,
-            role: 'contact',
-            platform: 'external',
-            status: 'connected',
-            isConnected: true,
-            protocolName: conn?.protocolName || 'unknown',
-            trusted: true,
-            lastSeen: new Date().toISOString()
-          })
-        } catch (error) {
-          console.warn('[OneCoreHandler] Error adding connection contact:', error)
+          // Check if we've seen this Person ID before
+          if (personId && seenIds.has(personId)) {
+            console.log(`[OneCoreHandler]   Contact ${i + 1}: Person=${personIdStr}, Someone=${someoneIdStr} - DUPLICATE Person! First seen at index ${seenIds.get(personId)}`)
+          } else {
+            console.log(`[OneCoreHandler]   Contact ${i + 1}: Person=${personIdStr}, Someone=${someoneIdStr}`)
+            if (personId) seenIds.set(personId, i + 1)
+          }
+        } catch (e) {
+          console.log(`[OneCoreHandler]   Contact ${i + 1}: ERROR - ${e.message}`)
         }
       }
       
-      // Add contacts from LeuteModel (may have profiles)
+      // Track which personIds we've already processed to avoid duplicates
+      const processedPersonIds = new Set()
+      
+      // Add contacts from LeuteModel
       for (const someone of others) {
         try {
           const personId = await someone.mainIdentity()
+          
+          // Skip if no personId 
+          if (!personId) {
+            continue
+          }
+          
+          // Skip if we've already processed this person (duplicate Someone object)
+          if (processedPersonIds.has(personId)) {
+            console.log(`[OneCoreHandler] Skipping duplicate Someone for person ${personId.substring(0, 8)}...`)
+            continue
+          }
+          processedPersonIds.add(personId)
           const profile = await someone.mainProfile()
           
           // Extract email - try multiple sources
@@ -369,8 +378,23 @@ const oneCoreHandlers = {
             }
           }
           
-          // Check if this is an AI contact
-          const isAI = email && email.endsWith('@ai.local')
+          // Check if this is an AI contact by checking LLM objects
+          let isAI = false
+          if (nodeOneCore.aiAssistantModel?.llmObjectManager) {
+            isAI = nodeOneCore.aiAssistantModel.llmObjectManager.isLLMPerson(personId)
+            if (!isAI) {
+              // Debug: Check what's in the LLM objects
+              const llmObjects = nodeOneCore.aiAssistantModel.llmObjectManager.getAllLLMObjects()
+              console.log(`[OneCoreHandler] Checking ${personId.substring(0, 8)} against ${llmObjects.length} LLM objects`)
+              for (const llm of llmObjects) {
+                console.log(`[OneCoreHandler]   LLM personId: ${llm.personId?.toString().substring(0, 8)}...`)
+              }
+            }
+          }
+          // Fallback to email check if LLM check fails
+          if (!isAI && email && email.endsWith('@ai.local')) {
+            isAI = true
+          }
           
           let displayName = 'Unknown Contact'
           if (profile?.nickname) {
@@ -407,15 +431,22 @@ const oneCoreHandlers = {
             }
           }
           
-          console.log(`[OneCoreHandler] Contact ${personId.substring(0, 8)}: name="${displayName}", email="${email}", isAI=${isAI}`)
+          // Following one.leute pattern - don't check connection status for contacts
+          // Contacts exist regardless of connection state
           
           contacts.push({
-            id: personId,
+            id: someone.idHash, // Use Someone's ID as unique identifier, not Person ID
+            personId: personId,
+            someoneId: someone.idHash, // Also include it as someoneId for clarity
             name: displayName,
             displayName: displayName,
-            email: email,
+            email: email || `${personId.substring(0, 8)}@lama.network`,
             isAI: isAI,
-            status: isAI ? 'connected' : 'connected',
+            role: 'contact',
+            platform: isAI ? 'ai' : 'external',
+            status: 'offline', // Connection status should be checked separately if needed
+            isConnected: false, // Connection status should be checked separately if needed
+            trusted: true,
             lastSeen: new Date().toISOString()
           })
         } catch (error) {
@@ -423,7 +454,28 @@ const oneCoreHandlers = {
         }
       }
       
-      console.log(`[OneCoreHandler] Found ${contacts.length} contacts in Node.js ONE.core`)
+      // AI contacts should already be in LeuteModel.others()
+      // They are created as proper Person objects and added to contacts
+      // No need to add them again - that would violate single source of truth
+      console.log(`[OneCoreHandler] AI contacts are included in LeuteModel.others()`)
+      
+      console.log('\n[OneCoreHandler] SUMMARY:')
+      console.log(`[OneCoreHandler]   - Owner: 1`)
+      console.log(`[OneCoreHandler]   - From LeuteModel: ${others.length}`)
+      console.log(`[OneCoreHandler]   - AI contacts: ${contacts.filter(c => c.isAI).length}`)
+      console.log(`[OneCoreHandler]   - TOTAL: ${contacts.length}`)
+      
+      // Check for duplicate IDs in final contact list
+      const finalIds = new Map()
+      contacts.forEach((contact, index) => {
+        if (finalIds.has(contact.id)) {
+          console.log(`[OneCoreHandler] ⚠️  DUPLICATE ID in final list: ${contact.id.substring(0, 8)}... at index ${index} (first at ${finalIds.get(contact.id)})`)
+        } else {
+          finalIds.set(contact.id, index)
+        }
+      })
+      
+      console.log('='.repeat(60) + '\n')
       
       return {
         success: true,
@@ -522,6 +574,114 @@ const oneCoreHandlers = {
       }
     } catch (error) {
       console.error('[OneCoreHandler] Failed to get browser credentials:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  /**
+   * Get list of connected peers
+   */
+  async getPeerList(event) {
+    console.log('[OneCoreHandler] Getting peer list')
+    
+    try {
+      // For now, return the contacts list as peers
+      // In the future, this could filter for only connected peers
+      const result = await oneCoreHandlers.getContacts(event)
+      
+      if (result.success) {
+        // Filter for connected/online peers if needed
+        const peers = result.contacts.map(contact => ({
+          id: contact.id,
+          personId: contact.personId,
+          name: contact.name,
+          displayName: contact.displayName,
+          email: contact.email,
+          isAI: contact.isAI,
+          status: contact.status || 'offline',
+          isConnected: contact.isConnected || false
+        }))
+        
+        return {
+          success: true,
+          peers
+        }
+      }
+      
+      return result
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to get peer list:', error)
+      return {
+        success: false,
+        error: error.message,
+        peers: []
+      }
+    }
+  },
+
+  /**
+   * Store data securely in ONE.core's encrypted storage
+   */
+  async secureStore(event, { key, value, encrypted = true }) {
+    console.log(`[OneCoreHandler] Secure store: ${key} (encrypted: ${encrypted})`)
+    
+    try {
+      if (!nodeOneCore.initialized || !nodeOneCore.appModel) {
+        throw new Error('ONE.core not initialized')
+      }
+
+      // Use ONE.core's secure storage via the SettingsObject
+      const settingsObject = nodeOneCore.appModel.createSettingsObject({
+        category: 'secure',
+        type: 'credentials',
+        encrypted
+      })
+      
+      await settingsObject.set(key, value)
+      await settingsObject.save()
+      
+      return {
+        success: true
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to secure store:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  /**
+   * Retrieve data from ONE.core's encrypted storage
+   */
+  async secureRetrieve(event, { key }) {
+    console.log(`[OneCoreHandler] Secure retrieve: ${key}`)
+    
+    try {
+      if (!nodeOneCore.initialized || !nodeOneCore.appModel) {
+        throw new Error('ONE.core not initialized')
+      }
+
+      // Use ONE.core's secure storage via the SettingsObject
+      const settingsObject = nodeOneCore.appModel.createSettingsObject({
+        category: 'secure',
+        type: 'credentials',
+        encrypted: true
+      })
+      
+      await settingsObject.load()
+      const value = settingsObject.get(key)
+      
+      return {
+        success: true,
+        value
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to secure retrieve:', error)
       return {
         success: false,
         error: error.message

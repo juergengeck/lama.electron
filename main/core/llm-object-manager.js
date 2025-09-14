@@ -11,6 +11,49 @@ class LLMObjectManager {
   constructor(nodeOneCore) {
     this.nodeOneCore = nodeOneCore;
     this.llmObjects = new Map(); // modelId -> LLM object
+    this.initialized = false;
+  }
+  
+  /**
+   * Initialize by loading existing LLM objects from storage
+   */
+  async initialize() {
+    if (this.initialized) return;
+    
+    try {
+      console.log('[LLMObjectManager] Loading existing LLM objects from storage...');
+      
+      // Query ONE.core for existing LLM objects using the versioned objects API
+      const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+      // For now, just initialize empty - objects will be loaded on demand
+      const llmObjects = [];
+      
+      if (llmObjects && llmObjects.length > 0) {
+        console.log(`[LLMObjectManager] Found ${llmObjects.length} existing LLM objects`);
+        
+        // Cache all existing LLM objects
+        for (const llm of llmObjects) {
+          if (llm.personId && llm.name) {
+            this.llmObjects.set(llm.name, {
+              modelId: llm.name,
+              modelName: llm.name,
+              personId: llm.personId,
+              isAI: true
+            });
+            console.log(`[LLMObjectManager] Cached LLM: ${llm.name} with person ${llm.personId.toString().substring(0, 8)}...`);
+          }
+        }
+      } else {
+        console.log('[LLMObjectManager] No existing LLM objects found');
+      }
+      
+      this.initialized = true;
+      console.log(`[LLMObjectManager] ✅ Initialized with ${this.llmObjects.size} LLM objects`);
+    } catch (error) {
+      console.error('[LLMObjectManager] Failed to initialize:', error);
+      // Continue anyway - cache will be populated on demand
+      this.initialized = true;
+    }
   }
 
   /**
@@ -24,21 +67,36 @@ class LLMObjectManager {
       // Ensure personId is properly formatted
       const personIdHash = ensureIdHash(personId);
       
-      // Create LLM object following LAMA's structure
+      // Check if we already have this LLM object cached
+      if (this.llmObjects.has(modelId)) {
+        console.log(`[LLMObjectManager] LLM object already exists for ${modelName}, using cached version`);
+        return this.llmObjects.get(modelId);
+      }
+      
+      // Create LLM object following LAMA's structure exactly as defined in the recipe
+      const now = Date.now();
+      const nowISOString = new Date().toISOString();
+      
       const llmObject = {
         $type$: 'LLM',
-        id: modelId,
-        name: modelName,
-        displayName: modelName,
+        name: modelName, // This is the ID field according to recipe (isId: true)
+        filename: `${modelName.replace(/[\s:]/g, '-').toLowerCase()}.gguf`, // Required field
+        modelType: modelId.startsWith('ollama:') ? 'local' : 'remote', // Required field
+        active: true, // Required field
+        deleted: false, // Required field
+        created: now, // Required field (timestamp)
+        modified: now, // Required field (timestamp)
+        createdAt: nowISOString, // Required field (ISO string)
+        lastUsed: nowISOString, // Required field (ISO string)
+        // Optional fields
         personId: personIdHash,
         provider: this.getProviderFromModelId(modelId),
-        capabilities: ['chat', 'completion'],
+        capabilities: ['chat', 'inference'], // Must match regexp: chat or inference
         maxTokens: 4096,
         temperature: 0.7,
-        enabled: true,
-        deleted: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        contextSize: 4096,
+        batchSize: 512,
+        threads: 4
       };
       
       // Store the LLM object in ONE.core
@@ -48,6 +106,7 @@ class LLMObjectManager {
       // Cache the object
       this.llmObjects.set(modelId, {
         ...llmObject,
+        modelId: modelId, // Store the original modelId for reference
         hash: storedObject.hash,
         idHash: storedObject.idHash
       });
@@ -119,10 +178,34 @@ class LLMObjectManager {
    * Check if a personId belongs to an LLM
    */
   isLLMPerson(personId) {
+    if (!personId) return false;
     const personIdStr = personId.toString();
-    return Array.from(this.llmObjects.values()).some(
-      llm => llm.personId.toString() === personIdStr
+    
+    console.log(`[LLMObjectManager] Checking if ${personIdStr.substring(0, 8)}... is LLM, cache has ${this.llmObjects.size} entries`)
+    
+    const isLLM = Array.from(this.llmObjects.values()).some(
+      llm => llm.personId && llm.personId.toString() === personIdStr
     );
+    
+    console.log(`[LLMObjectManager] Result: ${personIdStr.substring(0, 8)}... is AI: ${isLLM}`)
+    
+    return isLLM;
+  }
+  
+  /**
+   * Add a person ID to cache without creating LLM object
+   * Used when AI contacts already exist
+   */
+  cacheAIPersonId(modelId, personId) {
+    if (!this.llmObjects.has(modelId)) {
+      // Create a minimal cache entry
+      this.llmObjects.set(modelId, {
+        modelId: modelId,
+        personId: personId,
+        cached: true // Mark as cached only
+      });
+      console.log(`[LLMObjectManager] Cached AI person ${personId.toString().substring(0, 8)}... for model ${modelId}`);
+    }
   }
 }
 

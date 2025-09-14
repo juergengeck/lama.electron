@@ -34,12 +34,29 @@ function initializeDeviceHandlers() {
       
       // Check if connections model exists
       if (!nodeOneCore.connectionsModel?.pairing) {
+        console.error('[DeviceHandlers] No pairing module found:', {
+          hasConnectionsModel: !!nodeOneCore.connectionsModel,
+          hasPairing: !!nodeOneCore.connectionsModel?.pairing
+        })
         throw new Error('Node.js instance does not have networking initialized')
       }
       
+      // Log pairing configuration details
+      console.log('[DeviceHandlers] Pairing module state:', {
+        hasCreateInvitation: typeof nodeOneCore.connectionsModel.pairing.createInvitation === 'function',
+        activeInvitations: nodeOneCore.connectionsModel.pairing.activeInvitations?.size || 0,
+        url: nodeOneCore.connectionsModel.pairing.url,
+        expirationDuration: nodeOneCore.connectionsModel.pairing.inviteExpirationDurationInMs
+      })
+      
       // Create invitation through Node.js instance's ConnectionsModel
       const rawInvitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
-      console.log('[DeviceHandlers] Raw invitation:', JSON.stringify(rawInvitation, null, 2))
+      console.log('[DeviceHandlers] Raw invitation received:', {
+        hasToken: !!rawInvitation?.token,
+        hasPublicKey: !!rawInvitation?.publicKey,
+        hasUrl: !!rawInvitation?.url,
+        rawInvitation: JSON.stringify(rawInvitation, null, 2)
+      })
       console.log('[DeviceHandlers] Active invitations after creation:', nodeOneCore.connectionsModel.pairing.activeInvitations?.size || 0)
       
       // Extract values as plain strings (following LAMA pattern from InviteManager.ts)
@@ -75,8 +92,19 @@ function initializeDeviceHandlers() {
       console.log('  - Serialized length:', serializedData.length)
       console.log('  - Encoded length:', encodedData.length)
       
-      // Create the proper invitation URL - using edda.dev.refinio.one for dev environment
-      const fullInvitationUrl = `https://edda.dev.refinio.one/invites/invitePartner/?invited=true/#${encodedData}`
+      // Create the proper invitation URL
+      // The URL in the invitation object is the commServerUrl (e.g., wss://comm10.dev.refinio.one)
+      // We need to convert it to the web app URL for the invitation link
+      let baseUrl = 'https://edda.dev.refinio.one'  // Default for dev environment
+      
+      // Try to determine the correct base URL from the commServerUrl
+      if (url.includes('dev.refinio.one')) {
+        baseUrl = 'https://edda.dev.refinio.one'
+      } else if (url.includes('refinio.one')) {
+        baseUrl = 'https://edda.refinio.one'
+      }
+      
+      const fullInvitationUrl = `${baseUrl}/invites/invitePartner/?invited=true/#${encodedData}`
       
       console.log('[DeviceHandlers] Returning invitation URL:', fullInvitationUrl)
       

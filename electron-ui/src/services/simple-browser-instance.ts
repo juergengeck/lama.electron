@@ -18,7 +18,7 @@ export class SimpleBrowserInstance {
     console.log('[SimpleBrowser] Initializing simple browser instance...')
     
     // Load any persisted users from localStorage
-    const storedUsers = localStorage.getItem('lama-users')
+    const storedUsers = await ipcStorage.getItem('lama-users')
     if (storedUsers) {
       try {
         const parsed = JSON.parse(storedUsers)
@@ -72,7 +72,7 @@ export class SimpleBrowserInstance {
     }
     
     this.currentUser = user
-    localStorage.setItem('lama-current-user', user.id)
+    await ipcStorage.setItem('lama-current-user', user.id)
     
     console.log('[SimpleBrowser] Login successful')
     return user
@@ -80,7 +80,7 @@ export class SimpleBrowserInstance {
   
   async logout(): Promise<void> {
     this.currentUser = null
-    localStorage.removeItem('lama-current-user')
+    await ipcStorage.removeItem('lama-current-user')
     console.log('[SimpleBrowser] Logged out')
   }
   
@@ -91,7 +91,7 @@ export class SimpleBrowserInstance {
     }
     
     // Try to restore from localStorage
-    const userId = localStorage.getItem('lama-current-user')
+    const userId = await ipcStorage.getItem('lama-current-user')
     if (userId) {
       const user = this.users.get(userId)
       if (user) {
@@ -109,7 +109,7 @@ export class SimpleBrowserInstance {
     
     // Persist important state
     if (path.startsWith('identity.') || path.startsWith('provisioning.')) {
-      localStorage.setItem(`lama-state-${path}`, JSON.stringify(value))
+      await ipcStorage.setItem(`lama-state-${path}`, JSON.stringify(value))
     }
   }
   
@@ -120,7 +120,7 @@ export class SimpleBrowserInstance {
     }
     
     // Check localStorage
-    const stored = localStorage.getItem(`lama-state-${path}`)
+    const stored = await ipcStorage.getItem(`lama-state-${path}`)
     if (stored) {
       try {
         const value = JSON.parse(stored)
@@ -148,7 +148,7 @@ export class SimpleBrowserInstance {
     // Store in localStorage for now
     const messages = this.getStoredMessages()
     messages.push(message)
-    localStorage.setItem('lama-messages', JSON.stringify(messages))
+    await ipcStorage.setItem('lama-messages', JSON.stringify(messages))
     
     return message
   }
@@ -172,7 +172,7 @@ export class SimpleBrowserInstance {
     
     const conversations = this.getStoredConversations()
     conversations.push(conversation)
-    localStorage.setItem('lama-conversations', JSON.stringify(conversations))
+    await ipcStorage.setItem('lama-conversations', JSON.stringify(conversations))
     
     return conversation
   }
@@ -192,11 +192,11 @@ export class SimpleBrowserInstance {
     this.users.forEach((user, id) => {
       userData[id] = user
     })
-    localStorage.setItem('lama-users', JSON.stringify(userData))
+    await ipcStorage.setItem('lama-users', JSON.stringify(userData))
   }
   
   private getStoredMessages(): any[] {
-    const stored = localStorage.getItem('lama-messages')
+    const stored = await ipcStorage.getItem('lama-messages')
     if (stored) {
       try {
         return JSON.parse(stored)
@@ -208,7 +208,7 @@ export class SimpleBrowserInstance {
   }
   
   private getStoredConversations(): any[] {
-    const stored = localStorage.getItem('lama-conversations')
+    const stored = await ipcStorage.getItem('lama-conversations')
     if (stored) {
       try {
         return JSON.parse(stored)

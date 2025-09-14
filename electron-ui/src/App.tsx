@@ -11,16 +11,21 @@ import { ModelOnboarding } from '@/components/ModelOnboarding'
 import { MessageSquare, BookOpen, Users, Settings, Loader2, Network, BarChart3 } from 'lucide-react'
 import { useLamaInit } from '@/hooks/useLamaInit'
 import { lamaBridge } from '@/bridge/lama-bridge'
+import { ipcStorage } from '@/services/ipc-storage'
 
 function App() {
   const [activeTab, setActiveTab] = useState('chats')
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(undefined)
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => {
-    // Check if user has completed onboarding before
-    return localStorage.getItem('lama-onboarding-completed') === 'true'
-  })
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
   const { isInitialized, isAuthenticated, isLoading, login, logout, error } = useLamaInit()
-  const appModel = lamaBridge.getAppModel()
+  // NO AppModel in browser - use IPC for everything
+  
+  // Load onboarding status
+  useEffect(() => {
+    ipcStorage.getItem('lama-onboarding-completed').then(value => {
+      setHasCompletedOnboarding(value === 'true')
+    })
+  }, [])
   
   // Listen for navigation from Electron menu
   useEffect(() => {
@@ -65,15 +70,13 @@ function App() {
   }
 
   // Check if we need to show model onboarding
-  // Only show onboarding if:
-  // 1. User has never completed it before AND
-  // 2. No models are configured
-  const hasModels = (appModel?.llmManager?.getModels()?.length ?? 0) > 0
-  const shouldShowOnboarding = !hasCompletedOnboarding && !hasModels
+  // Only show onboarding if user has never completed it before
+  // We can't check for models from browser - that's in Node.js
+  const shouldShowOnboarding = !hasCompletedOnboarding
   
   if (shouldShowOnboarding) {
-    return <ModelOnboarding onComplete={() => {
-      localStorage.setItem('lama-onboarding-completed', 'true')
+    return <ModelOnboarding onComplete={async () => {
+      await ipcStorage.setItem('lama-onboarding-completed', 'true')
       setHasCompletedOnboarding(true)
     }} />
   }
@@ -107,9 +110,9 @@ function App() {
       case 'journal':
         return <JournalView />
       case 'contacts':
-        return <ContactsView onNavigateToChat={(topicId, contactName) => {
+        return <ContactsView onNavigateToChat={async (topicId, contactName) => {
           // Add or update the conversation in localStorage
-          const savedConversations = localStorage.getItem('lama-conversations')
+          const savedConversations = await ipcStorage.getItem('lama-conversations')
           let conversations = []
           
           try {
@@ -136,7 +139,7 @@ function App() {
             
             // Add to beginning of list
             conversations.unshift(newConversation)
-            localStorage.setItem('lama-conversations', JSON.stringify(conversations))
+            await ipcStorage.setItem('lama-conversations', JSON.stringify(conversations))
             console.log('[App] Created new conversation for contact:', contactName)
           }
           

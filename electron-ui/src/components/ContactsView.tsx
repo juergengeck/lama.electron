@@ -119,6 +119,28 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
     }
   }
 
+  const handleAddContact = async () => {
+    try {
+      if (!window.electronAPI) {
+        alert('Electron API not available')
+        return
+      }
+      
+      const result = await window.electronAPI.invoke('iom:createPairingInvitation')
+      
+      if (result.success && result.invitation) {
+        // Copy invitation URL to clipboard
+        await navigator.clipboard.writeText(result.invitation.url)
+        alert('Invitation link copied to clipboard! Share it with your contact.')
+      } else {
+        alert(result.error || 'Failed to create invitation')
+      }
+    } catch (error: any) {
+      console.error('[ContactsView] Failed to create invitation:', error)
+      alert(error.message || 'Failed to create invitation')
+    }
+  }
+
   return (
     <div className="h-full flex flex-col space-y-4">
       {/* Search and Add Contact */}
@@ -129,7 +151,7 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
               <Users className="h-5 w-5 text-primary" />
               <CardTitle>Contacts</CardTitle>
             </div>
-            <Button size="sm">
+            <Button size="sm" onClick={handleAddContact}>
               <UserPlus className="h-4 w-4 mr-2" />
               Add Contact
             </Button>

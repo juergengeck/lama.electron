@@ -72,10 +72,18 @@ export function AISettingsView() {
   }
   
   const loadClaudeApiKey = async () => {
-    const storedKey = localStorage.getItem('claude_api_key')
-    if (storedKey) {
-      setClaudeApiKey(storedKey)
-      setApiKeyStatus('valid')
+    try {
+      // Retrieve API key from ONE.core's secure storage via IPC
+      const result = await window.electronAPI?.invoke('onecore:secureRetrieve', {
+        key: 'claude_api_key'
+      })
+      
+      if (result?.success && result.value) {
+        setClaudeApiKey(result.value)
+        setApiKeyStatus('valid')
+      }
+    } catch (error) {
+      console.error('Failed to load Claude API key:', error)
     }
   }
   
@@ -87,16 +95,28 @@ export function AISettingsView() {
     
     setApiKeyStatus('testing')
     try {
-      const appModel = lamaBridge.getAppModel()
-      if (appModel?.llmManager) {
-        const isValid = await appModel.llmManager.testClaudeApiKey(claudeApiKey)
-        if (isValid) {
-          await appModel.llmManager.setClaudeApiKey(claudeApiKey)
+      // Store API key securely in ONE.core's encrypted storage via IPC
+      const result = await window.electronAPI?.invoke('onecore:secureStore', {
+        key: 'claude_api_key',
+        value: claudeApiKey,
+        encrypted: true
+      })
+      
+      if (result?.success) {
+        // Test the API key with Claude
+        const testResult = await window.electronAPI?.invoke('llm:testApiKey', {
+          provider: 'anthropic',
+          apiKey: claudeApiKey
+        })
+        
+        if (testResult?.success) {
           setApiKeyStatus('valid')
           await loadModels() // Refresh to show Claude models as available
         } else {
           setApiKeyStatus('invalid')
         }
+      } else {
+        throw new Error('Failed to store API key securely')
       }
     } catch (error) {
       console.error('Failed to save Claude API key:', error)

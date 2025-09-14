@@ -7,8 +7,8 @@ import llmManager from '../../services/llm-manager.js';
 import stateManager from '../../state/manager.js';
 
 const aiHandlers = {
-  async chat(event, { messages, modelId }) {
-    console.log('[AIHandler] Chat request with', messages.length, 'messages')
+  async chat(event, { messages, modelId, stream = false }) {
+    console.log('[AIHandler] Chat request with', messages.length, 'messages, streaming:', stream)
     
     try {
       // Ensure LLM manager is initialized
@@ -16,20 +16,50 @@ const aiHandlers = {
         await llmManager.init()
       }
       
-      // Process chat through LLM
-      const response = await llmManager.chat(messages, modelId)
-      console.log('[AIHandler] Got response:', response?.substring(0, 100) + '...')
-      
-      const result = {
-        success: true,
-        data: {
+      if (stream) {
+        // Streaming mode - send chunks via IPC events
+        let fullResponse = ''
+        const response = await llmManager.chat(messages, modelId, {
+          onStream: (chunk) => {
+            fullResponse += chunk
+            // Send streaming chunk to renderer
+            event.sender.send('ai:stream-chunk', {
+              chunk,
+              partial: fullResponse
+            })
+          }
+        })
+        
+        // Send final complete message
+        event.sender.send('ai:stream-complete', {
           response,
           modelId: modelId || llmManager.defaultModelId
+        })
+        
+        return {
+          success: true,
+          data: {
+            response,
+            modelId: modelId || llmManager.defaultModelId,
+            streamed: true
+          }
         }
+      } else {
+        // Non-streaming mode - wait for full response
+        const response = await llmManager.chat(messages, modelId)
+        console.log('[AIHandler] Got response:', response?.substring(0, 100) + '...')
+        
+        const result = {
+          success: true,
+          data: {
+            response,
+            modelId: modelId || llmManager.defaultModelId
+          }
+        }
+        
+        console.log('[AIHandler] Returning result:', result.success, 'with response length:', response?.length)
+        return result
       }
-      
-      console.log('[AIHandler] Returning result:', result.success, 'with response length:', response?.length)
-      return result
     } catch (error) {
       console.error('[AIHandler] Chat error:', error)
       return {
@@ -165,20 +195,9 @@ const aiHandlers = {
         await llmManager.init()
       }
       
-      const tool = llmManager.mcpTools.get(toolName)
-      if (!tool) {
-        throw new Error(`Tool ${toolName} not found`)
-      }
-      
-      const client = llmManager.mcpClients.get(tool.server)
-      if (!client) {
-        throw new Error(`MCP server ${tool.server} not connected`)
-      }
-      
-      const result = await client.callTool({
-        name: toolName,
-        arguments: parameters
-      })
+      // Use mcpManager through llmManager
+      const { default: mcpManager } = await import('../../services/mcp-manager.js')
+      const result = await mcpManager.executeTool(toolName, parameters)
       
       return {
         success: true,
@@ -238,6 +257,78 @@ const aiHandlers = {
       }
     } catch (error) {
       console.error('[AIHandler] Debug tools error:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  async getOrCreateContact(event, { modelId }) {
+    console.log('[AIHandler] Get or create AI contact for model:', modelId)
+    
+    try {
+      // Get the node instance
+      const { default: nodeProvisioning } = await import('../../services/node-provisioning.js')
+      const nodeOneCore = nodeProvisioning.getNodeInstance()
+      
+      if (!nodeOneCore || !nodeOneCore.aiAssistantModel) {
+        throw new Error('AI system not initialized')
+      }
+      
+      // Ensure the AI contact exists for this model
+      const personId = await nodeOneCore.aiAssistantModel.ensureAIContactForModel(modelId)
+      
+      if (!personId) {
+        throw new Error(`Failed to create AI contact for model ${modelId}`)
+      }
+      
+      return {
+        success: true,
+        data: {
+          personId: personId.toString(),
+          modelId
+        }
+      }
+    } catch (error) {
+      console.error('[AIHandler] Get/create AI contact error:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  /**
+   * Test an API key with the provider
+   */
+  async testApiKey(event, { provider, apiKey }) {
+    console.log(`[AIHandler] Testing ${provider} API key`)
+    
+    try {
+      if (!llmManager.isInitialized) {
+        await llmManager.init()
+      }
+      
+      // Test the API key based on provider
+      let isValid = false
+      
+      if (provider === 'anthropic') {
+        // Test Claude API key
+        isValid = await llmManager.testClaudeApiKey(apiKey)
+      } else if (provider === 'openai') {
+        // Test OpenAI API key  
+        isValid = await llmManager.testOpenAIApiKey(apiKey)
+      } else {
+        throw new Error(`Unknown provider: ${provider}`)
+      }
+      
+      return {
+        success: isValid,
+        data: { valid: isValid }
+      }
+    } catch (error) {
+      console.error('[AIHandler] Test API key error:', error)
       return {
         success: false,
         error: error.message

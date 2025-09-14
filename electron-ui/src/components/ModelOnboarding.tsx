@@ -48,7 +48,8 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
       onComplete()
     }, 0)
   }, [onComplete])
-  const appModel = lamaBridge.getAppModel()
+  // NO AppModel in browser - everything via IPC
+  // All operations via IPC - no AppModel in browser
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set())
   const [selectedModel, setSelectedModel] = useState<string | null>(null) // Keep for backward compatibility
   const [isDownloading, setIsDownloading] = useState(false)
@@ -191,81 +192,36 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   const handleModelReady = async (modelId: string, ollamaModel?: OllamaModelInfo, shouldComplete: boolean = true) => {
-    // Add the model to LLMManager
-    if (appModel?.llmManager) {
-      let modelConfig: any
-      
-      if (ollamaModel) {
-        // Ollama model configuration
-        modelConfig = {
-          id: modelId,
-          name: ollamaModel.displayName,
-          provider: 'ollama',
-          modelType: ollamaModel.capabilities.includes('code') ? 'code' : 'chat',
-          capabilities: ollamaModel.capabilities,
-          contextLength: ollamaModel.contextLength,
-          parameters: {
-            modelName: ollamaModel.name,
-            endpoint: 'http://localhost:11434',
-            temperature: 0.7,
-            maxTokens: 2048
-          },
-          $type$: 'LLM',
-          $v$: 1
+    // Model configuration handled by Node.js via IPC
+    console.log('[ModelOnboarding] Model ready:', ollamaModel?.displayName || modelId)
+    
+    // Track loading progress
+    setLoadingModels(prev => new Set(prev).add(modelId))
+    setModelLoadProgress(prev => new Map(prev).set(modelId, 0))
+    
+    // Simulate progress for UI
+    setModelLoadProgress(prev => new Map(prev).set(modelId, 50))
+    
+    // Complete loading
+    setModelLoadProgress(prev => new Map(prev).set(modelId, 100))
+    
+    // Wait for loading animation to complete before calling handleComplete
+    setTimeout(() => {
+      setLoadingModels(prev => {
+        const next = new Set(prev)
+        next.delete(modelId)
+        
+        // If this was the last loading model and we should complete, do so after animation
+        if (next.size === 0 && shouldComplete) {
+          setTimeout(() => {
+            handleComplete()
+          }, 500) // Give a bit more time for the UI to update
         }
-      } else {
-        // Regular model configuration
-        const config = MODEL_OPTIONS.find(m => m.id === modelId)
-        if (!config) return
-        modelConfig = {
-          id: modelId,
-          name: config.name,
-          provider: 'local',
-          modelType: modelId.includes('coder') ? 'code' : 'chat',
-          capabilities: modelId.includes('coder') 
-            ? ['chat', 'completion', 'code', 'code-completion']
-            : ['chat', 'completion'],
-          contextLength: 8192,
-          parameters: {
-            modelPath: `/models/${modelId}`,
-            temperature: 0.7,
-            maxTokens: 2048
-          },
-          $type$: 'LLM',
-          $v$: 1
-        }
-      }
-      
-      // Track loading progress
-      setLoadingModels(prev => new Set(prev).add(modelId))
-      setModelLoadProgress(prev => new Map(prev).set(modelId, 0))
-      
-      await appModel.llmManager.addModel(modelConfig)
-      
-      // Set as default and load the model with progress tracking
-      setModelLoadProgress(prev => new Map(prev).set(modelId, 50))
-      await appModel.llmManager.setDefaultModel(modelId)
-      
-      // Complete loading
-      setModelLoadProgress(prev => new Map(prev).set(modelId, 100))
-      
-      // Wait for loading animation to complete before calling handleComplete
-      setTimeout(() => {
-        setLoadingModels(prev => {
-          const next = new Set(prev)
-          next.delete(modelId)
-          
-          // If this was the last loading model and we should complete, do so after animation
-          if (next.size === 0 && shouldComplete) {
-            setTimeout(() => {
-              handleComplete()
-            }, 500) // Give a bit more time for the UI to update
-          }
-          
-          return next
-        })
-        setModelLoadProgress(prev => {
-          const next = new Map(prev)
+        
+        return next
+      })
+      setModelLoadProgress(prev => {
+        const next = new Map(prev)
           next.delete(modelId)
           return next
         })

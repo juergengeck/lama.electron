@@ -173,7 +173,8 @@ export function SettingsView({ onLogout, onNavigate }) {
             // Add certificates to keys array (they're both crypto objects)
             const allCryptoObjects = [...keys, ...certificates];
             // Get app model for metadata and CRDT objects
-            const appModel = lamaBridge.getAppModel();
+            // NO AppModel in browser - everything via IPC
+  const appModel = null;
             const mockSystemObjects = {
                 keys: allCryptoObjects.length > 0 ? allCryptoObjects : [
                     {
@@ -335,7 +336,8 @@ export function SettingsView({ onLogout, onNavigate }) {
         }
         setApiKeyStatus('testing');
         try {
-            const appModel = lamaBridge.getAppModel();
+            // NO AppModel in browser - everything via IPC
+  const appModel = null;
             if (appModel?.llmManager) {
                 const isValid = await appModel.llmManager.testClaudeApiKey(claudeApiKey);
                 if (isValid) {

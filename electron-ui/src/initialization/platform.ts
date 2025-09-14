@@ -1,21 +1,9 @@
 /**
- * Platform initialization for dual ONE.core architecture
- * Renderer runs its own ONE.core instance that connects to Node.js via IoM
+ * Platform initialization for browser UI
+ * Browser has NO ONE.core - all operations go through IPC to Node.js
  */
 
-import '@refinio/one.core/lib/system/load-browser.js'
-import { SYSTEM } from '@refinio/one.core/lib/system/platform.js'
-
-console.log('[Platform] Loading platform support (NOT initializing ONE.core)')
-
-/**
- * Initialize the browser platform for renderer ONE.core instance
- */
-export async function initPlatform(): Promise<void> {
-  console.log('[Platform] Loading browser platform for renderer ONE.core...')
-  // Browser platform is loaded by the import above
-  console.log('[Platform] ✅ Renderer ONE.core platform initialized')
-}
+console.log('[Platform] Browser UI platform check (NO ONE.core)')
 
 /**
  * Check if we're running in Electron
@@ -30,9 +18,22 @@ export function isElectron(): boolean {
 export function getPlatformInfo() {
   return {
     runtime: isElectron() ? 'electron' : 'browser',
-    platform: SYSTEM, // 'browser' or 'nodejs' based on detection
+    platform: 'browser-ui',
     hasIndexedDB: typeof indexedDB !== 'undefined',
     hasWebCrypto: typeof crypto !== 'undefined' && !!crypto.subtle,
     hasElectronAPI: isElectron()
+  }
+}
+
+/**
+ * Initialize platform (just checks environment)
+ */
+export async function initPlatform(): Promise<void> {
+  console.log('[Platform] Browser UI environment check...')
+  
+  if (!isElectron()) {
+    console.warn('[Platform] Not running in Electron - IPC will not work')
+  } else {
+    console.log('[Platform] ✅ Running in Electron - IPC available')
   }
 }

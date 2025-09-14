@@ -44,9 +44,8 @@ export function useLamaMessages(conversationId) {
         loadMessages();
         // Listen for topic updates - only for this specific conversation
         const handleTopicUpdate = (data) => {
-            // Only reload if this conversation was updated
-            if (data?.conversationId === conversationId) {
-                console.log('[useLamaMessages] Topic updated for conversation:', conversationId);
+            // Always reload for default conversation or if conversationId matches
+            if (!data || data?.conversationId === conversationId || conversationId === 'default') {
                 // Debounce multiple rapid updates
                 if (debounceTimer) {
                     clearTimeout(debounceTimer);
@@ -56,9 +55,9 @@ export function useLamaMessages(conversationId) {
                         loadMessages();
                     }
                 }, 100);
+            } else {
             }
         };
-        console.log('[useLamaMessages] Setting up listeners for conversationId:', conversationId);
         lamaBridge.on('message:updated', handleTopicUpdate);
         return () => {
             mounted = false;
@@ -70,17 +69,44 @@ export function useLamaMessages(conversationId) {
     }, [conversationId]);
     const sendMessage = useCallback(async (topicId, content, attachments) => {
         try {
-            console.log('[useLama] 🚀 Starting sendMessage with:', { topicId, content, attachments: attachments?.length || 0 });
+            
+            // Optimistically add the message to the UI immediately
+            const optimisticMessage = {
+                id: `temp-${Date.now()}`,
+                conversationId: topicId,
+                content: content,
+                senderId: 'user',
+                isAI: false,
+                timestamp: new Date(), // Use Date object, not string
+                status: 'sending',
+                attachments: attachments
+            };
+            
+            // Add to local state immediately for instant UI feedback
+            setMessages(prev => {
+                return [...(prev || []), optimisticMessage];
+            });
+            
+            // Send the actual message
             const messageId = await lamaBridge.sendMessage(topicId, content, attachments);
-            console.log('[useLama] ✅ sendMessage completed, messageId:', messageId, 'for topic:', topicId);
+            
+            // Update the temp message with the real ID
+            setMessages(prev => prev.map(msg => 
+                msg.id === optimisticMessage.id 
+                    ? { ...msg, id: messageId, status: 'sent' }
+                    : msg
+            ));
+            
             return messageId;
         }
         catch (err) {
             console.error('[useLama] sendMessage error:', err);
+            // Remove the optimistic message on error
+            setMessages(prev => prev.filter(msg => msg.id !== `temp-${Date.now()}`));
             setError(err instanceof Error ? err.message : 'Failed to send message');
             throw err;
         }
-    }, []);
+    }, [conversationId]);
     return { messages, loading, error, sendMessage };
 }
 export function useLamaPeers() {

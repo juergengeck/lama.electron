@@ -13,9 +13,11 @@ import cryptoHandlers from './handlers/crypto.js';
 import settingsHandlers from './handlers/settings.js';
 import aiHandlers from './handlers/ai.js';
 import attachmentHandlers from './handlers/attachments.js';
+import { subjectHandlers } from './handlers/subjects.js';
 import oneCoreHandlers from './handlers/one-core.js';
-import messageHandlers from './handlers/messages.js';
 import { initializeDeviceHandlers } from './handlers/devices.js';
+import { registerContactHandlers } from './handlers/contacts.js';
+import * as topicHandlers from './handlers/topics.js';
 
 class IPCController {
   constructor() {
@@ -87,6 +89,8 @@ class IPCController {
     this.handle('chat:getMessages', chatHandlers.getMessages)
     this.handle('chat:createConversation', chatHandlers.createConversation)
     this.handle('chat:getConversations', chatHandlers.getConversations)
+    this.handle('chat:getCurrentUser', chatHandlers.getCurrentUser)
+    this.handle('chat:clearConversation', chatHandlers.clearConversation)
     
     // IOM handlers
     this.handle('iom:getInstances', iomHandlers.getIOMInstances)
@@ -119,6 +123,7 @@ class IPCController {
     this.handle('ai:executeTool', aiHandlers.executeTool)
     this.handle('ai:initialize', aiHandlers.initializeLLM)
     this.handle('ai:debugTools', aiHandlers.debugTools)
+    this.handle('llm:testApiKey', aiHandlers.testApiKey)
     
     // Attachment handlers
     this.handle('attachment:store', attachmentHandlers.storeAttachment)
@@ -126,12 +131,14 @@ class IPCController {
     this.handle('attachment:getMetadata', attachmentHandlers.getAttachmentMetadata)
     this.handle('attachment:storeMultiple', attachmentHandlers.storeAttachments)
     
-    // Message handlers for browser-node sync
-    this.handle('messages:send', messageHandlers.sendMessage)
-    this.handle('messages:get', messageHandlers.getMessages)
-    this.handle('messages:subscribe', messageHandlers.subscribeToTopic)
-    this.handle('messages:unsubscribe', messageHandlers.unsubscribeFromTopic)
-    this.handle('messages:createTopic', messageHandlers.createTopic)
+    // Subject handlers
+    this.handle('subjects:create', subjectHandlers['subjects:create'])
+    this.handle('subjects:attach', subjectHandlers['subjects:attach'])
+    this.handle('subjects:getForContent', subjectHandlers['subjects:getForContent'])
+    this.handle('subjects:getAll', subjectHandlers['subjects:getAll'])
+    this.handle('subjects:search', subjectHandlers['subjects:search'])
+    this.handle('subjects:getResonance', subjectHandlers['subjects:getResonance'])
+    this.handle('subjects:extract', subjectHandlers['subjects:extract'])
     
     // ONE.core handlers
     this.handle('onecore:initializeNode', oneCoreHandlers.initializeNode)
@@ -149,6 +156,10 @@ class IPCController {
     this.handle('onecore:syncConnectionSettings', oneCoreHandlers.syncConnectionSettings)
     this.handle('onecore:getCredentialsStatus', oneCoreHandlers.getCredentialsStatus)
     this.handle('onecore:getContacts', oneCoreHandlers.getContacts)
+    this.handle('onecore:getPeerList', oneCoreHandlers.getPeerList)
+    this.handle('onecore:getOrCreateTopicForContact', topicHandlers.getOrCreateTopicForContact)
+    this.handle('onecore:secureStore', oneCoreHandlers.secureStore)
+    this.handle('onecore:secureRetrieve', oneCoreHandlers.secureRetrieve)
     
     // Debug handler for owner ID comparison
     this.handle('debug', (event, data) => {
@@ -162,6 +173,9 @@ class IPCController {
     
     // Device handlers
     initializeDeviceHandlers()
+    
+    // Contact handlers - needs nodeOneCore instance
+    // Will be registered separately when nodeOneCore is initialized
     
     // Note: app:clearData is handled in lama-electron-shadcn.js
     
@@ -287,13 +301,22 @@ class IPCController {
       deviceManager.devices.clear()
       await deviceManager.saveDevices()
       
-      // Clear Node.js ONE.core storage
-      const storageDir = path.join(process.cwd(), 'one-core-storage', 'node')
-      try {
-        await fs.rm(storageDir, { recursive: true, force: true })
-        this.safeLog('[IPCController] Cleared Node.js storage')
-      } catch (error) {
-        this.safeError('[IPCController] Error clearing Node.js storage:', error)
+      // Clear ALL ONE.core storage
+      const storageDirs = [
+        path.join(process.cwd(), 'one-core-storage'),
+        path.join(process.cwd(), 'OneDB')
+      ]
+      
+      for (const dir of storageDirs) {
+        try {
+          await fs.rm(dir, { recursive: true, force: true })
+          this.safeLog(`[IPCController] Cleared storage: ${dir}`)
+        } catch (error) {
+          // Directory might not exist, which is fine
+          if (error.code !== 'ENOENT') {
+            this.safeError(`[IPCController] Error clearing ${dir}:`, error)
+          }
+        }
       }
       
       // Clear any cached state

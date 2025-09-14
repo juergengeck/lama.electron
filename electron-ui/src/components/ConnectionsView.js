@@ -24,7 +24,8 @@ export function ConnectionsView({ onNavigateToChat } = {}) {
     const [networkStatus, setNetworkStatus] = useState('offline');
     const [commServerUrl, setCommServerUrl] = useState('');
     const [error, setError] = useState(null);
-    const appModel = lamaBridge.getAppModel();
+    // NO AppModel in browser - everything via IPC
+  const appModel = null;
     // Get edda domain from settings with fallback
     const getEddaDomain = () => {
         // Check if user has configured a custom domain

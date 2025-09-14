@@ -1,423 +1,231 @@
-# LAMA Electron Architecture v2.0
+# LAMA Electron Architecture v3.0
 
 ## Overview
 
-LAMA Electron is a desktop application that runs two separate ONE.core instances with different roles and storage mechanisms. This dual-instance architecture provides both UI responsiveness and robust data management with multi-device support.
+LAMA Electron is a desktop application that runs a SINGLE ONE.core instance in Node.js with a pure UI layer in the browser. This simplified architecture provides clean separation of concerns with all data operations handled via IPC.
 
-## Core Architecture Changes (v2.0)
+## Core Architecture (v3.0)
 
-### Major Improvements
-1. **Direct P2P Connections**: Renderer connects directly to Node.js without comm server
-2. **Multi-Device Support**: Node.js acts as central hub for multiple devices
-3. **Improved Attachment Handling**: Proper BLOB storage with ONE.core
-4. **Flexible Connection Modes**: Support both direct and comm server connections
+### Major Simplifications
+1. **Single ONE.core Instance**: Only Node.js runs ONE.core
+2. **Pure UI Layer**: Browser is just UI, no ONE.core
+3. **IPC Only**: All data operations via IPC
+4. **No Fallbacks**: Fail fast, fix problems
 
-## Dual ONE.core Architecture
+## Single ONE.core Architecture
 
-### 1. Browser Instance (Renderer Process)
+### 1. Browser (Renderer Process) - UI ONLY
 - **Location**: `/electron-ui/`
-- **Platform**: Browser environment with IndexedDB
-- **Role**: UI responsiveness, sparse storage, real-time interactions
-- **Storage**: IndexedDB (limited, fast access)
-- **State**: Managed locally in browser
-- **Connection**: Direct P2P to Node.js, optional comm server
+- **Platform**: Browser environment
+- **Role**: UI ONLY - rendering and user interaction
+- **ONE.core**: NONE - no ONE.core instance
+- **Storage**: NONE - all data from Node.js
+- **Communication**: IPC only via `window.electronAPI`
 
-### 2. Node.js Instance (Main Process) - Central Hub
-- **Location**: `/main/core/`
+### 2. Node.js Instance (Main Process) - SINGLE ONE.core
+- **Location**: `/main/core/node-one-core.js`
 - **Platform**: Node.js with file system
-- **Role**: Central hub, archive storage, device management, network operations
-- **Storage**: File system (unlimited, persistent)
-- **State**: Master state, manages all device connections
-- **Server**: WebSocket server on port 8765 for direct connections
+- **Role**: ALL data operations, storage, AI, networking
+- **Storage**: File system (persistent)
+- **Models**: SingleUserNoAuth, LeuteModel, ChannelManager, AI contacts
+- **Server**: WebSocket server on port 8765 (for external connections if needed)
 
-## Connection Architecture (Federation)
+## Communication Architecture
 
-### Federation Model
-The system uses a federated architecture where each instance advertises its endpoints via OneInstanceEndpoint objects. LeuteConnectionsModule automatically discovers and connects instances.
-
-### Three Connection Modes
-
-#### 1. Direct P2P Connection (Local - Primary)
+### IPC-Only Model
 ```
-Renderer (Browser) <---> WebSocket (ws://localhost:8765) <---> Node.js Hub
+Browser UI <---> IPC (electronAPI) <---> Node.js ONE.core
 ```
 
 **Benefits:**
-- Ultra-low latency (<1ms)
-- No external dependencies
-- Works offline
-- Maximum privacy
-- No comm server required
+- Simple, clean architecture
+- Single source of truth
+- No synchronization issues
+- No complex federation
 
 **Implementation:**
-- Node.js: Creates OneInstanceEndpoint advertising ws://localhost:8765
-- Browser: Discovers endpoint and connects automatically
-- Connection managed by LeuteConnectionsModule
-- CHUM protocol handles synchronization
+- Browser: Calls `window.electronAPI.invoke()` for all operations
+- Node.js: IPC handlers in `/main/ipc/handlers/`
+- No direct ONE.core access from browser
+- All data flows through IPC
 
-#### 2. Comm Server Connection (External Devices)
+## Group Chat Architecture (Deviation from one.leute)
+
+LAMA uses a unified group chat architecture for ALL conversations, including P2P:
+
+### Key Architectural Decisions:
+1. **All conversations are group chats** - Even P2P conversations use the group chat structure
+2. **TopicGroupManager** handles all conversation creation and participant management
+3. **Each participant gets their own channel** - Following one.leute's multi-channel pattern
+4. **Group objects control access** - All participants are members of a Group
+
+### P2P Conversations:
+- Topic ID format: `person1ID<->person2ID` (sorted alphabetically)
+- Both participants must have channels created for bidirectional message flow
+- Messages flow through the group structure, not direct P2P
+- Access controlled via Group objects with both participants as members
+
+### Why This Architecture:
+- **Simplifies code** - One unified flow for all conversation types
+- **Enables easy upgrade** - P2P chats can become group chats seamlessly
+- **Consistent permissions** - Same access control for all conversations
+- **Better feature support** - Read receipts, presence, typing indicators work uniformly
+
+### Known Architectural Debt:
+- Topic IDs are parsed to extract participants (should pass explicitly)
+- Contact names not properly synchronized between peers
+- Should consider separate P2P and group flows in future refactor
+
+## Authentication Flow
+
+### Simple Login Process
+1. **User enters credentials** in browser UI
+2. **Browser calls IPC**: `electronAPI.invoke('onecore:initializeNode', credentials)`
+3. **Node.js initializes ONE.core** with SingleUserNoAuth
+4. **Node.js returns success** via IPC
+5. **Browser UI updates** based on IPC response
+
+No browser ONE.core initialization needed!
+
+## Key Architectural Principles
+
+### NO FALLBACKS
+- Browser ONLY uses IPC
+- If IPC fails, operation fails
+- Fix the root cause, don't mitigate
+
+### NO BROWSER ONE.CORE
+- No ONE.core imports in browser
+- No AppModel in browser
+- No LeuteModel in browser
+- No SingleUserNoAuth in browser
+
+### SINGLE SOURCE OF TRUTH
+- One ONE.core instance (Node.js)
+- One data store (file system)
+- One authentication (Node.js)
+- All access via IPC
+
+## Group Chat Architecture (one.leute Compatible)
+
+### How Group Chats Work
+LAMA follows the one.leute architecture for group chats to ensure compatibility with peer instances:
+
+1. **ONE Topic ID** per conversation (e.g., "GroupChat123")
+2. **MULTIPLE Channels** - one per participant, all sharing the same topic ID
+3. **Each participant posts to their OWN channel** (channelOwner = their personId)
+4. **All participants can READ from ALL channels** via group access
+5. **Messages are aggregated** from all participant channels when displaying
+
+### Group Chat Flow
 ```
-External Browser <---> Comm Server (wss://comm10.dev.refinio.one) <---> Node.js Hub
-```
-
-**Use Cases:**
-- Remote access from other devices
-- Browser-based clients
-- NAT traversal
-- Firewall bypass
-
-#### 3. Hybrid Mode (Both - Default)
-Both connections active simultaneously:
-- Local renderer uses direct P2P
-- External devices use comm server
-- Node.js hub manages both
-
-## Multi-Device Architecture
-
-### Hub-and-Spoke Model
-```
-                    Node.js Hub (Master)
-                    /        |         \
-                   /         |          \
-        Local Renderer   Device 1    Device 2
-         (Direct P2P)   (via Comm)  (via Comm)
-            |              |            |
-      Instance: gecko-ui  gecko-ui-1  gecko-ui-2
-```
-
-### Device Management System
-
-**Components:**
-1. **DeviceManager** (`/main/core/device-manager.js`)
-   - Registers new devices
-   - Tracks connection status
-   - Manages device-specific instances
-   - Creates IoM invites
-
-2. **Device Registration Flow**
-   ```javascript
-   // Device registration
-   await deviceManager.registerDevice({
-     name: "iPhone",
-     platform: "ios"
-   })
-   // Returns: { device, invite }
-   ```
-
-3. **Unique Instance Names**
-   - Hub: `gecko` (user-chosen name)
-   - Local renderer: `gecko-ui`
-   - Device 1: `gecko-ui-device1`
-   - Device 2: `gecko-ui-device2`
-
-4. **Device Storage**
-   - Devices tracked in: `one-core-storage/devices.json`
-   - Each device gets unique browser instance
-   - Invites stored with device metadata
-
-### Message Replication
-```
-Device A sends message
-    ↓
-Node.js Hub receives
-    ↓
-Hub stores in TopicRoom
-    ↓
-Hub broadcasts to all connected devices
-    ↓
-Devices B, C, D receive update
-```
-
-## Authentication & Initialization
-
-### Startup Flow
-```mermaid
-graph TD
-    A[App Starts] --> B{Existing Instance?}
-    B -->|Yes| C[Auto-Recovery]
-    B -->|No| D[Show Setup UI]
-    C --> E[Load Saved Config]
-    E --> F[Initialize Node.js]
-    D --> G[User Enters Credentials]
-    G --> H[Initialize Browser]
-    H --> I[Provision Node.js]
-    F --> J[Start IoM Server]
-    I --> J
-    J --> K[Ready for Connections]
+Topic: "GroupChat123"
+├── Channel (owner: Alice) - Alice posts here
+├── Channel (owner: Bob)   - Bob posts here
+├── Channel (owner: Carol) - Carol posts here
+└── Group Access: All can read all channels
 ```
 
-### Auto-Recovery
-- Node.js instance can auto-recover from saved config
-- Located in: `one-core-storage/node/instance-config.json`
-- Includes instance name and owner ID
-- No password stored (security)
+### Implementation Details
+- **TopicGroupManager** (`/main/core/topic-group-manager.js`) handles group creation
+- Local node creates its own channel immediately
+- Remote participants create their channels when they detect group membership
+- ChannelManager aggregates messages from all channels with the same topic ID
 
-## Attachment System
+## File Structure
 
-### Storage Architecture
+### Browser (UI Only)
 ```
-User selects file
-    ↓
-Browser stores as BLOB (temporary)
-    ↓
-Attachment hash generated
-    ↓
-Message sent with hash reference
-    ↓
-Node.js retrieves and stores (permanent)
-    ↓
-Other devices request by hash
+/electron-ui/
+├── src/
+│   ├── components/        # React components
+│   ├── services/
+│   │   └── browser-init.ts         # UI init (NO ONE.core)
+│   ├── bridge/
+│   │   └── lama-bridge.ts  # IPC bridge
+│   └── hooks/             # React hooks using IPC
 ```
 
-### BLOB Storage Locations
-- **Browser**: IndexedDB (quota-limited)
-- **Node.js**: File system at `one-core-storage/node/blobs/`
+### Node.js (ONE.core)
+```
+/main/
+├── core/
+│   ├── node-one-core.js   # SINGLE ONE.core instance
+│   ├── topic-group-manager.js  # Group chat management (one.leute compatible)
+│   ├── ai-contact-manager.js
+│   └── ai-message-listener.js
+├── ipc/
+│   └── handlers/          # IPC handlers
+│       ├── chat.js
+│       ├── one-core.js
+│       └── ...
+└── services/
+    └── llm-manager.js
+```
 
-### Attachment Message Format
+## Data Flow Examples
+
+### Getting Contacts
 ```javascript
-{
-  $type$: 'ChatMessage',
-  text: 'Check out this image',
-  blobs: [{
-    hash: 'abc123...',
-    mimeType: 'image/png',
-    name: 'photo.png',
-    size: 12345
-  }]
-}
+// Browser (WRONG - old way)
+const contacts = await appModel.getContacts()  // NO!
+
+// Browser (RIGHT - new way)
+const result = await window.electronAPI.invoke('onecore:getContacts')
+const contacts = result.contacts
 ```
 
-## Direct Connection Service
-
-### Implementation (`/electron-ui/src/services/direct-connection.ts`)
-```typescript
-class DirectConnectionService {
-  // Connects directly to Node.js WebSocket
-  async connectToNode(): Promise<boolean>
-  
-  // Send messages without comm server
-  async sendToNode(type: string, data: any): Promise<void>
-  
-  // Handle incoming sync/updates
-  private handleSync(message: any): void
-  private handleUpdate(message: any): void
-}
-```
-
-### Message Types
-- `handshake`: Initial connection setup
-- `sync`: Full state synchronization
-- `update`: Incremental updates
-- `notification`: Real-time alerts
-
-## IPC Communication
-
-### Architecture
-```
-Renderer Process          Main Process
-      ↓                        ↑
-   IPC Send               IPC Handle
-      ↓                        ↑
-Context Bridge          IPC Controller
-      ↓                        ↑
- Window API              Handler Modules
-```
-
-### Key IPC Channels
-- `onecore:initializeNode`: Initialize Node.js instance
-- `devices:register`: Register new device
-- `devices:list`: Get connected devices
-- `attachment:store`: Store attachment BLOB
-- `chat:sendMessage`: Send chat message
-
-## Configuration System
-
-### Connection Configuration (`/electron-ui/src/config/connection-config.ts`)
-```typescript
-interface ConnectionConfig {
-  useDirectConnection: boolean      // Enable direct P2P
-  nodeEndpoint: string              // Node.js WebSocket URL
-  enableCommServer: boolean         // Enable comm server
-  commServerUrl?: string           // Comm server URL
-  connectionPriority: 'direct' | 'commserver' | 'both'
-}
-```
-
-### Environment-Based Config
-- **Development**: Uses `wss://comm10.dev.refinio.one`
-- **Production**: Uses `wss://comm.refinio.net`
-- **Electron**: Enables both direct and comm server
-- **Browser**: Comm server only
-
-## Performance Optimizations
-
-### Connection Latency
-- Direct P2P: <1ms (local)
-- Comm Server: 20-100ms (internet)
-- Automatic fallback on connection failure
-
-### Storage Optimization
-- Browser: Sparse storage (recent messages)
-- Node.js: Full archive (all history)
-- Attachment caching with LRU eviction
-
-### Message Batching
-- Groups multiple updates
-- Reduces WebSocket overhead
-- Automatic flush every 100ms
-
-## Security Model
-
-### Context Isolation
-- Renderer has no direct Node.js access
-- All communication via secure IPC
-- Preload script validates messages
-
-### Connection Security
-- Direct P2P: Local only (localhost)
-- Comm Server: WSS (TLS encrypted)
-- IoM invites: Cryptographic authentication
-
-### Storage Security
-- Encrypted credentials in keychain
-- No plaintext passwords stored
-- Per-device access tokens
-
-## Debugging & Development
-
-### Debug Flags
+### Sending Message
 ```javascript
-// Browser console
-localStorage.debug = 'lama:*'
+// Browser
+await window.electronAPI.invoke('chat:sendMessage', {
+  conversationId: 'default',
+  content: 'Hello'
+})
 
-// Environment variable
-DEBUG=NodeOneCore,DeviceManager npm run electron:dev
+// Node.js handles everything:
+// - Creates message in ONE.core
+// - Stores in file system
+// - Triggers AI response if needed
+// - Returns via IPC
 ```
 
-### Key Log Locations
-- `[NodeOneCore]`: Node.js instance logs
-- `[DeviceManager]`: Device connection logs
-- `[DirectConnection]`: P2P connection logs
-- `[LamaBridge]`: Message handling logs
+## Benefits of Single Instance
 
-### Testing Connections
-1. Check Node.js WebSocket: `ws://localhost:8765`
-2. Verify comm server: `wss://comm10.dev.refinio.one`
-3. Test device registration via UI
-4. Monitor WebSocket frames in DevTools
+1. **Simplicity**: One instance to manage
+2. **Performance**: No synchronization overhead
+3. **Reliability**: No federation issues
+4. **Debugging**: Single point to debug
+5. **Maintenance**: Less code, fewer bugs
 
-## Common Issues & Solutions
+## Migration Notes
 
-### Issue: "WebSocket connection failed"
-**Solution**: Ensure Node.js instance is initialized first
+If you see:
+- `import ... from '@refinio/one.core'` in browser → REMOVE
+- `new AppModel()` in browser → REMOVE
+- `simpleBrowserInit.getAppModel()` → Returns null
+- Fallback patterns → REMOVE, use IPC only
 
-### Issue: "Invalid typed array length"
-**Solution**: Comm server data format issue, use direct connection
+## Common Issues and Solutions
 
-### Issue: "Attachment not displaying"
-**Solution**: Check BLOB storage initialization in both instances
+### "Cannot find AppModel"
+- Browser doesn't have AppModel anymore
+- Use IPC: `window.electronAPI.invoke()`
 
-### Issue: "Device not connecting"
-**Solution**: Verify invite is valid and not expired
+### "ONE.core not initialized"
+- Browser doesn't initialize ONE.core
+- Node.js handles it after login
 
-## Migration from v1.0
+### "No contacts available"
+- Use IPC: `electronAPI.invoke('onecore:getContacts')`
+- Don't try to access local LeuteModel
 
-### Breaking Changes
-1. IoM connection now optional
-2. Device registration required for multi-device
-3. Attachment format changed to use blobs array
+## Summary
 
-### Upgrade Path
-1. Clear old storage: `rm -rf one-core-storage/`
-2. Update connection config
-3. Re-register devices
-4. Migrate attachments to BLOB storage
+The v3.0 architecture is dramatically simplified:
+- **ONE** ONE.core instance (Node.js)
+- **ZERO** browser ONE.core
+- **ALL** operations via IPC
+- **NO** fallbacks or workarounds
 
-## Future Roadmap
-
-### v2.1 - Q1 2024
-- [ ] Full CHUM sync implementation
-- [ ] Offline message queue
-- [ ] Attachment compression
-
-### v2.2 - Q2 2024
-- [ ] UDP/QUIC transport
-- [ ] Bluetooth device discovery
-- [ ] End-to-end encryption
-
-### v3.0 - Q3 2024
-- [ ] Mesh networking
-- [ ] Distributed storage
-- [ ] Multi-hub federation
-
-## API Reference
-
-### DeviceManager API
-```javascript
-// Register device
-await deviceManager.registerDevice(deviceInfo)
-
-// List devices
-deviceManager.getAllDevices()
-
-// Get connected devices
-deviceManager.getConnectedDevices()
-
-// Send to specific device
-deviceManager.sendToDevice(deviceId, message)
-
-// Broadcast to all
-deviceManager.broadcastToDevices(message)
-```
-
-### DirectConnection API
-```typescript
-// Connect to Node.js
-await directConnection.connectToNode()
-
-// Send message
-await directConnection.sendToNode('sync', data)
-
-// Check status
-directConnection.getConnectionStatus()
-
-// Disconnect
-await directConnection.disconnect()
-```
-
-## Contributing
-
-### Development Setup
-```bash
-# Install dependencies
-npm install
-
-# Run in development
-npm run electron:dev
-
-# Run tests
-npm test
-
-# Build for production
-npm run electron:build
-```
-
-### Code Style
-- TypeScript for renderer code
-- JavaScript for main process
-- ESLint configuration provided
-- Prettier for formatting
-
-### Pull Request Process
-1. Update documentation
-2. Add tests for new features
-3. Ensure all tests pass
-4. Update CHANGELOG.md
-5. Submit PR with description
-
----
-
-For additional details, see:
-- Original architecture: `/ELECTRON-ARCHITECTURE.md`
-- AI instructions: `/CLAUDE.md`
-- Source code documentation: Inline comments
+This ensures clean separation of concerns and prevents the complexity of dual-instance synchronization.

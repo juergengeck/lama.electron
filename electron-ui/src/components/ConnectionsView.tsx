@@ -51,12 +51,12 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
   const [commServerUrl, setCommServerUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const appModel = lamaBridge.getAppModel()
+  // All operations via IPC - no AppModel in browser
 
   // Get edda domain from settings with fallback
   const getEddaDomain = (): string => {
     // Check if user has configured a custom domain
-    const customDomain = localStorage.getItem('edda-domain')
+    const customDomain = await ipcStorage.getItem('edda-domain')
     if (customDomain) {
       return customDomain
     }
@@ -80,56 +80,7 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
     loadConnections()
     checkNetworkStatus()
     
-    // Set up event listeners if available
-    if (appModel?.transportManager) {
-      const handleConnectionEstablished = async (connectionInfo?: any) => {
-        console.log('[ConnectionsView] Connection established, auto-closing invite dialog and navigating to chat')
-        // Auto-close the invite dialog when a new connection is established
-        setShowInviteDialog(false)
-        setCurrentInvitation(null)
-        setCopied(false)
-        
-        // Load connections to get the latest
-        await loadConnections()
-        
-        // Try to navigate to chat with the new contact
-        if (onNavigateToChat && connectionInfo) {
-          try {
-            // Get the person ID from the connection info
-            const personId = connectionInfo.personId || connectionInfo.id
-            
-            if (personId) {
-              // Get or create topic for this contact
-              const topicId = await lamaBridge.getOrCreateTopicForContact(personId)
-              
-              if (topicId) {
-                // Get contact name from connection info or use default
-                const contactName = connectionInfo.name || 
-                                  connectionInfo.displayName || 
-                                  `Contact ${personId.toString().substring(0, 8)}`
-                
-                console.log('[ConnectionsView] Navigating to chat with new contact:', contactName)
-                onNavigateToChat(topicId, contactName)
-              }
-            }
-          } catch (error) {
-            console.error('[ConnectionsView] Failed to navigate to chat:', error)
-          }
-        }
-      }
-      const handleConnectionClosed = () => {
-        loadConnections()
-      }
-      
-      // Subscribe to events
-      appModel.transportManager.onConnectionEstablished.listen(handleConnectionEstablished)
-      appModel.transportManager.onConnectionClosed.listen(handleConnectionClosed)
-      
-      // Cleanup
-      return () => {
-        // Unsubscribe from events
-      }
-    }
+    // Listen for connection events via IPC if needed in future
     
     console.log('[ConnectionsView] Setting up CHUM sync listeners...')
     
@@ -217,25 +168,15 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
 
   const checkNetworkStatus = async () => {
     try {
-      if (!appModel?.connections) {
-        setNetworkStatus('offline')
-        return
-      }
-
-      // Check if ConnectionsModel has online connections
-      // ConnectionsModel doesn't have isOnline method, check connections instead
-      const connectionsInfo = appModel.connections.connectionsInfo?.() || []
-      const hasActiveConnections = Array.isArray(connectionsInfo) && connectionsInfo.length > 0
+      // Check network status via IPC (future enhancement)
+      // For now, assume online if connections exist
+      const hasActiveConnections = connections.some(c => c.status === 'connected')
+      setNetworkStatus(hasActiveConnections ? 'online' : 'offline')
       
-      // Check if transport is actually connected
-      const transport = appModel.transportManager?.getTransport?.('COMM_SERVER' as any)
-      const isTransportConnected = transport?.isAvailable?.() || false
-      
-      setNetworkStatus(hasActiveConnections || isTransportConnected ? 'online' : 'offline')
-      
-      // Get CommServer URL from the transport config
-      const commServerUrl = appModel.transportManager?.commServerUrl || 'wss://comm10.dev.refinio.one'
-      setCommServerUrl(commServerUrl)
+      // Get CommServer URL from environment
+      const isDev = window.location.hostname === 'localhost' || process.env.NODE_ENV === 'development'
+      const defaultCommServer = isDev ? 'wss://comm10.dev.refinio.one' : 'wss://comm.refinio.one'
+      setCommServerUrl(defaultCommServer)
     } catch (error) {
       console.error('[ConnectionsView] Failed to check network status:', error)
       setNetworkStatus('offline')
@@ -247,10 +188,7 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
     setError(null)
     
     try {
-      // Check if user is logged in first
-      if (!appModel?.leuteModel) {
-        throw new Error('Please log in first before creating invitations')
-      }
+      // User authentication is handled by Node.js instance
       
       console.log('[ConnectionsView] Requesting invitation from Node.js instance via IPC...')
       

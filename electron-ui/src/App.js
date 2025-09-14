@@ -12,6 +12,13 @@ import { ModelOnboarding } from '@/components/ModelOnboarding';
 import { MessageSquare, BookOpen, Users, Settings, Loader2, Network, BarChart3 } from 'lucide-react';
 import { useLamaInit } from '@/hooks/useLamaInit';
 import { lamaBridge } from '@/bridge/lama-bridge';
+
+// Debug: Force lamaBridge initialization check
+console.log('[App] lamaBridge imported:', !!lamaBridge);
+if (lamaBridge) {
+    console.log('[App] lamaBridge methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(lamaBridge)));
+}
+
 function App() {
     const [activeTab, setActiveTab] = useState('chats');
     const [selectedConversationId, setSelectedConversationId] = useState(undefined);
@@ -20,7 +27,8 @@ function App() {
         return localStorage.getItem('lama-onboarding-completed') === 'true';
     });
     const { isInitialized, isAuthenticated, isLoading, login, logout, error } = useLamaInit();
-    const appModel = lamaBridge.getAppModel();
+    // NO AppModel in browser - everything via IPC
+    const appModel = null;
     // Listen for navigation from Electron menu
     useEffect(() => {
         const handleNavigate = (_event, tab) => {

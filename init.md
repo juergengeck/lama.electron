@@ -158,7 +158,7 @@ channelManager.onUpdated((channelInfoIdHash, channelId, channelOwner, time, data
 ## File Locations
 
 ### Browser Instance
-- `/electron-ui/src/services/browser-init-simple.ts` - Browser initialization
+- `/electron-ui/src/services/browser-init.ts` - Browser initialization
 - `/electron-ui/src/models/AppModel.ts` - AppModel with IoM setup
 - `/electron-ui/src/services/iom-client.ts` - IoM client for browser-node connection
 

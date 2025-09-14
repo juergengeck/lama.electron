@@ -8,6 +8,7 @@ import path from 'path';
 import EventEmitter from 'events';
 import { fileURLToPath } from 'url';
 import electron from 'electron';
+import mcpManager from './mcp-manager.js';
 const { ipcMain, BrowserWindow } = electron;
 
 // Get __dirname equivalent in ESM
@@ -56,6 +57,11 @@ class LLMManager extends EventEmitter {
     console.log('[LLMManager] Initializing in main process...')
 
     try {
+      // Cancel any pending Ollama requests from before restart
+      const { cancelAllOllamaRequests } = await import('./ollama.js')
+      cancelAllOllamaRequests()
+      console.log('[LLMManager] Cleared any pending Ollama requests')
+      
       // Load saved settings
       await this.loadSettings()
       
@@ -82,7 +88,7 @@ class LLMManager extends EventEmitter {
   async registerModels() {
     // Check for LM Studio availability (optional)
     try {
-      const { default: lmstudio } = await import('./lmstudio.js');
+      const lmstudio = await import('./lmstudio.js');
       const isLMStudioAvailable = await lmstudio.isLMStudioRunning()
       
       if (isLMStudioAvailable) {
@@ -132,7 +138,7 @@ class LLMManager extends EventEmitter {
     // Register Ollama models
     this.models.set('ollama:gpt-oss', {
       id: 'ollama:gpt-oss',
-      name: 'GPT-OSS (Ollama)',
+      name: 'gpt-oss',
       provider: 'ollama',
       description: 'Local GPT model via Ollama',
       capabilities: ['chat', 'completion'],
@@ -182,40 +188,17 @@ class LLMManager extends EventEmitter {
     console.log('[LLMManager] Initializing MCP servers...')
     
     try {
-      // Import MCP SDK
-      const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+      // Initialize MCP Manager
+      await mcpManager.init()
       
-      // Start filesystem MCP server
-      const fsTransport = new StdioClientTransport({
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-filesystem', '/Users/gecko/src/lama.electron']
-      })
+      // Sync tools from MCP Manager
+      const tools = mcpManager.getAvailableTools()
+      this.mcpTools.clear()
       
-      const fsClient = new Client({
-        name: 'lama-electron-filesystem',
-        version: '1.0.0'
-      }, {
-        capabilities: { tools: {} }
-      })
-      
-      await fsClient.connect(fsTransport)
-      this.mcpClients.set('filesystem', fsClient)
-      
-      // Discover tools
-      const tools = await fsClient.listTools()
-      if (tools.tools) {
-        tools.tools.forEach(tool => {
-          this.mcpTools.set(tool.name, {
-            ...tool,
-            server: 'filesystem'
-          })
-          console.log(`[LLMManager] Registered MCP tool: ${tool.name}`)
-        })
+      for (const tool of tools) {
+        this.mcpTools.set(tool.fullName || tool.name, tool)
+        console.log(`[LLMManager] Registered MCP tool: ${tool.fullName || tool.name}`)
       }
-      
-      // Start custom LAMA MCP server
-      // await this.startLamaMCPServer() // Disabled due to MCP SDK compatibility issues
       
       console.log(`[LLMManager] MCP initialized with ${this.mcpTools.size} tools`)
     } catch (error) {
@@ -265,23 +248,7 @@ class LLMManager extends EventEmitter {
   }
 
   getToolDescriptions() {
-    if (this.mcpTools.size === 0) {
-      return ''
-    }
-    
-    let description = '\n\nYou have access to the following tools:\n\n'
-    
-    for (const [name, tool] of this.mcpTools) {
-      description += `- **${name}**: ${tool.description}\n`
-      if (tool.inputSchema?.properties) {
-        description += `  Parameters: ${Object.keys(tool.inputSchema.properties).join(', ')}\n`
-      }
-    }
-    
-    description += '\nTo use a tool, respond with a JSON block like this:\n'
-    description += '```json\n{\n  "tool": "tool_name",\n  "parameters": { "param1": "value1" }\n}\n```\n'
-    
-    return description
+    return mcpManager.getToolDescriptions()
   }
 
   getAvailableModels() {
@@ -298,7 +265,7 @@ class LLMManager extends EventEmitter {
     return modelsArray
   }
 
-  async chat(messages, modelId = null) {
+  async chat(messages, modelId = null, options = {}) {
     const model = modelId ? this.models.get(modelId) : this.models.get(this.defaultModelId)
     if (!model) {
       throw new Error('No model available')
@@ -314,11 +281,11 @@ class LLMManager extends EventEmitter {
     let response
     
     if (model.provider === 'ollama') {
-      response = await this.chatWithOllama(model, enhancedMessages)
+      response = await this.chatWithOllama(model, enhancedMessages, options)
     } else if (model.provider === 'lmstudio') {
-      response = await this.chatWithLMStudio(model, enhancedMessages)
+      response = await this.chatWithLMStudio(model, enhancedMessages, options)
     } else if (model.provider === 'anthropic') {
-      response = await this.chatWithClaude(model, enhancedMessages)
+      response = await this.chatWithClaude(model, enhancedMessages, options)
     } else {
       throw new Error(`Unsupported provider: ${model.provider}`)
     }
@@ -376,36 +343,138 @@ class LLMManager extends EventEmitter {
   }
 
   async processToolCalls(response) {
-    // Check for tool calls in response
-    const toolCallMatch = response.match(/```json\s*({[\s\S]*?})\s*```/)
-    if (!toolCallMatch) return response
+    console.log('[LLMManager] Checking for tool calls in response...')
+    console.log('[LLMManager] Response preview:', response?.substring(0, 200))
+    
+    // Check for tool calls in response - try both with and without backticks
+    let toolCallMatch = response?.match(/```json\s*({[\s\S]*?})\s*```/)
+    if (!toolCallMatch) {
+      // Try without backticks for plain JSON response
+      toolCallMatch = response?.match(/^(\{.*"tool".*\})/)
+      if (toolCallMatch) {
+        console.log('[LLMManager] Found plain JSON tool call')
+      }
+    }
+    
+    if (!toolCallMatch) {
+      console.log('[LLMManager] No tool call found in response')
+      return response || ''
+    }
+    
+    console.log('[LLMManager] Found potential tool call:', toolCallMatch[0])
     
     try {
       const toolCall = JSON.parse(toolCallMatch[1])
-      if (toolCall.tool && this.mcpTools.has(toolCall.tool)) {
-        console.log(`[LLMManager] Executing tool: ${toolCall.tool}`)
+      if (toolCall.tool) {
+        console.log(`[LLMManager] Executing tool: ${toolCall.tool} with params:`, toolCall.parameters)
         
-        const tool = this.mcpTools.get(toolCall.tool)
-        const client = this.mcpClients.get(tool.server)
+        const result = await mcpManager.executeTool(
+          toolCall.tool,
+          toolCall.parameters || {}
+        )
         
-        if (client) {
-          const result = await client.callTool({
-            name: toolCall.tool,
-            arguments: toolCall.parameters || {}
-          })
-          
-          const resultText = `Tool executed: ${toolCall.tool}\nResult: ${JSON.stringify(result, null, 2)}`
-          return response.replace(toolCallMatch[0], resultText)
+        console.log('[LLMManager] Tool execution result:', JSON.stringify(result).substring(0, 200))
+        
+        // Format the result based on tool type with elegant, natural language
+        let formattedResult = ''
+        
+        if (toolCall.tool === 'filesystem:list_directory') {
+          // Parse and format directory listing elegantly
+          if (result.content && Array.isArray(result.content)) {
+            const textContent = result.content.find(c => c.type === 'text')
+            if (textContent && textContent.text) {
+              // Parse the directory listing and format it nicely
+              const lines = textContent.text.split('\n').filter(line => line.trim())
+              const dirs = []
+              const files = []
+              
+              lines.forEach(line => {
+                if (line.includes('[DIR]')) {
+                  dirs.push(line.replace('[DIR]', '').trim())
+                } else if (line.includes('[FILE]')) {
+                  files.push(line.replace('[FILE]', '').trim())
+                }
+              })
+              
+              formattedResult = 'Here\'s what I found in the current directory:\n\n'
+              
+              if (dirs.length > 0) {
+                formattedResult += '**📁 Folders:**\n'
+                dirs.forEach(dir => {
+                  formattedResult += `• ${dir}\n`
+                })
+                if (files.length > 0) formattedResult += '\n'
+              }
+              
+              if (files.length > 0) {
+                formattedResult += '**📄 Files:**\n'
+                files.forEach(file => {
+                  formattedResult += `• ${file}\n`
+                })
+              }
+              
+              formattedResult += `\n_Total: ${dirs.length} folders and ${files.length} files_`
+            } else {
+              formattedResult = 'I found the following items:\n\n' + JSON.stringify(result, null, 2)
+            }
+          } else {
+            formattedResult = 'Directory contents:\n\n' + JSON.stringify(result, null, 2)
+          }
+        } else if (toolCall.tool.includes('read_file') || toolCall.tool.includes('read_text')) {
+          // Format file reading results
+          if (result.content && Array.isArray(result.content)) {
+            const textContent = result.content.find(c => c.type === 'text')
+            if (textContent && textContent.text) {
+              const fileName = toolCall.parameters?.path || 'the file'
+              formattedResult = `Here's the content of ${fileName}:\n\n\`\`\`\n${textContent.text}\n\`\`\``
+            } else {
+              formattedResult = 'File content:\n\n' + JSON.stringify(result, null, 2)
+            }
+          } else {
+            formattedResult = result
+          }
+        } else if (toolCall.tool.includes('write_file') || toolCall.tool.includes('edit_file')) {
+          // Format file writing/editing results
+          formattedResult = '✅ File operation completed successfully.'
+          if (toolCall.parameters?.path) {
+            formattedResult = `✅ Successfully updated ${toolCall.parameters.path}`
+          }
+        } else if (toolCall.tool.includes('search')) {
+          // Format search results
+          if (result.content && Array.isArray(result.content)) {
+            const textContent = result.content.find(c => c.type === 'text')
+            if (textContent && textContent.text) {
+              formattedResult = `Search results:\n\n${textContent.text}`
+            } else {
+              formattedResult = 'Search completed.'
+            }
+          } else {
+            formattedResult = result
+          }
+        } else if (result.content && Array.isArray(result.content)) {
+          // Generic MCP tool response with content array
+          const textParts = result.content
+            .filter(c => c.type === 'text')
+            .map(c => c.text)
+          formattedResult = textParts.join('\n\n')
+        } else if (typeof result === 'string') {
+          formattedResult = result
+        } else {
+          // Fallback to JSON for complex objects
+          formattedResult = JSON.stringify(result, null, 2)
         }
+        
+        // Return the elegantly formatted result
+        return response.replace(toolCallMatch[0], formattedResult)
       }
     } catch (error) {
       console.error('[LLMManager] Tool execution failed:', error)
     }
     
-    return response
+    return response || ''
   }
 
-  async chatWithOllama(model, messages) {
+  async chatWithOllama(model, messages, options = {}) {
     const { chatWithOllama } = await import('./ollama.js')
     
     return await chatWithOllama(
@@ -413,13 +482,14 @@ class LLMManager extends EventEmitter {
       messages,
       {
         temperature: model.parameters.temperature,
-        max_tokens: model.parameters.maxTokens
+        max_tokens: model.parameters.maxTokens,
+        onStream: options.onStream
       }
     )
   }
   
   async chatWithLMStudio(model, messages) {
-    const { default: lmstudio } = await import('./lmstudio.js')
+    const lmstudio = await import('./lmstudio.js')
     
     // Handle streaming if requested
     if (model.parameters.stream) {
@@ -540,6 +610,53 @@ class LLMManager extends EventEmitter {
       clientCount: this.mcpClients.size,
       tools: Array.from(this.mcpTools.keys()),
       initialized: this.isInitialized
+    }
+  }
+
+  /**
+   * Test a Claude API key
+   */
+  async testClaudeApiKey(apiKey) {
+    try {
+      // Make a minimal API call to test the key
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'Hi' }]
+        })
+      })
+      
+      return response.ok
+    } catch (error) {
+      console.error('[LLMManager] Claude API key test failed:', error)
+      return false
+    }
+  }
+
+  /**
+   * Test an OpenAI API key
+   */
+  async testOpenAIApiKey(apiKey) {
+    try {
+      // Make a minimal API call to test the key
+      const response = await fetch('https://api.openai.com/v1/models', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      })
+      
+      return response.ok
+    } catch (error) {
+      console.error('[LLMManager] OpenAI API key test failed:', error)
+      return false
     }
   }
 

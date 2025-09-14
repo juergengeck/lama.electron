@@ -40,57 +40,67 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
     }
   }, [selectedConversationId])
 
-  // Load conversations from localStorage on startup
+  // Load conversations from Node.js
   useEffect(() => {
-    const saved = localStorage.getItem('lama-conversations')
-    if (saved) {
+    const loadConversations = async () => {
       try {
-        let parsed = JSON.parse(saved)
-        
-        // Migrate old conversation IDs and ensure all have names
-        parsed = parsed.map((conv: Conversation, index: number) => {
-          // Ensure every conversation has a name
-          if (!conv.name) {
-            conv.name = conv.id === 'default' ? 'Chat with GPT-OSS' : `Chat ${index + 1}`
-          }
-          // Migrate old ID
-          if (conv.id === 'default-ai-chat') {
-            return { ...conv, id: 'default', name: conv.name || 'Chat with GPT-OSS' }
-          }
-          return conv
-        })
-        
-        setConversations(parsed)
-        if (selectedConversationId) {
-          setSelectedConversation(selectedConversationId)
-        } else if (parsed.length > 0 && !selectedConversation) {
-          setSelectedConversation(parsed[0].id)
+        if (!window.electronAPI) {
+          throw new Error('Electron API not available')
         }
         
-        // Save migrated data back
-        localStorage.setItem('lama-conversations', JSON.stringify(parsed))
+        const result = await window.electronAPI.invoke('chat:getConversations')
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to get conversations')
+        }
+        
+        const conversations = result.data || []
+        
+        // Convert to UI format
+        const uiConversations: Conversation[] = conversations.map((conv: any) => ({
+          id: conv.id,
+          name: conv.name || 'Unnamed Chat',
+          lastMessage: conv.lastMessage?.text || '',
+          lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
+          modelName: conv.modelName || 'GPT-OSS'
+        }))
+        
+        setConversations(uiConversations)
+        
+        if (selectedConversationId) {
+          setSelectedConversation(selectedConversationId)
+        } else if (uiConversations.length > 0 && !selectedConversation) {
+          setSelectedConversation(uiConversations[0].id)
+        }
       } catch (error) {
         console.error('Failed to load conversations:', error)
+        setConversations([])
       }
-    } else {
-      // First time user - create a default AI chat
-      const defaultConv: Conversation = {
-        id: 'default',
-        name: 'Chat with GPT-OSS',
-        lastMessage: 'Hello! I\'m your local AI assistant powered by Ollama. How can I help you today?',
-        lastMessageTime: new Date(),
-        modelName: 'GPT-OSS'
-      }
-      setConversations([defaultConv])
-      setSelectedConversation(defaultConv.id)
-      localStorage.setItem('lama-conversations', JSON.stringify([defaultConv]))
     }
+    
+    loadConversations()
   }, [])
 
-  // Save conversations to localStorage
-  const saveConversations = (convs: Conversation[]) => {
-    localStorage.setItem('lama-conversations', JSON.stringify(convs))
-    setConversations(convs)
+  // Reload conversations from Node.js
+  const reloadConversations = async () => {
+    try {
+      if (!window.electronAPI) return
+      
+      const result = await window.electronAPI.invoke('chat:getConversations')
+      if (!result.success) return
+      
+      const conversations = result.data || []
+      const uiConversations: Conversation[] = conversations.map((conv: any) => ({
+        id: conv.id,
+        name: conv.name || 'Unnamed Chat',
+        lastMessage: conv.lastMessage?.text || '',
+        lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
+        modelName: conv.modelName || 'GPT-OSS'
+      }))
+      
+      setConversations(uiConversations)
+    } catch (error) {
+      console.error('Failed to reload conversations:', error)
+    }
   }
 
   // Create new conversation with the provided name
@@ -111,16 +121,16 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         throw new Error(result.error || 'Failed to create conversation')
       }
       
-      const newConv: Conversation = {
-        id: result.data.id,
-        name: result.data.name || chatName,
-        lastMessage: result.data.lastMessage?.text,
-        lastMessageTime: result.data.lastMessageAt || new Date(),
-        modelName: 'GPT-OSS'
-      }
-      const updated = [newConv, ...conversations]
-      saveConversations(updated)
-      setSelectedConversation(newConv.id)
+      // Reload conversations from Node.js to get fresh data
+      await reloadConversations()
+      setSelectedConversation(result.data.id)
+      
+      // Mark as processing since welcome message will be generated
+      setProcessingConversations(prev => {
+        const next = new Set(prev)
+        next.add(result.data.id)
+        return next
+      })
     } catch (error: any) {
       console.error('[ChatLayout] Error creating conversation:', error)
       const errorMessage = error?.message || 'Failed to create conversation'
@@ -129,11 +139,16 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   }
 
   // Delete conversation
-  const deleteConversation = (id: string) => {
-    const updated = conversations.filter(c => c.id !== id)
-    saveConversations(updated)
-    if (selectedConversation === id) {
-      setSelectedConversation(updated.length > 0 ? updated[0].id : null)
+  const deleteConversation = async (id: string) => {
+    try {
+      // For now, just remove from UI - add IPC handler later if needed
+      const updated = conversations.filter(c => c.id !== id)
+      setConversations(updated)
+      if (selectedConversation === id) {
+        setSelectedConversation(updated.length > 0 ? updated[0].id : null)
+      }
+    } catch (error) {
+      console.error('Failed to delete conversation:', error)
     }
   }
 
@@ -141,10 +156,11 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   const handleRenameConversation = (newName: string) => {
     if (!conversationToRename) return
     
+    // Update locally for now - add IPC handler later if needed
     const updated = conversations.map(c => 
       c.id === conversationToRename ? { ...c, name: newName } : c
     )
-    saveConversations(updated)
+    setConversations(updated)
     setConversationToRename(null)
   }
   
@@ -303,6 +319,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
           <ChatView 
             key={selectedConversation} 
             conversationId={selectedConversation}
+            isInitiallyProcessing={processingConversations.has(selectedConversation)}
             onProcessingChange={(isProcessing) => {
               setProcessingConversations(prev => {
                 const next = new Set(prev)
@@ -313,6 +330,14 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                 }
                 return next
               })
+            }}
+            onMessageUpdate={(lastMessage: string) => {
+              // Update the conversation's last message for preview
+              setConversations(prev => prev.map(conv => 
+                conv.id === selectedConversation 
+                  ? { ...conv, lastMessage, lastMessageTime: new Date() }
+                  : conv
+              ))
             }}
           />
         ) : (

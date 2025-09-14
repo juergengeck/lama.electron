@@ -8,42 +8,92 @@ import { lamaBridge } from '@/bridge/lama-bridge'
 
 export function ChatView({ 
   conversationId = 'default',
-  onProcessingChange
+  onProcessingChange,
+  onMessageUpdate,
+  isInitiallyProcessing = false
 }: { 
   conversationId?: string
   onProcessingChange?: (isProcessing: boolean) => void
+  onMessageUpdate?: (lastMessage: string) => void
+  isInitiallyProcessing?: boolean
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
+  
+  // Store messages locally to prevent loss during re-renders
+  const [localMessages, setLocalMessages] = useState<typeof messages>([])
+  
+  useEffect(() => {
+    // Always update local messages, even if empty (for initial load)
+    setLocalMessages(messages)
+    console.log('[ChatView] 📊 Updated local messages:', messages.length, 'for conversation:', conversationId)
+    
+    // Update the last message preview when messages change
+    if (messages.length > 0 && onMessageUpdate) {
+      const lastMessage = messages[messages.length - 1]
+      if (lastMessage && lastMessage.content) {
+        onMessageUpdate(lastMessage.content)
+      }
+    }
+  }, [messages, conversationId])
+  
+  console.log('[ChatView] 📊 Rendering with', localMessages.length, 'messages (hook:', messages.length, ') for conversation:', conversationId)
+  console.log('[ChatView] Loading state:', loading)
   const { peers } = useLamaPeers()
   const [conversationName, setConversationName] = useState<string>('Messages')
   const [isProcessing, setIsProcessing] = useState(false)
-  const [isAIProcessing, setIsAIProcessing] = useState(false)
+  const [isAIProcessing, setIsAIProcessing] = useState(isInitiallyProcessing)
   const [aiStreamingContent, setAiStreamingContent] = useState('')
+
+  // Check if welcome message is still being generated on mount
+  useEffect(() => {
+    // If there are no messages and this is a new AI conversation, show spinner
+    if (messages.length === 0 && isInitiallyProcessing) {
+      setIsAIProcessing(true)
+      console.log('[ChatView] Setting AI processing on mount for new conversation')
+    }
+  }, []) // Only on mount
 
   // Listen for AI streaming events
   useEffect(() => {
-    const handleStreamEvent = (event: any) => {
-      if (event.conversationId === conversationId) {
-        if (event.isThinking) {
-          setIsAIProcessing(true)
-          setAiStreamingContent('')
-        } else if (event.partial) {
-          setIsAIProcessing(false)
-          setAiStreamingContent(event.partial)
-        } else if (event.chunk === null || event.chunk === undefined) {
-          // Stream ended
-          setIsAIProcessing(false)
-          setAiStreamingContent('')
-        }
+    if (!window.electronAPI) return
+    
+    // Handle thinking indicator (used for all AI messages including welcome)
+    const handleThinking = (data: any) => {
+      console.log('[ChatView] AI thinking for:', data.conversationId)
+      if (data.conversationId === conversationId) {
+        setIsAIProcessing(true)
+        setAiStreamingContent('')
+        onProcessingChange?.(true) // Update parent state
       }
     }
     
-    // Subscribe to streaming events
-    const unsubscribe = lamaBridge.on('message:stream', handleStreamEvent)
+    // Handle streaming chunks
+    const handleStream = (data: any) => {
+      if (data.conversationId === conversationId) {
+        setIsAIProcessing(false)
+        setAiStreamingContent(data.partial || '')
+      }
+    }
+    
+    // Handle message complete
+    const handleComplete = (data: any) => {
+      if (data.conversationId === conversationId) {
+        setIsAIProcessing(false)
+        setAiStreamingContent('')
+        onProcessingChange?.(false) // Update parent state
+      }
+    }
+    
+    // Subscribe to streaming events via electronAPI
+    const unsubThinking = window.electronAPI.on('message:thinking', handleThinking)
+    const unsubStream = window.electronAPI.on('message:stream', handleStream)
+    const unsubComplete = window.electronAPI.on('message:updated', handleComplete)
     
     return () => {
-      if (unsubscribe) unsubscribe()
+      if (unsubThinking) unsubThinking()
+      if (unsubStream) unsubStream()
+      if (unsubComplete) unsubComplete()
     }
   }, [conversationId])
   
@@ -65,68 +115,8 @@ export function ChatView({
             )
             if (aiMessage) {
               // It's an AI conversation - try to get the model name
-              try {
-                const appModel = lamaBridge.getAppModel()
-                if (appModel?.llmManager) {
-                  // Get loaded models
-                  const loadedModels = appModel.llmManager.getLoadedModels?.()
-                  
-                  if (loadedModels && loadedModels.length > 0) {
-                    // Use the first loaded model (usually the active one)
-                    const activeModel = loadedModels[0]
-                    
-                    if (activeModel && activeModel.name) {
-                      // Format the model name properly
-                      let modelName = activeModel.name
-                      
-                      // Special formatting for known model patterns
-                      if (modelName.toLowerCase().includes('gpt') && modelName.toLowerCase().includes('oss')) {
-                        modelName = 'GPT-OSS'
-                      } else if (modelName.toLowerCase() === 'llama') {
-                        modelName = 'Llama'
-                      } else if (modelName.toLowerCase().includes('ollama')) {
-                        modelName = 'Ollama'
-                      } else {
-                        // General formatting for other models
-                        modelName = modelName
-                          .replace(/[-_]/g, ' ')
-                          .split(' ')
-                          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                          .join(' ')
-                      }
-                      
-                      console.log(`[ChatView] Using AI model name: ${modelName}`)
-                      setConversationName(modelName)
-                      return
-                    }
-                  }
-                  
-                  // Try to get from available models if no loaded models
-                  const availableModels = appModel.llmManager.getAvailableModels?.()
-                  if (availableModels && availableModels.length > 0) {
-                    const firstModel = availableModels[0]
-                    if (firstModel && firstModel.name) {
-                      let modelName = firstModel.name
-                      
-                      // Format the name
-                      if (modelName.toLowerCase().includes('gpt') && modelName.toLowerCase().includes('oss')) {
-                        modelName = 'GPT-OSS'
-                      } else {
-                        modelName = modelName
-                          .replace(/[-_]/g, ' ')
-                          .split(' ')
-                          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                          .join(' ')
-                      }
-                      
-                      setConversationName(modelName)
-                      return
-                    }
-                  }
-                }
-              } catch (error) {
-                console.warn('[ChatView] Could not get AI model info:', error)
-              }
+              // Try to get AI model name from IPC (future enhancement)
+              // For now, use fallback logic
               
               // Fallback based on message content
               if (messages[0]?.content?.toLowerCase().includes('ollama')) {
@@ -150,18 +140,8 @@ export function ChatView({
           return
         }
         
-        // Try to get contact info from app model
-        const appModel = lamaBridge.getAppModel()
-        if (appModel) {
-          const contacts = await appModel.getContacts?.()
-          if (contacts) {
-            const contact = contacts.find((c: any) => c.id === conversationId)
-            if (contact) {
-              setConversationName(contact.name || contact.displayName || 'Contact')
-              return
-            }
-          }
-        }
+        // Try to get contact info via IPC (future enhancement)
+        // For now, use peer name or fallback
         
         // Default fallback
         setConversationName('Messages')
@@ -194,6 +174,11 @@ export function ChatView({
     try {
       await sendMessage(conversationId, content, attachments)
       console.log('[ChatView] sendMessage completed for conversation:', conversationId)
+      
+      // Update last message preview with the sent message
+      if (onMessageUpdate) {
+        onMessageUpdate(content)
+      }
     } finally {
       setIsProcessing(false)
       onProcessingChange?.(false)
@@ -222,7 +207,7 @@ export function ChatView({
       </CardHeader>
       <CardContent className="flex-1 p-0 min-h-0">
         <MessageView
-          messages={messages}
+          messages={localMessages.length > 0 ? localMessages : messages}
           currentUserId={user?.id}
           onSendMessage={handleSendMessage}
           placeholder="Type a message..."

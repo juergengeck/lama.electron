@@ -9,14 +9,22 @@
 import { createAIMessage } from '../utils/message-utils.js'
 
 class AIMessageListener {
-  constructor(channelManager, llmManager, aiContactManager) {
+  constructor(channelManager, llmManager) {
     this.channelManager = channelManager
     this.llmManager = llmManager
-    this.aiContactManager = aiContactManager // To get AI personIds
+    this.aiAssistantModel = null // Will be set after AIAssistantModel is initialized
     this.unsubscribe = null
     this.debounceTimers = new Map()
     this.topicModelMap = new Map() // Track topic->model mappings like LAMA
     this.DEBOUNCE_MS = 200
+  }
+  
+  /**
+   * Set the AI Assistant Model reference
+   */
+  setAIAssistantModel(aiAssistantModel) {
+    this.aiAssistantModel = aiAssistantModel
+    console.log('[AIMessageListener] AI Assistant Model reference set')
   }
 
   /**
@@ -44,8 +52,14 @@ class AIMessageListener {
     console.log('[AIMessageListener] 🎯🎯🎯 NODE: Registering channelManager.onUpdated callback')
     
     // Get instance to check our owner ID
-    const { instance } = await import('./node-one-core.js')
-    console.log(`[AIMessageListener] Node owner ID: ${instance.ownerId?.substring(0, 8)}`)
+    let ownerId;
+    try {
+      const nodeCore = await import('./node-one-core.js')
+      ownerId = nodeCore.default?.ownerId || nodeCore.instance?.ownerId
+    } catch (e) {
+      console.log('[AIMessageListener] Could not get owner ID:', e.message)
+    }
+    console.log(`[AIMessageListener] Node owner ID: ${ownerId?.substring(0, 8)}`)
     
     // Check what channels we know about
     try {
@@ -53,7 +67,7 @@ class AIMessageListener {
       console.log(`[AIMessageListener] Known channels at startup:`, channels.map(c => ({
         id: c.id,
         owner: c.owner?.substring(0, 8),
-        isOurChannel: c.owner === instance.ownerId
+        isOurChannel: c.owner === ownerId
       })))
       
       // Check if ChannelManager is properly subscribed
@@ -78,6 +92,7 @@ class AIMessageListener {
       }
     }, 10000) // Check every 10 seconds
     
+    // Use onUpdated as a function like other parts of the codebase
     this.unsubscribe = this.channelManager.onUpdated(async (
       channelInfoIdHash,
       channelId, 
@@ -88,8 +103,8 @@ class AIMessageListener {
       console.log('[AIMessageListener] 🔔🔔🔔 NODE: Channel update received!', {
         channelId,
         channelOwner: channelOwner?.substring(0, 8),
-        isOurChannel: channelOwner === instance.ownerId,
-        nodeOwner: instance.ownerId?.substring(0, 8),
+        isOurChannel: channelOwner === ownerId,
+        nodeOwner: ownerId?.substring(0, 8),
         dataLength: data?.length,
         timeOfEarliestChange
       })
@@ -102,12 +117,19 @@ class AIMessageListener {
       const timerId = setTimeout(async () => {
         this.debounceTimers.delete(channelId)
         
-        // Process ALL channel updates - we'll check for AI participation inside
-        console.log(`[AIMessageListener] Channel update for: ${channelId}`)
+        // Check if this is an AI topic first to avoid unnecessary processing
+        const isAI = this.isAITopic(channelId)
+        if (!isAI) {
+          // Skip non-AI topics silently
+          return
+        }
+        
+        // Only log and process AI topics
+        console.log(`[AIMessageListener] 📢 AI topic update: ${channelId}`)
         console.log(`[AIMessageListener] Data entries: ${data ? data.length : 0}`)
         
         try {
-          // Process the channel update
+          // Process the channel update for AI topic
           await this.handleChannelUpdate(channelId, {
             channelId,
             isChannelUpdate: true,
@@ -161,8 +183,22 @@ class AIMessageListener {
    * Check if a topic is an AI topic
    */
   isAITopic(topicId) {
-    // Check if topic has a model mapping (like LAMA does)
-    return this.topicModelMap.has(topicId)
+    // Default channel always has AI participation
+    if (topicId === 'default') {
+      return true
+    }
+    
+    // First check local map
+    if (this.topicModelMap.has(topicId)) {
+      return true
+    }
+    
+    // Also check AIAssistantModel's map if available
+    if (this.aiAssistantModel && this.aiAssistantModel.isAITopic) {
+      return this.aiAssistantModel.isAITopic(topicId)
+    }
+    
+    return false
   }
   
   /**
@@ -189,16 +225,30 @@ class AIMessageListener {
   async handleChannelUpdate(channelId, updateInfo) {
     console.log(`[AIMessageListener] Processing channel update for ${channelId}`)
     
-    // Get the TopicModel to access the topic
-    const { instance } = await import('./node-one-core.js')
-    if (!instance?.topicModel) {
-      console.error('[AIMessageListener] TopicModel not available')
+    // Get the TopicModel from the core instance
+    let topicModel;
+    try {
+      const nodeCore = await import('./node-one-core.js')
+      // The default export IS the instance
+      topicModel = nodeCore.default?.topicModel
+      
+      if (!topicModel) {
+        console.log('[AIMessageListener] TopicModel not on default, checking instance export...')
+        topicModel = nodeCore.instance?.topicModel
+      }
+    } catch (e) {
+      console.error('[AIMessageListener] Error importing node-one-core:', e)
+      return
+    }
+    
+    if (!topicModel) {
+      console.error('[AIMessageListener] TopicModel not available - instance:', !!nodeCore.default, 'topicModel:', !!topicModel)
       return
     }
     
     try {
       // Enter the topic room to send messages
-      const topicRoom = await instance.topicModel.enterTopicRoom(channelId)
+      const topicRoom = await topicModel.enterTopicRoom(channelId)
       if (!topicRoom) {
         console.error(`[AIMessageListener] Could not enter topic room ${channelId}`)
         return
@@ -207,6 +257,13 @@ class AIMessageListener {
       // Get all messages from the topic
       const messages = await topicRoom.retrieveAllMessages()
       console.log(`[AIMessageListener] Found ${messages.length} messages in topic`)
+      
+      // If this is a new topic with no messages, skip processing
+      // The welcome message is handled by chat.js when getMessages is called
+      if (messages.length === 0) {
+        console.log(`[AIMessageListener] Empty topic ${channelId} - skipping (welcome handled by chat.js)`)
+        return
+      }
       
       // Find the last user message that needs a response
       let lastUserMessage = null
@@ -225,16 +282,17 @@ class AIMessageListener {
         const messageAge = Date.now() - new Date(lastMessage.creationTime).getTime()
         const isRecent = messageAge < 10000 // 10 seconds
         
-        if (!this.isAIMessage(lastMessage) && messageText && messageText.trim() && isRecent) {
+        const isFromAI = this.isAIMessage(lastMessage)
+        console.log(`[AIMessageListener] Last message from ${messageSender?.toString().substring(0, 8)}...: isAI=${isFromAI}, text="${messageText?.substring(0, 50)}..."`)
+        
+        if (!isFromAI && messageText && messageText.trim() && isRecent) {
           console.log(`[AIMessageListener] Found recent user message: "${messageText}"`)
           
-          // Let AI decide if it should respond (for now, always respond in default channel)
-          const shouldRespond = channelId === 'default' || this.shouldAIRespond(channelId, lastMessage)
-          
-          if (shouldRespond) {
-            console.log(`[AIMessageListener] AI will respond to message`)
-            await this.processUserMessage(topicRoom, lastMessage)
-          }
+          // Delegate to AIAssistantModel for processing
+          console.log(`[AIMessageListener] Delegating to AIAssistantModel for processing`)
+          await this.aiAssistantModel.processMessage(channelId, messageText, messageSender)
+        } else if (isFromAI) {
+          console.log(`[AIMessageListener] ✅ Correctly ignoring AI message from ${messageSender?.toString().substring(0, 8)}...`)
         }
       }
     } catch (error) {
@@ -250,67 +308,33 @@ class AIMessageListener {
     const sender = message.data?.sender || message.author
     if (!sender) return false
     
-    // Get all AI person IDs from the AI contact manager
-    if (this.aiContactManager) {
-      const aiContacts = this.aiContactManager.getAllContacts()
-      return aiContacts.some(contact => contact.personId === sender)
+    // Use AI Assistant Model's isAIPerson method
+    if (this.aiAssistantModel) {
+      return this.aiAssistantModel.isAIPerson(sender)
     }
     
-    // Fallback: check if sender ID looks like an AI (temporary)
-    // AI IDs from logs: ecefa6a33d1bdfb470cd3bb0b86bf4f9d9e316bf55286adf65bbd2fd1487fe6e
-    return false
+    throw new Error('AIAssistantModel not available - cannot determine if person is AI')
   }
   
   /**
    * Process a user message and generate AI response
+   * @deprecated - Use AIAssistantModel.processMessage instead
    */
-  async processUserMessage(topicRoom, message) {
+  async processUserMessage(topicMessages, message, channelId, topicRoom) {
+    // This method is deprecated - all processing should go through AIAssistantModel
     const messageText = message.data?.text || message.text
-    console.log(`[AIMessageListener] Processing user message: "${messageText}"`)
-    
-    if (!this.llmManager) {
-      console.error('[AIMessageListener] LLMManager not available')
-      return
-    }
-    
-    try {
-      // Default to Ollama model
-      const modelId = 'ollama:gpt-oss'
-      
-      // Build chat history for context
-      const messages = [{
-        role: 'user',
-        content: messageText
-      }]
-      
-      // Generate AI response using proper chat method
-      const response = await this.llmManager.chat(messages, modelId)
-      
-      if (response) {
-        // Get the AI's personId for this model
-        let aiPersonId = null
-        if (this.aiContactManager) {
-          aiPersonId = this.aiContactManager.getPersonIdForModel(modelId)
-        }
-        
-        if (!aiPersonId) {
-          console.error(`[AIMessageListener] No personId found for model ${modelId}`)
-          return
-        }
-        
-        // Send the AI response to the topic room
-        // TopicRoom.sendMessage expects (text, author, channelOwner)
-        await topicRoom.sendMessage(
-          response,
-          aiPersonId,
-          undefined // Let it use the default channel owner
-        )
-        
-        console.log(`[AIMessageListener] Sent AI response with identity ${aiPersonId.toString().substring(0, 8)}... to topic`)
-      }
-    } catch (error) {
-      console.error(`[AIMessageListener] Error generating AI response:`, error)
-    }
+    const messageSender = message.data?.sender || message.author
+    console.log(`[AIMessageListener] DEPRECATED: processUserMessage called, delegating to AIAssistantModel`)
+    return this.aiAssistantModel.processMessage(channelId, messageText, messageSender)
+  }
+  
+  /**
+   * Legacy method content - kept for reference
+   * The actual logic has been moved to AIAssistantModel.processMessage
+   */
+  async _legacyProcessUserMessage() {
+    // Original implementation moved to AIAssistantModel
+    // This method is kept for reference only
   }
 }
 

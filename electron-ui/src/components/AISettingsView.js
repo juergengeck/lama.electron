@@ -72,7 +72,8 @@ export function AISettingsView() {
         }
         setApiKeyStatus('testing');
         try {
-            const appModel = lamaBridge.getAppModel();
+            // NO AppModel in browser - everything via IPC
+  const appModel = null;
             if (appModel?.llmManager) {
                 const isValid = await appModel.llmManager.testClaudeApiKey(claudeApiKey);
                 if (isValid) {

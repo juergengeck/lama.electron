@@ -48,6 +48,11 @@ export function MessageView({
   isAIProcessing = false,
   aiStreamingContent = ''
 }: MessageViewProps) {
+  console.log('[MessageView] 🎨 Rendering with', messages.length, 'messages')
+  if (messages.length > 0) {
+    console.log('[MessageView] First message:', messages[0])
+    console.log('[MessageView] Last message:', messages[messages.length - 1])
+  }
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
@@ -84,13 +89,33 @@ export function MessageView({
   
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    // Use setTimeout to ensure DOM has updated
-    setTimeout(() => {
+    // Use multiple techniques to ensure scrolling works
+    const scrollToBottom = () => {
       if (scrollAreaRef.current) {
+        // Method 1: Direct scroll
         scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
+        
+        // Method 2: Scroll into view for the end marker
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+        }
       }
-    }, 0)
-  }, [messages])
+    }
+    
+    // Immediate scroll
+    scrollToBottom()
+    
+    // Delayed scroll to catch any layout changes
+    const timer1 = setTimeout(scrollToBottom, 50)
+    const timer2 = setTimeout(scrollToBottom, 100)
+    const timer3 = setTimeout(scrollToBottom, 200)
+    
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+      clearTimeout(timer3)
+    }
+  }, [messages, aiStreamingContent, sending])
 
 
 
@@ -114,6 +139,11 @@ export function MessageView({
 
   // Enhanced send handler with proper attachment storage
   const handleEnhancedSend = async (text: string, attachments?: EnhancedAttachment[]) => {
+    if (!text.trim() && (!attachments || attachments.length === 0)) {
+      console.log('[MessageView] Empty message, not sending')
+      return
+    }
+    
     try {
       setSending(true)
       console.log('[MessageView] 🎯 Enhanced send with:', text, attachments?.length, 'attachments')
@@ -224,8 +254,13 @@ export function MessageView({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-1 p-4 overflow-y-auto" ref={scrollAreaRef}>
+      <div className="flex-1 p-4 overflow-y-auto" ref={scrollAreaRef} style={{ minHeight: 0 }}>
         <div className="space-y-4">
+          {messages.length === 0 && !loading && !isAIProcessing && !aiStreamingContent && (
+            <div className="text-center py-8 text-muted-foreground">
+              No messages yet. Start a conversation!
+            </div>
+          )}
           {messages.map((message) => {
             // Check if this is the current user's message
             const isCurrentUser = message.senderId === 'user' || message.senderId === currentUserId
@@ -280,7 +315,7 @@ export function MessageView({
                 id: message.id,
                 text: cleanedText, // Use cleaned text without attachment references
                 senderId: message.senderId,
-                senderName: isAIMessage ? 'AI' : (contactNames[message.senderId] || 'Unknown'),
+                senderName: contactNames[message.senderId] || 'Unknown',
                 timestamp: message.timestamp,
                 isOwn: isCurrentUser,
                 subjects: subjects,
@@ -310,7 +345,7 @@ export function MessageView({
                 {!isCurrentUser && (shouldShowSenderLabels || isAIMessage) && (
                   <Avatar className="h-8 w-8 shrink-0">
                     <AvatarFallback className="text-xs">
-                      {isAIMessage ? 'AI' : (contactNames[message.senderId] || 'Unknown').substring(0, 2).toUpperCase()}
+                      {(contactNames[message.senderId] || 'Unknown').substring(0, 2).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                 )}

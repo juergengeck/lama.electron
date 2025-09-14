@@ -97,7 +97,7 @@ export default function InstancesView() {
                     }
                 });
             }
-            // Get contacts - show Node.js owner even if browser ONE.core isn't initialized
+            // Get contacts from Node.js via IPC
             try {
                 const chumContacts = [];
                 // Always try to get Node.js instance info first
@@ -117,23 +117,22 @@ export default function InstancesView() {
                     });
                     console.log('[InstancesView] Added Node.js owner:', nodeInfo.instanceName);
                 }
-                // If browser ONE.core is initialized, add synced contacts via CHUM
-                if (window.appModel?.leuteModel) {
-                    const others = await window.appModel.leuteModel.others();
-                    console.log(`[InstancesView] Found ${others.length} contacts in browser LeuteModel (via CHUM)`);
-                    // Add other contacts synced via CHUM
-                    for (const someone of others) {
-                        try {
-                            const personId = await someone.mainIdentity();
-                            const profile = await someone.mainProfile();
+                // Get contacts from Node.js via IPC (browser has no ONE.core)
+                try {
+                    const contactsResult = await window.electronAPI?.invoke('onecore:getContacts');
+                    if (contactsResult?.success && contactsResult.contacts) {
+                        console.log(`[InstancesView] Found ${contactsResult.contacts.length} contacts from Node.js`);
+                        
+                        // Add contacts from Node.js
+                        for (const contact of contactsResult.contacts) {
                             // Skip if this is the same as Node.js owner (avoid duplicates)
-                            if (personId === nodeInfo?.ownerId) {
+                            if (contact.personId === nodeInfo?.ownerId) {
                                 continue;
                             }
                             chumContacts.push({
-                                id: `contact-${personId}`,
-                                personId: personId,
-                                name: profile?.nickname || `Contact ${personId.substring(0, 8)}`,
+                                id: `contact-${contact.personId}`,
+                                personId: contact.personId,
+                                name: contact.name || `Contact ${contact.personId.substring(0, 8)}`,
                                 platform: 'external',
                                 role: 'contact',
                                 isLocal: false,
@@ -143,14 +142,11 @@ export default function InstancesView() {
                                 capabilities: {}
                             });
                         }
-                        catch (error) {
-                            console.warn('[InstancesView] Error processing contact:', error);
-                        }
+                        console.log(`[InstancesView] Added ${contactsResult.contacts.length} contacts from Node.js`);
                     }
-                    console.log(`[InstancesView] Added ${others.length} CHUM-synced contacts`);
                 }
-                else {
-                    console.log('[InstancesView] Browser ONE.core not initialized, showing Node.js owner only');
+                catch (error) {
+                    console.warn('[InstancesView] Could not get contacts from Node.js:', error);
                 }
                 setContacts(chumContacts);
                 console.log(`[InstancesView] Set ${chumContacts.length} total contacts`);

@@ -5,7 +5,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 // Initialize browser ONE.CORE instance (simple version)
-import { simpleBrowserInit as browserInit } from './services/browser-init-simple';
+import { browserInit as browserInit } from './services/browser-init';
 async function startApp() {
     try {
         console.log('[MAIN] Initializing browser ONE.CORE instance...');

@@ -1,439 +1,631 @@
 /**
- * AI Assistant Model for Electron
- * Orchestrates all AI functionality - adapted from LAMA
- * 
- * This is the main coordinator that brings together:
- * - LLMManager (model management)
- * - AIContactManager (AI identity)
- * - AIMessageListener (CHUM events)
- * - Topic management
+ * AI Assistant Model for managing AI interactions
+ * This class handles AI personas, LLM objects, and message processing
  */
 
-import { OEvent } from '@refinio/one.models/lib/misc/OEvent.js';
-import { ensureIdHash } from '@refinio/one.core/lib/util/type-checks.js';
-import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
-import { AIToolInterface, MCPToolInterface } from '../interfaces/tool-interface.js';
-import AIContactManager from './ai-contact-manager.js';
-import AIMessageListener from './ai-message-listener.js';
-import * as ONE from '@refinio/one.models/lib/api/One.js';
+import { BrowserWindow } from 'electron'
 
-class AIAssistantModel {
+export class AIAssistantModel {
   constructor(nodeOneCore) {
-    this.nodeOneCore = nodeOneCore;
-    this.personId = nodeOneCore.ownerId;
+    this.nodeOneCore = nodeOneCore
+    this.llmManager = null
+    this.llmObjectManager = null
+    this.isInitialized = false
+    this.topicModelMap = new Map()
     
-    // Components (reusing what we have)
-    this.llmManager = null; // Will be set from main process LLMManager
-    this.aiContactManager = nodeOneCore.aiContactManager;
-    this.aiMessageListener = nodeOneCore.aiMessageListener;
-    
-    // State
-    this.isInitialized = false;
-    this.aiTopics = new Map(); // topicId -> modelId mapping
-    this.availableLLMModels = [];
-    
-    // Tool interface for unified tool access
-    this.toolInterface = null;
-    
-    // Events
-    this.onAITopicsChanged = new OEvent();
-    this.onGenerationProgress = new OEvent();
-    
-    console.log('[AIAssistantModel] Created with personId:', this.personId);
+    // Cache for AI contacts - modelId -> personId
+    this.aiContacts = new Map()
   }
-  
+
   /**
-   * Initialize the AI Assistant
+   * Pre-initialize connections to LLM services
+   * This is called early to warm up connections before user needs them
    */
   async init() {
-    if (this.isInitialized) {
-      console.log('[AIAssistantModel] Already initialized');
-      return;
-    }
-    
-    console.log('[AIAssistantModel] Initializing...');
+    console.log('[AIAssistantModel] Pre-warming LLM connections...')
     
     try {
-      // Get LLMManager from main process
-      const { default: llmManager } = await import('../services/llm-manager.js');
-      this.llmManager = llmManager;
-      
-      // Ensure LLMManager is initialized
-      if (!this.llmManager.isInitialized) {
-        await this.llmManager.init();
+      // Get the LLM manager if available
+      const { default: llmManager } = await import('../services/llm-manager.js')
+      if (llmManager) {
+        this.llmManager = llmManager
+        
+        // Pre-warm Ollama connection by checking if it's available
+        if (llmManager.checkOllama) {
+          llmManager.checkOllama().then(available => {
+            if (available) {
+              console.log('[AIAssistantModel] ✅ Ollama connection pre-warmed')
+            }
+          }).catch(() => {
+            // Silently fail - Ollama might not be running
+          })
+        }
+        
+        // Pre-warm LM Studio connection
+        if (llmManager.checkLMStudio) {
+          llmManager.checkLMStudio().then(available => {
+            if (available) {
+              console.log('[AIAssistantModel] ✅ LM Studio connection pre-warmed')
+            }
+          }).catch(() => {
+            // Silently fail - LM Studio might not be running
+          })
+        }
       }
-      
-      // Skip LLM object creation for now - recipe conflict with ONE.core
-      // The error "Mandatory property 'id' missing" suggests ONE.core expects
-      // a different recipe structure than what we're providing
-      // await this.createLLMObjects();
-      console.log('[AIAssistantModel] Skipping LLM object creation - recipe conflict');
-      
-      // Set up AI contacts if not already done
-      await this.ensureAIContacts();
-      
-      // Initialize message listener with proper dependencies
-      this.aiMessageListener = new AIMessageListener(
-        this.nodeOneCore.channelManager,
-        this.llmManager,
-        this.aiContactManager
-      );
-      
-      // Start message listener if not already running
-      if (this.aiMessageListener && !this.aiMessageListener.isListening) {
-        this.aiMessageListener.start();
-      }
-      
-      // No need to register topics - AI responds based on participation
-      console.log('[AIAssistantModel] AI will respond in any conversation where it\'s a participant');
-      
-      // Initialize tool interface for unified tool access - comment out for now as it may have issues
-      // this.toolInterface = new AIToolInterface(this);
-      // console.log('[AIAssistantModel] Tool interface initialized');
-      
-      this.isInitialized = true;
-      console.log('[AIAssistantModel] ✅ Initialized successfully');
-      
     } catch (error) {
-      console.error('[AIAssistantModel] Initialization failed:', error);
-      throw error;
+      console.log('[AIAssistantModel] Could not pre-warm connections:', error.message)
     }
+  }
+
+  /**
+   * Initialize the AI Assistant Model
+   */
+  async initialize(llmManager) {
+    console.log('[AIAssistantModel] Initializing...')
+    
+    // Only set llmManager if we don't already have it from init()
+    if (!this.llmManager) {
+      this.llmManager = llmManager
+    }
+    
+    // Import and create LLMObjectManager
+    const LLMObjectManager = (await import('./llm-object-manager.js')).default
+    this.llmObjectManager = new LLMObjectManager(this.nodeOneCore)
+    console.log('[AIAssistantModel] Created LLMObjectManager')
+    
+    this.isInitialized = true
+    console.log('[AIAssistantModel] ✅ Initialized')
+    
+    // Scan existing conversations for AI participants and register them
+    await this.scanExistingConversations()
   }
   
   /**
-   * Create LLM objects in ONE.core so they sync via CHUM
-   * This is how the browser identifies AI contacts
+   * Scan existing conversations for AI participants and register them as AI topics
    */
-  async createLLMObjects() {
-    console.log('[AIAssistantModel] Creating LLM objects in ONE.core...');
+  async scanExistingConversations() {
+    console.log('[AIAssistantModel] Scanning existing conversations for AI participants...')
     
-    const models = this.llmManager.getAvailableModels();
-    
-    for (const model of models) {
-      try {
-        // Get or create personId for this model
-        const personId = await this.getOrCreatePersonIdForModel(model);
-        
-        // Create LLM object following LAMA mobile app's structure
-        const now = Date.now();
-        const llmObject = {
-          $type$: 'LLM',
-          name: model.id, // Use model.id as the unique identifier (name is the ID field in the recipe)
-          filename: model.id || model.name,
-          modelType: 'remote', // API-based models are remote
-          active: true,
-          deleted: false,
-          created: now,
-          modified: now,
-          createdAt: new Date(now).toISOString(),
-          lastUsed: new Date(now).toISOString(),
-          personId: personId,
-          capabilities: model.capabilities || ['chat'],
-          maxTokens: model.maxTokens || 4096,
-          temperature: model.defaultTemperature || 0.7,
-          provider: model.provider,
-          usageCount: 0
-        };
-        
-        // Store in ONE.core as versioned object
-        const stored = await storeVersionedObject(llmObject);
-        console.log(`[AIAssistantModel] Stored LLM object for ${model.name}: ${stored.idHash}`);
-        
-        // Grant access to federation group for CHUM sync
-        await this.grantAccessToLLMObject(stored.idHash);
-        
-        // Update model with personId
-        this.llmManager.setModelPersonId(model.id, personId);
-        
-        // Add to available models
-        this.availableLLMModels.push({
-          id: model.id,
-          name: model.name,
-          displayName: model.displayName || model.name,
-          personId: personId
-        });
-        
-      } catch (error) {
-        console.error(`[AIAssistantModel] Failed to create LLM object for ${model.name}:`, error);
-      }
+    if (!this.nodeOneCore.topicModel || !this.llmObjectManager) {
+      console.log('[AIAssistantModel] Cannot scan - missing dependencies')
+      return
     }
     
-    console.log(`[AIAssistantModel] Created ${this.availableLLMModels.length} LLM objects`);
-  }
-  
-  /**
-   * Get or create Person ID for a model
-   */
-  async getOrCreatePersonIdForModel(model) {
-    // Check if AI contact already exists
-    let personId = this.aiContactManager.getPersonIdForModel(model.id);
-    
-    if (!personId) {
-      // Create AI contact (Person + Profile + Someone)
-      const someoneIdHash = await this.aiContactManager.createAIContact(
-        model.id,
-        model.displayName || model.name
-      );
-      
-      // Get the personId from the contact manager
-      personId = this.aiContactManager.getPersonIdForModel(model.id);
-    }
-    
-    return personId;
-  }
-  
-  /**
-   * Grant access to LLM object for federation sync
-   */
-  async grantAccessToLLMObject(llmIdHash) {
     try {
-      const { createAccess } = await import('@refinio/one.core/lib/access.js');
-      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js');
+      // Get all topics from the TopicModel
+      const allTopics = await this.nodeOneCore.topicModel.topics.all()
+      console.log(`[AIAssistantModel] Found ${allTopics.length} topics to scan`)
       
-      const federationGroup = this.nodeOneCore.federationGroup;
-      if (!federationGroup) {
-        console.warn('[AIAssistantModel] No federation group available');
-        return;
+      let aiTopicCount = 0
+      
+      for (const topic of allTopics) {
+        try {
+          // Enter the topic room to check messages
+          const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom(topic.id)
+          const messages = await topicRoom.retrieveAllMessages()
+          
+          // Check if any message is from an AI participant
+          let hasAIParticipant = false
+          let aiModelId = null
+          
+          for (const message of messages) {
+            const senderId = message.data?.sender || message.author
+            if (senderId && this.llmObjectManager.isLLMPerson(senderId)) {
+              hasAIParticipant = true
+              
+              // Find the model for this AI person
+              const llmObjects = this.llmObjectManager.getAllLLMObjects()
+              const llmObject = llmObjects.find(obj => 
+                obj.personId && obj.personId.toString() === senderId.toString()
+              )
+              
+              if (llmObject) {
+                aiModelId = llmObject.modelId
+                break
+              }
+            }
+          }
+          
+          if (hasAIParticipant && aiModelId) {
+            console.log(`[AIAssistantModel] Registering AI topic ${topic.id} for model ${aiModelId}`)
+            this.registerAITopic(topic.id, aiModelId)
+            aiTopicCount++
+          }
+        } catch (error) {
+          console.warn(`[AIAssistantModel] Could not scan topic ${topic.id}:`, error.message)
+        }
       }
       
-      await createAccess([{
-        id: llmIdHash,
-        person: [],
-        group: [federationGroup.groupIdHash],
-        mode: SET_ACCESS_MODE.ADD
-      }]);
-      
-      console.log(`[AIAssistantModel] Granted federation access to LLM object`);
+      console.log(`[AIAssistantModel] ✅ Scanned ${allTopics.length} topics, registered ${aiTopicCount} as AI topics`)
     } catch (error) {
-      console.error('[AIAssistantModel] Failed to grant access to LLM object:', error);
+      console.error('[AIAssistantModel] Error scanning existing conversations:', error)
     }
   }
-  
+
   /**
-   * Ensure AI contacts exist for all models
+   * Register an AI topic
    */
-  async ensureAIContacts() {
-    const models = this.llmManager.getAvailableModels();
-    
-    if (this.aiContactManager.getAllContacts().length === 0) {
-      console.log('[AIAssistantModel] Creating AI contacts...');
-      await this.aiContactManager.setupAIContacts(models);
-    }
+  registerAITopic(topicId, modelId) {
+    console.log(`[AIAssistantModel] Registered AI topic: ${topicId} with model: ${modelId}`)
+    this.topicModelMap.set(topicId, modelId)
   }
-  
+
   /**
-   * Create or get an AI topic for a specific model
-   */
-  async getOrCreateAITopic(modelId) {
-    console.log(`[AIAssistantModel] Getting/creating AI topic for model: ${modelId}`);
-    
-    // Check if we already have a topic for this model
-    for (const [topicId, mappedModelId] of this.aiTopics.entries()) {
-      if (mappedModelId === modelId) {
-        return topicId;
-      }
-    }
-    
-    // Create new topic
-    const model = this.availableLLMModels.find(m => m.id === modelId);
-    if (!model) {
-      throw new Error(`Model ${modelId} not found`);
-    }
-    
-    const topicName = `Chat with ${model.displayName}`;
-    const topicId = `ai-${modelId}-${Date.now()}`;
-    
-    // Create topic through TopicModel
-    if (this.nodeOneCore.topicModel) {
-      await this.nodeOneCore.topicModel.createGroupTopic(
-        topicName,
-        topicId,
-        this.personId
-      );
-      
-      // Register this as an AI topic
-      this.aiTopics.set(topicId, modelId);
-      this.aiMessageListener.registerAITopic(topicId, modelId);
-      
-      console.log(`[AIAssistantModel] Created AI topic: ${topicId} for model: ${modelId}`);
-    }
-    
-    return topicId;
-  }
-  
-  /**
-   * Check if a topic is AI-enabled
+   * Check if a topic is an AI topic
    */
   isAITopic(topicId) {
-    return this.aiTopics.has(topicId) || 
-           topicId === 'default' || 
-           topicId === 'ai-chat' ||
-           topicId.includes('ai-');
+    return this.topicModelMap.has(topicId)
   }
-  
+
   /**
    * Get the model ID for a topic
    */
-  getModelForTopic(topicId) {
-    return this.aiTopics.get(topicId) || 'ollama:gpt-oss'; // Default model
+  getModelIdForTopic(topicId) {
+    return this.topicModelMap.get(topicId) || null
   }
-  
+
   /**
-   * Get all available LLM models with their Person IDs
+   * Process a message for AI response
    */
-  getAvailableLLMModels() {
-    return this.availableLLMModels;
+  async processMessage(topicId, message, senderId) {
+    console.log(`[AIAssistantModel] Processing message for topic ${topicId}: "${message}"`)
+    
+    try {
+      // Get the model ID for this topic
+      const modelId = this.topicModelMap.get(topicId)
+      if (!modelId) {
+        console.log('[AIAssistantModel] No AI model registered for this topic')
+        return null
+      }
+      
+      // Get the AI person ID for this model
+      const aiPersonId = await this.ensureAIContactForModel(modelId)
+      if (!aiPersonId) {
+        console.error('[AIAssistantModel] Could not get AI person ID')
+        return null
+      }
+      
+      // Check if the message is from the AI itself
+      if (senderId === aiPersonId || (senderId && aiPersonId && senderId.toString() === aiPersonId.toString())) {
+        console.log('[AIAssistantModel] Message is from AI, skipping response')
+        return null
+      }
+      
+      // Get the topic room
+      const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom(topicId)
+      
+      // Get conversation history
+      const messages = await topicRoom.retrieveAllMessages()
+      
+      // Build message history with proper role detection
+      const history = []
+      
+      // Get last 10 messages for context
+      const recentMessages = messages.slice(-10)
+      for (const msg of recentMessages) {
+        const text = msg.data?.text || msg.text
+        const msgSender = msg.data?.sender || msg.author
+        
+        if (text && text.trim()) {
+          // Check if sender is AI using our isAIPerson method
+          const isAI = this.isAIPerson(msgSender)
+          history.push({
+            role: isAI ? 'assistant' : 'user',
+            content: text
+          })
+        }
+      }
+      
+      // Add the new message if not already in history
+      const lastHistoryMsg = history[history.length - 1]
+      if (!lastHistoryMsg || lastHistoryMsg.content !== message) {
+        history.push({
+          role: 'user',
+          content: message
+        })
+      }
+      
+      console.log(`[AIAssistantModel] Sending ${history.length} messages to LLM`)
+      
+      // Generate message ID for streaming
+      const messageId = `ai-${Date.now()}`
+      const conversationId = topicId
+      let fullResponse = ''
+      
+      // Send thinking indicator to UI
+      const windows = BrowserWindow.getAllWindows()
+      for (const window of windows) {
+        window.webContents.send('message:thinking', {
+          conversationId,
+          messageId,
+          senderId: aiPersonId,
+          isAI: true
+        })
+      }
+      
+      // Get AI response with streaming support
+      const response = await this.llmManager.chat(history, modelId, {
+        onStream: (chunk) => {
+          fullResponse += chunk
+          
+          // Send streaming updates to UI
+          for (const window of BrowserWindow.getAllWindows()) {
+            window.webContents.send('message:stream', {
+              conversationId,
+              messageId,
+              chunk,
+              partial: fullResponse,
+              senderId: aiPersonId,
+              isAI: true
+            })
+          }
+        }
+      })
+      
+      if (response) {
+        // Send the response to the topic
+        await topicRoom.sendMessage(response, aiPersonId)
+        console.log(`[AIAssistantModel] Sent AI response to topic ${topicId}`)
+        
+        // Notify UI about the complete message
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send('message:updated', {
+            conversationId,
+            message: {
+              id: messageId,
+              conversationId,
+              text: response,
+              senderId: aiPersonId,
+              isAI: true,
+              timestamp: new Date().toISOString(),
+              status: 'sent'
+            }
+          })
+        }
+        
+        return response
+      }
+      
+      return null
+    } catch (error) {
+      console.error('[AIAssistantModel] Error processing message:', error)
+      return null
+    }
   }
-  
+
   /**
-   * Check if a personId belongs to an AI
+   * Get or create person ID for a model
+   */
+  async getOrCreatePersonIdForModel(model) {
+    return await this.ensureAIContactForModel(model.id)
+  }
+
+  /**
+   * Create an AI contact using standard LeuteModel flow
+   * Only adds AI-specific tracking via LLMObjectManager
+   */
+  async createAIContact(modelId, displayName) {
+    console.log(`[AIAssistantModel] Setting up AI contact for ${displayName} (${modelId})`)
+    
+    const leuteModel = this.nodeOneCore.leuteModel
+    if (!leuteModel) {
+      console.error('[AIAssistantModel] LeuteModel not available')
+      return null
+    }
+
+    // Check cache first
+    const cached = this.aiContacts.get(modelId)
+    if (cached) {
+      console.log(`[AIAssistantModel] Using cached contact for ${modelId}: ${cached.toString().substring(0, 8)}...`)
+      return cached
+    }
+
+    try {
+      // Create Person object (ONE.core handles deduplication)
+      const email = `${modelId.replace(/[^a-zA-Z0-9]/g, '_')}@ai.local`
+      const personData = {
+        $type$: 'Person',
+        email: email,
+        name: displayName
+      }
+      
+      const { storeIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+      const result = await storeIdObject(personData)
+      const personIdHash = typeof result === 'object' && result.idHash ? result.idHash : result
+      console.log(`[AIAssistantModel] Person ID: ${personIdHash.toString().substring(0, 8)}...`)
+      
+      // Ensure keys exist for this person
+      const { createDefaultKeys, hasDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
+      if (!(await hasDefaultKeys(personIdHash))) {
+        await createDefaultKeys(personIdHash)
+        console.log(`[AIAssistantModel] Created cryptographic keys`)
+      }
+      
+      // Check if this person is already in contacts
+      const others = await leuteModel.others()
+      let alreadyInContacts = false
+      
+      for (const someone of others) {
+        try {
+          const existingPersonId = await someone.mainIdentity()
+          if (existingPersonId.toString() === personIdHash.toString()) {
+            alreadyInContacts = true
+            console.log(`[AIAssistantModel] AI contact already exists in contacts`)
+            break
+          }
+        } catch (err) {
+          // Continue checking
+        }
+      }
+      
+      // If not in contacts, create Profile and Someone
+      if (!alreadyInContacts) {
+        
+        // Create new Profile and Someone using proper SomeoneModel API
+        const ProfileModel = (await import('@refinio/one.models/lib/models/Leute/ProfileModel.js')).default
+        const SomeoneModel = (await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')).default
+        const myId = await leuteModel.myMainIdentity()
+        
+        const profile = await ProfileModel.constructWithNewProfile(
+          personIdHash,
+          myId,
+          'default'
+        )
+        
+        profile.personDescriptions.push({
+          $type$: 'PersonName',
+          name: displayName
+        })
+        
+        await profile.saveAndLoad()
+        console.log(`[AIAssistantModel] Created profile: ${profile.idHash.toString().substring(0, 8)}...`)
+        
+        // Create Someone using storeVersionedObject (idempotent)
+        const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+        
+        const newSomeone = {
+          $type$: 'Someone',
+          someoneId: modelId,
+          mainProfile: profile.idHash,
+          identities: new Map([[personIdHash, new Set([profile.idHash])]])
+        }
+        
+        const result = await storeVersionedObject(newSomeone)
+        console.log(`[AIAssistantModel] Created/found Someone: ${result.idHash.toString().substring(0, 8)}...`)
+        
+        await leuteModel.addSomeoneElse(result.idHash)
+        console.log(`[AIAssistantModel] Added to contacts: ${result.idHash.toString().substring(0, 8)}...`)
+      }
+      
+      // AI-SPECIFIC: Cache the person ID and register with LLMObjectManager
+      this.aiContacts.set(modelId, personIdHash)
+      
+      if (this.llmObjectManager) {
+        this.llmObjectManager.cacheAIPersonId(modelId, personIdHash)
+        console.log(`[AIAssistantModel] Registered AI person with LLMObjectManager`)
+      }
+      
+      console.log(`[AIAssistantModel] ✅ AI contact ready: ${personIdHash.toString().substring(0, 8)}...`)
+      return personIdHash
+      
+    } catch (error) {
+      console.error('[AIAssistantModel] Failed to create AI contact:', error)
+      return null
+    }
+  }
+
+  /**
+   * Get person ID for a model
+   */
+  getPersonIdForModel(modelId) {
+    return this.aiContacts.get(modelId) || null
+  }
+
+  /**
+   * Check if a person ID is an AI person
    */
   isAIPerson(personId) {
-    const personIdStr = personId?.toString();
-    return this.availableLLMModels.some(
-      model => model.personId?.toString() === personIdStr
-    );
-  }
-  
-  /**
-   * Generate AI response for a message
-   */
-  async generateResponse({ message, modelId, temperature = 0.7, topicId = null }) {
-    if (!this.isInitialized) {
-      throw new Error('AIAssistantModel not initialized');
+    if (!personId) return false
+    
+    // Check if this person ID is in our AI contacts cache
+    for (const [modelId, aiPersonId] of this.aiContacts) {
+      if (aiPersonId === personId || (aiPersonId && aiPersonId.toString() === personId.toString())) {
+        return true
+      }
     }
     
+    // Also check with LLMObjectManager if available
+    if (this.llmObjectManager) {
+      return this.llmObjectManager.isLLMPerson(personId)
+    }
+    
+    return false
+  }
+
+  /**
+   * Ensure AI contact exists for a specific model
+   */
+  async ensureAIContactForModel(modelId) {
+    // Check cache first
+    const existingContact = this.getPersonIdForModel(modelId)
+    if (existingContact) {
+      return existingContact
+    }
+    
+    // Find the model details
+    const models = this.llmManager.getAvailableModels()
+    const model = models.find(m => m.id === modelId)
+    
+    if (!model) {
+      throw new Error(`Model ${modelId} not found in available models`)
+    }
+    
+    // Create contact (idempotent due to storeVersionedObject)
+    const personId = await this.createAIContact(model.id, model.name)
+    
+    if (!personId) {
+      throw new Error(`Failed to create AI contact for model ${modelId}`)
+    }
+    
+    return personId
+  }
+
+  /**
+   * Handle a new topic creation by sending a welcome message
+   */
+  async handleNewTopic(channelId, topicRoom) {
+    const startTime = Date.now()
+    console.log(`[AIAssistantModel] 🎯 Handling new topic: ${channelId} at ${new Date().toISOString()}`)
+    
     try {
-      const model = this.llmManager.getModel(modelId);
+      // Get the default AI model
+      const modelStartTime = Date.now()
+      const model = this.getDefaultModel()
       if (!model) {
-        throw new Error(`Model ${modelId} not found`);
+        throw new Error('No AI model available')
+      }
+      console.log(`[AIAssistantModel] ⏱️ Model selection took ${Date.now() - modelStartTime}ms`)
+      
+      // Register this as an AI topic
+      this.registerAITopic(channelId, model.id || model.name)
+      
+      // Get or create the AI person ID for this model
+      const personStartTime = Date.now()
+      const aiPersonId = await this.getOrCreatePersonIdForModel(model)
+      if (!aiPersonId) {
+        console.error('[AIAssistantModel] Could not get AI person ID')
+        return
+      }
+      console.log(`[AIAssistantModel] ⏱️ AI person creation took ${Date.now() - personStartTime}ms`)
+      
+      // Send thinking indicator to UI
+      const { BrowserWindow } = await import('electron')
+      const messageId = `ai-${Date.now()}`
+      const windows = BrowserWindow.getAllWindows()
+      for (const window of windows) {
+        window.webContents.send('message:thinking', {
+          conversationId: channelId,
+          messageId,
+          isAI: true
+        })
       }
       
-      console.log(`[AIAssistantModel] Generating response with ${modelId}:`, message.substring(0, 100) + '...');
+      // Generate welcome message from LLM
+      const messages = [
+        { role: 'system', content: `You are a helpful AI assistant starting a new conversation. Generate a brief, friendly welcome message. Be warm and approachable. Keep it under 2 sentences.` },
+        { role: 'user', content: `Generate a welcome message for a new chat conversation.` }
+      ]
       
-      // Get conversation history if topicId provided
-      let messages = [{ role: 'user', content: message }];
-      if (topicId && this.nodeOneCore.topicModel) {
-        const history = await this.getConversationHistory(topicId);
-        messages = [...history, { role: 'user', content: message }];
+      const llmStartTime = Date.now()
+      console.log(`[AIAssistantModel] 📡 Requesting welcome message from ${model.id} at ${new Date().toISOString()}`)
+      const response = await this.llmManager.chat(messages, model.id)
+      const welcomeMessage = response
+      console.log(`[AIAssistantModel] ⏱️ LLM response took ${Date.now() - llmStartTime}ms`)
+      console.log(`[AIAssistantModel] Generated welcome: "${welcomeMessage}"`)
+      
+      // Send the welcome message to the topic
+      const sendStartTime = Date.now()
+      await topicRoom.sendMessage(welcomeMessage, aiPersonId)
+      console.log(`[AIAssistantModel] ⏱️ Message send took ${Date.now() - sendStartTime}ms`)
+      console.log(`[AIAssistantModel] ✅ Welcome message sent to topic ${channelId}`)
+      console.log(`[AIAssistantModel] ⏱️ TOTAL handleNewTopic time: ${Date.now() - startTime}ms`)
+      
+      // Notify UI about the complete message
+      for (const window of windows) {
+        window.webContents.send('message:updated', { 
+          conversationId: channelId,
+          message: {
+            id: messageId,
+            conversationId: channelId,
+            text: welcomeMessage,
+            senderId: aiPersonId,
+            isAI: true,
+            timestamp: new Date().toISOString(),
+            status: 'sent'
+          }
+        })
       }
-      
-      // Generate response using LLMManager
-      const response = await this.llmManager.generateResponse({
-        modelId,
-        messages,
-        temperature
-      });
-      
-      // Emit progress event
-      this.onGenerationProgress.emit({
-        topicId,
-        modelId,
-        status: 'completed',
-        response
-      });
-      
-      return response;
       
     } catch (error) {
-      console.error('[AIAssistantModel] Response generation failed:', error);
-      this.onGenerationProgress.emit({
-        topicId,
-        modelId,
-        status: 'error',
-        error: error.message
-      });
-      throw error;
+      console.error('[AIAssistantModel] Error handling new topic:', error)
     }
   }
-  
+
   /**
-   * Get conversation history from a topic
+   * Get the default AI model
    */
-  async getConversationHistory(topicId, limit = 10) {
-    try {
-      if (!this.nodeOneCore.topicModel) {
-        return [];
-      }
-      
-      const messages = await this.nodeOneCore.topicModel.getMessages(topicId, limit);
-      
-      // Convert to ChatML format
-      return messages.map(msg => ({
-        role: this.isAIPerson(msg.sender) ? 'assistant' : 'user',
-        content: msg.text || ''
-      })).reverse(); // Reverse to get chronological order
-      
-    } catch (error) {
-      console.warn('[AIAssistantModel] Failed to get conversation history:', error);
-      return [];
-    }
-  }
-  
-  /**
-   * Get tools available for LLM to use
-   */
-  getToolsForLLM() {
-    if (!this.toolInterface) {
-      return [];
+  getDefaultModel() {
+    console.log('[AIAssistantModel] 🔍 getDefaultModel called')
+    
+    if (!this.llmManager) {
+      console.warn('[AIAssistantModel] ❌ LLMManager not available')
+      return null
     }
     
-    return this.toolInterface.getToolsForLLM();
-  }
-  
-  /**
-   * Execute a tool on behalf of the AI
-   */
-  async executeToolForAI(toolName, input, context = {}) {
-    if (!this.toolInterface) {
-      throw new Error('Tool interface not initialized');
+    // Use the user's selected default model
+    const selectedModelId = this.llmManager.defaultModelId
+    const models = this.llmManager.getAvailableModels()
+    
+    if (selectedModelId) {
+      const selectedModel = models.find(m => m.id === selectedModelId)
+      if (selectedModel) {
+        console.log(`[AIAssistantModel] Using user's selected model: ${selectedModelId}`)
+        return selectedModel
+      }
     }
     
-    return await this.toolInterface.handleToolCall(toolName, input, context);
-  }
-  
-  /**
-   * List all LLM objects from ONE.core
-   */
-  async getLLMObjects() {
-    try {
-      // Query all LLM objects from ONE.core
-      const llmObjects = await ONE.queryObjects({
-        type: 'LLM',
-        deleted: false
-      });
-      
-      return llmObjects;
-    } catch (error) {
-      console.warn('[AIAssistantModel] Failed to query LLM objects:', error);
-      return [];
+    // Fallback to first available model
+    if (models.length > 0) {
+      console.log(`[AIAssistantModel] No default set, using first model: ${models[0].id}`)
+      return models[0]
     }
+    
+    throw new Error('No AI models available')
   }
-  
+
   /**
-   * Store an updated LLM object
+   * Set up AI contacts for all available models
    */
-  async updateLLMObject(llmId, updates) {
-    try {
-      const existingObject = await ONE.getObject(llmId);
-      if (!existingObject) {
-        throw new Error(`LLM object ${llmId} not found`);
+  async setupAIContacts(models) {
+    console.log(`[AIAssistantModel] Setting up ${models.length} AI contacts...`)
+    
+    const createdContacts = []
+    
+    for (const model of models) {
+      try {
+        const personId = await this.createAIContact(model.id, model.name)
+        if (personId) {
+          createdContacts.push({
+            modelId: model.id,
+            personId: personId,
+            name: model.name
+          })
+        }
+      } catch (error) {
+        console.error(`[AIAssistantModel] Failed to create contact for ${model.name}:`, error)
       }
-      
-      const updatedObject = {
-        ...existingObject,
-        ...updates
-      };
-      
-      const stored = await storeVersionedObject(updatedObject);
-      console.log(`[AIAssistantModel] Updated LLM object: ${stored.idHash}`);
-      
-      return stored.idHash;
-    } catch (error) {
-      console.error(`[AIAssistantModel] Failed to update LLM object:`, error);
-      throw error;
     }
+    
+    console.log(`[AIAssistantModel] ✅ Set up ${createdContacts.length} AI contacts`)
+    return createdContacts
   }
+
+  /**
+   * Get all AI contacts that have been set up
+   * This is AI-specific tracking, not general contact management
+   */
+  getAllContacts() {
+    return Array.from(this.aiContacts.entries()).map(([modelId, personId]) => {
+      const models = this.llmManager?.getAvailableModels() || []
+      const model = models.find(m => m.id === modelId)
+      return {
+        modelId,
+        personId,
+        name: model?.name || modelId
+      }
+    })
+  }
+
 }
 
-export default AIAssistantModel;
+export default AIAssistantModel

@@ -9,10 +9,14 @@
  * - NetworkSettingsService.parseInvitationUrl()
  */
 
-import { isInvitation } from '@refinio/one.models/lib/misc/ConnectionEstablishment/PairingManager.js';
-import type { Invitation } from '@refinio/one.models/lib/misc/ConnectionEstablishment/PairingManager.js';
-
+// NO ONE.CORE IMPORTS IN BROWSER - Use simple types instead
 export type InvitationMode = 'IoM' | 'IoP';
+
+export interface Invitation {
+  token: string;
+  publicKey: string;
+  url: string;
+}
 
 export interface ParsedInvitation {
   mode: InvitationMode | undefined;
@@ -65,7 +69,7 @@ export function parseInvitationUrl(invitationLink: string): ParsedInvitation {
 
 /**
  * Extract pairing information from invitation URL
- * Direct implementation from one.leute/src/utils/pairing.ts
+ * Simple validation without ONE.core dependency
  * 
  * @param invitationLink URL containing invitation data in hash fragment
  * @returns Invitation object if valid, undefined otherwise
@@ -76,7 +80,11 @@ function getPairingInformation(invitationLink: string): Invitation | undefined {
       decodeURIComponent(invitationLink.split('#')[1])
     ) as Invitation;
     
-    if (isInvitation(invitation)) {
+    // Simple validation - check required fields exist
+    if (invitation && 
+        typeof invitation.token === 'string' &&
+        typeof invitation.publicKey === 'string' &&
+        typeof invitation.url === 'string') {
       return invitation;
     }
     

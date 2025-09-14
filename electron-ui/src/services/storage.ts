@@ -45,7 +45,7 @@ export async function clearStorage(): Promise<void> {
     
     // Clear localStorage
     if (typeof localStorage !== 'undefined') {
-      localStorage.clear()
+      await ipcStorage.clear()
     }
     
     console.log('[Storage] Storage cleared')

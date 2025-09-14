@@ -5,40 +5,10 @@
 
 const { contextBridge, ipcRenderer } = require('electron')
 
-// Initialize ONE Platform with Node.js loader
-console.log('[PRELOAD] Initializing ONE Platform...')
-
-async function initializeONEPlatform() {
-  try {
-    console.log('[PRELOAD] Loading Node.js platform...')
-    
-    // Import and initialize the Node.js platform
-    require('@refinio/one.core/lib/system/load-nodejs.js')
-    console.log('[PRELOAD] Node.js platform loaded')
-    
-    // Set platform as loaded
-    const { setPlatformLoaded } = require('@refinio/one.core/lib/system/platform.js')
-    setPlatformLoaded('nodejs')
-    console.log('[PRELOAD] Platform set to nodejs')
-    
-    // Test that platform is working
-    const { ensurePlatformLoaded } = require('@refinio/one.core/lib/system/platform.js')
-    ensurePlatformLoaded()
-    console.log('[PRELOAD] ✅ Platform loaded successfully')
-    
-    // Test crypto functionality
-    const { createCryptoHash } = require('@refinio/one.core/lib/system/crypto-helpers.js')
-    const testHash = createCryptoHash('SHA-256')
-    testHash.update('test')
-    const digest = testHash.digest('hex')
-    console.log(`[PRELOAD] ✅ Crypto working - SHA-256('test') = ${digest}`)
-    
-    return true
-  } catch (error) {
-    console.error('[PRELOAD] ❌ Platform initialization failed:', error)
-    throw error
-  }
-}
+// NO ONE.CORE IN BROWSER
+// Platform is loaded only in the main process
+console.log('[PRELOAD] Script loaded at:', new Date().toISOString())
+console.log('[PRELOAD] Browser does not load ONE.core - using IPC only')
 
 // Platform is initialized in the main process for ESM modules
 // The preload script runs in an isolated context and can't share module state
@@ -130,19 +100,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Navigation from menu
   on: (channel, callback) => {
-    const validChannels = ['navigate', 'update:mainProcessLog']
+    const validChannels = [
+      'navigate', 
+      'update:mainProcessLog',
+      'message:updated',
+      'contact:added',
+      'chat:conversationCreated',
+      'chat:messageSent'
+    ]
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, callback)
     }
   },
   off: (channel, callback) => {
-    const validChannels = ['navigate', 'update:mainProcessLog']
+    const validChannels = [
+      'navigate', 
+      'update:mainProcessLog',
+      'message:updated',
+      'contact:added',
+      'chat:conversationCreated',
+      'chat:messageSent'
+    ]
     if (validChannels.includes(channel)) {
       ipcRenderer.removeListener(channel, callback)
     }
   },
   removeListener: (channel, callback) => {
-    const validChannels = ['navigate', 'update:mainProcessLog']
+    const validChannels = [
+      'navigate', 
+      'update:mainProcessLog',
+      'message:updated',
+      'contact:added',
+      'chat:conversationCreated',
+      'chat:messageSent'
+    ]
     if (validChannels.includes(channel)) {
       ipcRenderer.removeListener(channel, callback)
     }

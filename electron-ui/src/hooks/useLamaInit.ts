@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { simpleBrowserInit as browserInit } from '../services/browser-init-simple.ts'
+import { browserInit as browserInit } from '../services/browser-init.ts'
 
 export interface LamaAuthState {
   isInitialized: boolean
@@ -142,7 +142,7 @@ export function useLamaInit() {
       await browserInit.logout()
       
       // Clear saved credentials on logout
-      localStorage.removeItem('lama-last-user')
+      await ipcStorage.removeItem('lama-last-user')
       
       setState(prev => ({
         ...prev,

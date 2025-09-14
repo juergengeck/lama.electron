@@ -483,7 +483,7 @@ export class AIHandler {
    */
   async getAIContacts(request) {
     try {
-      const contacts = this.nodeOneCore.aiContactManager?.getAllContacts() || [];
+      const contacts = this.nodeOneCore.aiAssistantModel?.getAllContacts() || [];
       
       return {
         statusCode: 200,
@@ -514,12 +514,12 @@ export class AIHandler {
         throw new Error('modelId is required');
       }
       
-      const someoneIdHash = await this.nodeOneCore.aiContactManager?.createAIContact(
+      const someoneIdHash = await this.nodeOneCore.aiAssistantModel?.createAIContact(
         modelId,
         displayName || modelId
       );
       
-      const personId = this.nodeOneCore.aiContactManager?.getPersonIdForModel(modelId);
+      const personId = this.nodeOneCore.aiAssistantModel?.getPersonIdForModel(modelId);
       
       return {
         statusCode: 201,

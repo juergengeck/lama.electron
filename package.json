@@ -6,6 +6,7 @@
   "main": "lama-electron-shadcn.js",
   "scripts": {
     "electron": "NODE_ENV=development electron lama-electron-shadcn.js",
+    "simple": "NODE_ENV=development electron lama-simple.js",
     "dev": "cd electron-ui && npm run dev",
     "build": "cd electron-ui && npm run build",
     "build:ui": "npm run build --prefix electron-ui",
@@ -22,7 +23,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.3",
     "@refinio/one.core": "file:vendor/refinio-one.core-0.6.1-beta-2.tgz",
-    "@refinio/one.models": "file:vendor/refinio-one.models-14.1.0-beta-5.tgz",
+    "@refinio/one.models": "file:vendor/refinio-one.models-14.1.0-beta-1.tgz",
     "@refinio/refinio-api": "file:vendor/refinio-refinio-api-0.1.0.tgz",
     "node-fetch": "^2.7.0",
     "ws": "^8.18.3"

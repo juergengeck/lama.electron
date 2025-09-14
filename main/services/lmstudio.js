@@ -3,7 +3,7 @@
  * Handles communication with LM Studio via OpenAI-compatible API
  */
 
-const fetch = require('node-fetch')
+import fetch from 'node-fetch'
 
 const LM_STUDIO_BASE_URL = 'http://localhost:1234/v1'
 
@@ -150,7 +150,7 @@ async function* streamChatWithLMStudio(modelName, messages, options = {}) {
   }
 }
 
-module.exports = {
+export {
   isLMStudioRunning,
   getAvailableModels,
   chatWithLMStudio,

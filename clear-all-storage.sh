@@ -6,6 +6,7 @@ echo "Clearing all ONE.core storage..."
 # Clear Node.js storage
 echo "Clearing Node.js storage..."
 rm -rf one-core-storage/node
+rm -rf OneDB
 
 # Clear browser IndexedDB (Electron stores it in userData)
 echo "Clearing browser IndexedDB..."

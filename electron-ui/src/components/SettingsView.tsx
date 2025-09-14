@@ -94,7 +94,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
       udpPort: 8080,  // For P2P UDP connections
       enableP2P: true,
       enableRelay: true,
-      eddaDomain: localStorage.getItem('edda-domain') || 'edda.dev.refinio.one'
+      eddaDomain: await ipcStorage.getItem('edda-domain') || 'edda.dev.refinio.one'
     },
     ai: {
       modelPath: '/models/llama-7b.gguf',
@@ -236,8 +236,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
       // Add certificates to keys array (they're both crypto objects)
       const allCryptoObjects = [...keys, ...certificates]
       
-      // Get app model for metadata and CRDT objects
-      const appModel = lamaBridge.getAppModel()
+      // Get metadata and CRDT objects via IPC (future enhancement)
       
       const mockSystemObjects = {
         keys: allCryptoObjects.length > 0 ? allCryptoObjects : [
@@ -387,10 +386,18 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
   }
   
   const loadClaudeApiKey = async () => {
-    const storedKey = localStorage.getItem('claude_api_key')
-    if (storedKey) {
-      setClaudeApiKey(storedKey)
-      setApiKeyStatus('valid')
+    try {
+      // Retrieve API key from ONE.core's secure storage via IPC
+      const result = await window.electronAPI?.invoke('onecore:secureRetrieve', {
+        key: 'claude_api_key'
+      })
+      
+      if (result?.success && result.value) {
+        setClaudeApiKey(result.value)
+        setApiKeyStatus('valid')
+      }
+    } catch (error) {
+      console.error('Failed to load Claude API key:', error)
     }
   }
   
@@ -402,16 +409,28 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
     
     setApiKeyStatus('testing')
     try {
-      const appModel = lamaBridge.getAppModel()
-      if (appModel?.llmManager) {
-        const isValid = await appModel.llmManager.testClaudeApiKey(claudeApiKey)
-        if (isValid) {
-          await appModel.llmManager.setClaudeApiKey(claudeApiKey)
+      // Store API key securely in ONE.core's encrypted storage via IPC
+      const result = await window.electronAPI?.invoke('onecore:secureStore', {
+        key: 'claude_api_key',
+        value: claudeApiKey,
+        encrypted: true
+      })
+      
+      if (result?.success) {
+        // Test the API key with Claude
+        const testResult = await window.electronAPI?.invoke('llm:testApiKey', {
+          provider: 'anthropic',
+          apiKey: claudeApiKey
+        })
+        
+        if (testResult?.success) {
           setApiKeyStatus('valid')
           await loadModels()
         } else {
           setApiKeyStatus('invalid')
         }
+      } else {
+        throw new Error('Failed to store API key securely')
       }
     } catch (error) {
       console.error('Failed to save Claude API key:', error)
@@ -558,9 +577,9 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                       onClick={() => {
                         // Save the domain to localStorage
                         if (settings.network.eddaDomain) {
-                          localStorage.setItem('edda-domain', settings.network.eddaDomain)
+                          await ipcStorage.setItem('edda-domain', settings.network.eddaDomain)
                         } else {
-                          localStorage.removeItem('edda-domain')
+                          await ipcStorage.removeItem('edda-domain')
                         }
                         setHasChanges(false)
                       }}
@@ -779,11 +798,38 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                         className="bg-red-600 hover:bg-red-700"
                         onClick={async () => {
                           try {
+                            console.log('[SettingsView] Starting app reset...')
+                            
+                            // Show immediate feedback
+                            const alertDiv = document.createElement('div')
+                            alertDiv.style.cssText = `
+                              position: fixed;
+                              top: 50%;
+                              left: 50%;
+                              transform: translate(-50%, -50%);
+                              background: #1f2937;
+                              color: white;
+                              padding: 20px;
+                              border-radius: 8px;
+                              z-index: 9999;
+                              box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                              text-align: center;
+                              font-family: system-ui;
+                            `
+                            alertDiv.innerHTML = `
+                              <div style="font-size: 16px; margin-bottom: 10px;">🔄 Clearing App Data</div>
+                              <div style="font-size: 14px; opacity: 0.8;">This will take a few seconds...</div>
+                              <div style="margin-top: 15px; font-size: 12px; opacity: 0.6;">
+                                The app will automatically restart when complete
+                              </div>
+                            `
+                            document.body.appendChild(alertDiv)
+                            
                             // Clear browser-side data first
-                            console.log('Clearing browser-side data...')
+                            console.log('[SettingsView] Clearing browser storage...')
                             
                             // Clear localStorage and sessionStorage
-                            localStorage.clear()
+                            await ipcStorage.clear()
                             sessionStorage.clear()
                             
                             // Clear IndexedDB databases
@@ -793,11 +839,11 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                                 for (const db of databases) {
                                   if (db.name) {
                                     await indexedDB.deleteDatabase(db.name)
-                                    console.log(`Deleted IndexedDB database: ${db.name}`)
+                                    console.log(`[SettingsView] Deleted IndexedDB database: ${db.name}`)
                                   }
                                 }
                               } catch (e) {
-                                console.error('Error clearing IndexedDB:', e)
+                                console.error('[SettingsView] Error clearing IndexedDB:', e)
                               }
                             }
                             
@@ -808,42 +854,96 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                                 await Promise.all(
                                   cacheNames.map(name => caches.delete(name))
                                 )
+                                console.log('[SettingsView] Service worker caches cleared')
                               } catch (e) {
-                                console.error('Error clearing caches:', e)
+                                console.error('[SettingsView] Error clearing caches:', e)
                               }
                             }
                             
                             // Clear cache in the bridge
                             try {
                               lamaBridge.clearConversation('default')
+                              console.log('[SettingsView] Bridge cache cleared')
                             } catch (e) {
-                              console.error('Error clearing bridge cache:', e)
+                              console.error('[SettingsView] Error clearing bridge cache:', e)
                             }
                             
-                            // If we have access to Electron API, request full data clear
-                            // This will handle filesystem cleanup and reload the app
+                            // Request main process to clear all data and restart
                             if (window.electronAPI?.clearAppData) {
-                              console.log('Requesting main process to clear all app data...')
+                              console.log('[SettingsView] Requesting main process to clear all app data...')
+                              
+                              // Update progress message
+                              alertDiv.innerHTML = `
+                                <div style="font-size: 16px; margin-bottom: 10px;">🗑️ Clearing All Data</div>
+                                <div style="font-size: 14px; opacity: 0.8;">Removing storage files and resetting state...</div>
+                                <div style="margin-top: 15px; font-size: 12px; opacity: 0.6;">
+                                  App will restart automatically
+                                </div>
+                              `
+                              
                               const result = await window.electronAPI.clearAppData()
                               
                               if (result?.success) {
-                                console.log('App data cleared successfully, app will reload...')
-                                // The main process will reload the window
+                                console.log('[SettingsView] App data cleared successfully, app will restart...')
+                                
+                                // Show final message
+                                alertDiv.innerHTML = `
+                                  <div style="font-size: 16px; margin-bottom: 10px;">✅ Reset Complete</div>
+                                  <div style="font-size: 14px; opacity: 0.8;">Application restarting...</div>
+                                `
+                                
+                                // The main process handles restart
                               } else {
-                                console.error('Failed to clear app data:', result?.error)
-                                // Still reload to apply browser-side changes
-                                window.location.href = '/'
+                                console.error('[SettingsView] Failed to clear app data:', result?.error)
+                                alertDiv.innerHTML = `
+                                  <div style="font-size: 16px; margin-bottom: 10px;">⚠️ Partial Reset</div>
+                                  <div style="font-size: 14px; opacity: 0.8;">Some data cleared, restarting app...</div>
+                                `
+                                
+                                // Force restart anyway
+                                setTimeout(() => window.location.reload(), 2000)
                               }
                             } else {
-                              // No Electron API available, just reload after clearing browser data
-                              console.log('No Electron API, reloading after browser cleanup...')
-                              window.location.href = '/'
+                              console.log('[SettingsView] No Electron API available, reloading after browser cleanup...')
+                              alertDiv.innerHTML = `
+                                <div style="font-size: 16px; margin-bottom: 10px;">🔄 Browser Reset</div>
+                                <div style="font-size: 14px; opacity: 0.8;">Browser data cleared, reloading...</div>
+                              `
+                              setTimeout(() => window.location.reload(), 1000)
                             }
+                            
                           } catch (error) {
-                            console.error('Failed to reset app data:', error)
-                            alert('Failed to reset app data completely. Some data may have been cleared. Please restart the app.')
-                            // Try to reload anyway
-                            window.location.href = '/'
+                            console.error('[SettingsView] Failed to reset app data:', error)
+                            
+                            // Show error message
+                            const errorDiv = document.createElement('div')
+                            errorDiv.style.cssText = `
+                              position: fixed;
+                              top: 50%;
+                              left: 50%;
+                              transform: translate(-50%, -50%);
+                              background: #dc2626;
+                              color: white;
+                              padding: 20px;
+                              border-radius: 8px;
+                              z-index: 9999;
+                              box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                              text-align: center;
+                              font-family: system-ui;
+                            `
+                            errorDiv.innerHTML = `
+                              <div style="font-size: 16px; margin-bottom: 10px;">❌ Reset Error</div>
+                              <div style="font-size: 14px; opacity: 0.9;">
+                                Failed to reset completely. Please restart the app manually.
+                              </div>
+                              <div style="margin-top: 15px; font-size: 12px; opacity: 0.7;">
+                                Error: ${error.message}
+                              </div>
+                            `
+                            document.body.appendChild(errorDiv)
+                            
+                            // Try to reload anyway after a delay
+                            setTimeout(() => window.location.reload(), 3000)
                           }
                         }}
                       >

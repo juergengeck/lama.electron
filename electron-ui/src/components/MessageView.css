@@ -129,25 +129,27 @@
 @keyframes typing {
   0%, 60%, 100% {
     transform: translateY(0);
+    opacity: 0.2;
   }
   30% {
-    transform: translateY(-10px);
+    transform: translateY(-3px);
+    opacity: 0.4;
   }
 }
 
 .typing-indicator {
   display: inline-flex;
-  gap: 4px;
-  padding: 12px 16px;
+  gap: 3px;
+  padding: 8px 12px;
 }
 
 .typing-indicator span {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: currentColor;
-  opacity: 0.4;
-  animation: typing 1.4s infinite ease-in-out;
+  opacity: 0.2;
+  animation: typing 2s infinite ease-in-out;
 }
 
 .typing-indicator span:nth-child(2) {

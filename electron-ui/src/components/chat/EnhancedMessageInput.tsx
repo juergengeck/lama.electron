@@ -250,9 +250,6 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   disabled = false,
   theme = 'light'
 }) => {
-  
-  console.log('[EnhancedMessageInput] Component mounted/rendered');
-  
   const [messageText, setMessageText] = useState('');
   const [attachments, setAttachments] = useState<EnhancedAttachment[]>([]);
   
@@ -430,32 +427,41 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   
   // Send message
   const handleSend = useCallback(async () => {
-    if (!messageText.trim() && attachments.length === 0) return;
+    console.log('[EnhancedMessageInput] handleSend called, messageText:', messageText, 'attachments:', attachments.length);
+    if (!messageText.trim() && attachments.length === 0) {
+      console.log('[EnhancedMessageInput] Empty message, not sending');
+      return;
+    }
     
     try {
+      console.log('[EnhancedMessageInput] Setting upload state and calling onSendMessage');
       setIsUploading(true);
       await onSendMessage(messageText, attachments);
+      console.log('[EnhancedMessageInput] onSendMessage completed successfully');
       
       // Clear input
       setMessageText('');
       setAttachments([]);
       setShowSuggestions(false);
       
-      // Reset textarea height
+      // Reset textarea height and restore focus
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
+        textareaRef.current.focus();
       }
     } catch (error) {
-      console.error('Send failed:', error);
-      alert('Failed to send message');
+      console.error('[EnhancedMessageInput] Send failed:', error);
+      alert('Failed to send message: ' + (error instanceof Error ? error.message : 'Unknown error'));
     } finally {
       setIsUploading(false);
     }
   }, [messageText, attachments, onSendMessage]);
   
-  // Handle key press
-  const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
+  // Handle key down (onKeyPress is deprecated)
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    console.log('[EnhancedMessageInput] Key pressed:', e.key, 'shift:', e.shiftKey);
     if (e.key === 'Enter' && !e.shiftKey) {
+      console.log('[EnhancedMessageInput] Enter pressed without shift, calling handleSend');
       e.preventDefault();
       handleSend();
     }
@@ -563,7 +569,7 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
           className="message-textarea"
           value={messageText}
           onChange={(e) => handleTextChange(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled || isUploading}
           rows={1}

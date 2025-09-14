@@ -1,0 +1,329 @@
+{
+  "version": "1.0.0",
+  "description": "IPC contracts for UI integration with one.memory module",
+  "namespace": "memory",
+  "overview": "These IPC handlers bridge the browser UI with the one.memory module running in Node.js. All memory operations go through these handlers.",
+  "contracts": [
+    {
+      "method": "memory:initializeManager",
+      "description": "Initialize the MemoryManager in Node.js process",
+      "request": {
+        "type": "object",
+        "properties": {
+          "commServerUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Optional CommServer URL override"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "initialized": { "type": "boolean" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:createTopic",
+      "description": "Create a new topic for organizing memories",
+      "request": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "topic": {
+            "type": "object",
+            "properties": {
+              "idHash": { "type": "string" },
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "createdAt": { "type": "string" }
+            }
+          },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:listTopics",
+      "description": "Get all topics for current user",
+      "request": {
+        "type": "object",
+        "properties": {
+          "includeArchived": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:addMemory",
+      "description": "Add a memory to a topic",
+      "request": {
+        "type": "object",
+        "required": ["topicId", "content"],
+        "properties": {
+          "topicId": { "type": "string" },
+          "content": { "type": "string" },
+          "memoryType": {
+            "type": "string",
+            "enum": ["conversation", "fact", "reference", "note", "summary"],
+            "default": "conversation"
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "importance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "idHash": { "type": "string" },
+              "content": { "type": "string" },
+              "timestamp": { "type": "string" }
+            }
+          },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:getMemories",
+      "description": "Get memories for a topic",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": { "type": "string" },
+          "limit": {
+            "type": "number",
+            "default": 100
+          },
+          "offset": {
+            "type": "number",
+            "default": 0
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "memories": {
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "hasMore": { "type": "boolean" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:searchMemories",
+      "description": "Search memories within a topic",
+      "request": {
+        "type": "object",
+        "required": ["topicId", "query"],
+        "properties": {
+          "topicId": { "type": "string" },
+          "query": { "type": "string" }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "results": {
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:archiveTopic",
+      "description": "Archive a topic (soft delete)",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": { "type": "string" }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:restoreTopic",
+      "description": "Restore an archived topic",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": { "type": "string" }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:createReference",
+      "description": "Create cross-reference between memories",
+      "request": {
+        "type": "object",
+        "required": ["sourceMemoryId", "targetMemoryId", "relationshipType"],
+        "properties": {
+          "sourceMemoryId": { "type": "string" },
+          "targetMemoryId": { "type": "string" },
+          "relationshipType": {
+            "type": "string",
+            "enum": ["related", "contradicts", "supports", "extends", "replaces"]
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "referenceId": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:importConversation",
+      "description": "Import existing conversation as memories",
+      "request": {
+        "type": "object",
+        "required": ["topicId", "messages"],
+        "properties": {
+          "topicId": { "type": "string" },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "content": { "type": "string" },
+                "timestamp": { "type": "string" },
+                "author": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "importedCount": { "type": "number" },
+          "memories": {
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:exportTopic",
+      "description": "Export topic with all memories",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": { "type": "string" },
+          "format": {
+            "type": "string",
+            "enum": ["json", "markdown", "csv"],
+            "default": "json"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "exportData": { "type": "object" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    {
+      "method": "memory:syncStatus",
+      "description": "Get synchronization status for memory system",
+      "request": {
+        "type": "object",
+        "properties": {}
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "status": {
+            "type": "object",
+            "properties": {
+              "syncing": { "type": "boolean" },
+              "lastSync": { "type": "string" },
+              "pendingChanges": { "type": "number" },
+              "connectedPeers": { "type": "number" },
+              "commServerConnected": { "type": "boolean" }
+            }
+          },
+          "error": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

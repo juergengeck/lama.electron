@@ -9,7 +9,6 @@ global.WebSocket = WebSocket;
 
 import path from 'path';
 import { fileURLToPath } from 'url';
-import AIContactManager from './ai-contact-manager.js';
 import AIAssistantModel from './ai-assistant-model.js';
 import RefinioApiServer from '../api/refinio-api-server.js';
 import TopicGroupManager from './topic-group-manager.js';
@@ -30,7 +29,6 @@ class NodeOneCore {
     this.topicModel = null
     this.localWsServer = null
     this.instanceModule = null // Track the instance module
-    this.aiContactManager = new AIContactManager(this)
     this.aiAssistantModel = null // Will be initialized after models are ready
     this.apiServer = null // Refinio API server
     this.topicGroupManager = null // Will be initialized after models are ready
@@ -91,6 +89,25 @@ class NodeOneCore {
    * Initialize ONE.core instance using SingleUserNoAuth (same as browser)
    */
   async initOneCoreInstance(username, password, directory) {
+    // Ensure storage directories exist
+    const fs = await import('fs')
+    const path = await import('path')
+    
+    const oneDbPath = path.join(process.cwd(), 'OneDB')
+    const oneCoreStoragePath = path.join(process.cwd(), 'one-core-storage')
+    
+    // Create OneDB directory if it doesn't exist
+    if (!fs.existsSync(oneDbPath)) {
+      fs.mkdirSync(oneDbPath, { recursive: true })
+      console.log('[NodeOneCore] Created OneDB directory')
+    }
+    
+    // Create one-core-storage directory if it doesn't exist
+    if (!fs.existsSync(oneCoreStoragePath)) {
+      fs.mkdirSync(oneCoreStoragePath, { recursive: true })
+      console.log('[NodeOneCore] Created one-core-storage directory')
+    }
+    
     // Load Node.js platform FIRST - before any other ONE.core imports
     console.log('[NodeOneCore] Loading Node.js platform...')
     await import('@refinio/one.core/lib/system/load-nodejs.js')
@@ -885,6 +902,16 @@ class NodeOneCore {
           } catch (error) {
             console.warn('[NodeOneCore] Failed to grant Someone access:', error.message)
           }
+
+          // Ensure P2P channels exist for bidirectional messaging
+          if (this.topicGroupManager) {
+            try {
+              await this.topicGroupManager.ensureP2PChannelsForPeer(conn.remotePersonId)
+              console.log(`[NodeOneCore] ✅ P2P channels ensured for ${conn.remotePersonId.substring(0, 8)}`)
+            } catch (error) {
+              console.warn('[NodeOneCore] Failed to ensure P2P channels:', error.message)
+            }
+          }
         }
       }
       
@@ -896,7 +923,7 @@ class NodeOneCore {
         // Grant access to contacts channel for CHUM sync
         for (const someone of others) {
           try {
-            const personId = await someone.mainIdentity()
+            const personId = await someone.person()
             console.log('[NodeOneCore] Contact detected:', personId)
             
             // Grant access to the contacts channel
@@ -1042,8 +1069,7 @@ class NodeOneCore {
     // Create the AI message listener before AIAssistantModel
     this.aiMessageListener = new AIMessageListener.default(
       this.channelManager, 
-      llmManager,  // Use the actual LLM manager from main process
-      this.aiContactManager // Pass the AI contact manager for personId lookup
+      llmManager  // Use the actual LLM manager from main process
     )
     
     // Initialize Topic Group Manager for proper group topics
@@ -1055,8 +1081,13 @@ class NodeOneCore {
     // Initialize AI Assistant Model to orchestrate everything
     if (!this.aiAssistantModel) {
       this.aiAssistantModel = new AIAssistantModel(this)
+      // Pre-warm LLM connections early
       await this.aiAssistantModel.init()
-      console.log('[NodeOneCore] ✅ AI Assistant Model initialized')
+      console.log('[NodeOneCore] ✅ AI Assistant Model initialized with pre-warmed connections')
+
+      // Connect AIAssistantModel to the message listener
+      this.aiMessageListener.setAIAssistantModel(this.aiAssistantModel)
+      console.log('[NodeOneCore] ✅ Connected AIAssistantModel to message listener')
     }
 
     // Initialize Refinio API Server as part of this ONE.core instance
@@ -1160,8 +1191,8 @@ class NodeOneCore {
       
       console.log(`[NodeOneCore] Found ${models.length} AI models to create contacts for`)
       
-      // Use the AI Contact Manager to create contacts
-      const aiContacts = await this.aiContactManager.setupAIContacts(models)
+      // Use the AI Assistant Model to create contacts
+      const aiContacts = await this.aiAssistantModel.setupAIContacts(models)
       
       console.log(`[NodeOneCore] ✅ Created ${aiContacts.length} AI contacts`)
       
@@ -1178,8 +1209,8 @@ class NodeOneCore {
    * Get AI person ID for a model (delegates to AIContactManager)
    */
   async getOrCreateAIPersonId(modelId, displayName) {
-    // Delegate to the AI Contact Manager
-    return this.aiContactManager.createAIContact(modelId, displayName)
+    // Delegate to the AI Assistant Model
+    return this.aiAssistantModel.createAIContact(modelId, displayName)
   }
   
   /**

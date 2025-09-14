@@ -130,7 +130,6 @@ const HashtagSuggestionsPanel = ({ suggestions, onSelectHashtag, visible }) => {
 };
 // Main enhanced message input component
 export const EnhancedMessageInput = ({ onSendMessage, onHashtagClick, placeholder = "Type a message...", disabled = false, theme = 'light' }) => {
-    console.log('[EnhancedMessageInput] Component mounted/rendered');
     const [messageText, setMessageText] = useState('');
     const [attachments, setAttachments] = useState([]);
     // Log attachments whenever they change

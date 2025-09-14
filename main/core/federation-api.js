@@ -77,7 +77,7 @@ class FederationAPI {
 
   /**
    * Register the local Node instance
-   * Creates its endpoint advertising the direct socket listener
+   * Creates its endpoint without a direct URL (CommServer only)
    */
   async registerLocalNode() {
     if (!this.nodeOneCore.initialized) {
@@ -99,8 +99,8 @@ class FederationAPI {
       personId: personId,
       instanceId: instanceId,
       personKeys: personKeys,
-      instanceKeys: instanceKeys,
-      url: 'ws://localhost:8765'  // Advertise our socket listener
+      instanceKeys: instanceKeys
+      // No URL - connections will use CommServer
     }
     
     // Get or create the Node's profile and add the endpoint to communicationEndpoints
@@ -131,7 +131,7 @@ class FederationAPI {
       console.log('[FederationAPI] OneInstanceEndpoint already exists in profile')
     }
     
-    console.log('[FederationAPI] ✅ Node registered with socket listener at ws://localhost:8765')
+    console.log('[FederationAPI] ✅ Node registered (CommServer only)')
     return { endpoint, profile: profile.idHash }
   }
 
@@ -170,7 +170,7 @@ class FederationAPI {
     }
     
     console.log('[FederationAPI] ✅ Federation setup complete')
-    console.log('[FederationAPI] Node endpoint advertises ws://localhost:8765')
+    console.log('[FederationAPI] Node endpoint registered (CommServer only)')
     if (browserResult) {
       console.log('[FederationAPI] Browser endpoint registered')
     }

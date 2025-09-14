@@ -7,11 +7,19 @@
  */
 export async function isOllamaRunning() {
     try {
-        const response = await fetch('http://localhost:11434/api/tags');
+        const response = await fetch('http://localhost:11434/api/tags', {
+            method: 'GET',
+            // Add timeout to avoid hanging
+            signal: AbortSignal.timeout(3000)
+        });
         return response.ok;
     }
     catch (error) {
-        console.log('[Ollama] Service not running on localhost:11434');
+        // Don't log connection errors - they're expected when Ollama isn't running
+        // Only log unexpected errors
+        if (error.name !== 'TypeError' && !error.message.includes('Failed to fetch')) {
+            console.warn('[Ollama] Unexpected error checking service:', error.message);
+        }
         return false;
     }
 }
