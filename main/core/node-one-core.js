@@ -990,6 +990,15 @@ class NodeOneCore {
             }
             
             // The browser instance will receive this contact via CHUM sync
+
+            // When a new CHUM connection is established, scan for groups
+            // This ensures we create our channels for any groups we're part of
+            if (this.topicGroupManager) {
+              setTimeout(async () => {
+                console.log('[NodeOneCore] New CHUM connection - scanning for group channels...')
+                await this.topicGroupManager.scanAndEnsureGroupChannels()
+              }, 2000) // Small delay to allow sync to complete
+            }
           } catch (error) {
             console.warn('[NodeOneCore] Error granting access to contact:', error)
           }
@@ -1001,13 +1010,27 @@ class NodeOneCore {
     
     // Set up message sync handling for AI responses
     await this.setupMessageSync()
-    
+
     // Create channels for existing conversations so Node receives CHUM updates
     await this.createChannelsForExistingConversations()
-    
+
+    // Scan for group memberships and ensure we have channels
+    if (this.topicGroupManager) {
+      await this.topicGroupManager.scanAndEnsureGroupChannels()
+
+      // Set up periodic scanning for new groups (every 30 seconds)
+      setInterval(async () => {
+        try {
+          await this.topicGroupManager.scanAndEnsureGroupChannels()
+        } catch (error) {
+          console.error('[NodeOneCore] Failed to scan for group channels:', error)
+        }
+      }, 30000)
+    }
+
     // AI contacts will be set up later after LLMManager is initialized
     // This is called from setupAIContactsWhenReady()
-    
+
     console.log('[NodeOneCore] All models initialized successfully')
   }
 

@@ -17,6 +17,15 @@ class TopicGroupManager {
   }
 
   /**
+   * Check if a conversation is P2P (2 participants)
+   */
+  isP2PConversation(conversationId) {
+    // Check if it's the P2P format: personId1<->personId2
+    const p2pRegex = /^([0-9a-f]{64})<->([0-9a-f]{64})$/
+    return p2pRegex.test(conversationId)
+  }
+
+  /**
    * Create or get a conversation group for a topic
    * This group includes: browser owner, node owner, and AI assistant
    */
@@ -50,24 +59,11 @@ class TopicGroupManager {
       // Cache the group
       this.conversationGroups.set(topicId, groupIdHash);
 
-      // Grant the group access to itself (so members can see the group)
-      await createAccess([{
-        id: groupIdHash,
-        person: [],
-        group: [groupIdHash],
-        mode: SET_ACCESS_MODE.ADD
-      }]);
-
-      // Also grant direct access to all group members to ensure they can see the group
-      // This is important for browser to see the group object
-      await createAccess([{
-        id: groupIdHash,
-        person: participants,  // All members get direct access
-        group: [],
-        mode: SET_ACCESS_MODE.ADD
-      }]);
-
-      console.log(`[TopicGroupManager] Granted access to group for all ${participants.length} members`);
+      // IMPORTANT: Do NOT grant any access to the Group object itself
+      // This would cause CHUM to try to sync the Group object, which is rejected
+      // Groups stay local - only IdAccess objects referencing them are shared
+      // The group will be used in IdAccess objects to grant access to channels
+      console.log(`[TopicGroupManager] Created local group ${groupIdHash.substring(0, 8)} - will use for channel access control`);
 
       return groupIdHash;
     } catch (error) {
@@ -114,10 +110,18 @@ class TopicGroupManager {
 
     console.log(`[TopicGroupManager] Adding ${participantIds.length} participants to topic ${topicId}`);
 
-    // Create channels for ALL participants
-    // This ensures messages can flow properly even for AI and remote participants
+    // Create additional channels based on conversation type
+    // For P2P: The main channel is null-owner (created above), but we can create individual channels too
+    // For Group: Create channels for local participants (ourselves and AI)
     for (const participantId of participantIds) {
-      if (participantId && this.nodeOneCore.channelManager) {
+      const isOurself = participantId === this.nodeOneCore.ownerId;
+      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some(c => c.personId === participantId);
+
+      // Only create channels for local participants (ourselves and AI)
+      // Remote participants must create their own channels
+      const shouldCreateChannel = isOurself || isAI;
+
+      if (shouldCreateChannel && participantId && this.nodeOneCore.channelManager) {
         try {
           // Check if channel already exists before creating
           const hasChannel = await this.nodeOneCore.channelManager.hasChannel(topicId, participantId);
@@ -125,7 +129,8 @@ class TopicGroupManager {
           if (!hasChannel) {
             // Create a channel owned by this participant
             await this.nodeOneCore.channelManager.createChannel(topicId, participantId);
-            console.log(`[TopicGroupManager] Created channel for participant ${participantId.substring(0, 8)}`);
+            const participantType = isAI ? 'AI' : (isOurself ? 'local' : 'remote');
+            console.log(`[TopicGroupManager] Created channel for ${participantType} participant ${participantId.substring(0, 8)}`);
           } else {
             console.log(`[TopicGroupManager] Channel already exists for participant ${participantId.substring(0, 8)}`);
           }
@@ -148,18 +153,15 @@ class TopicGroupManager {
         } catch (error) {
           console.warn(`[TopicGroupManager] Channel creation for ${participantId.substring(0, 8)} failed:`, error.message);
         }
+      } else if (!isOurself && !isAI) {
+        console.log(`[TopicGroupManager] Skipping channel creation for remote participant ${participantId.substring(0, 8)} - they will create it themselves`);
       }
     }
 
-    // Grant participants access to the group
-    await createAccess([{
-      id: groupIdHash,
-      person: participantIds,
-      group: [],
-      mode: SET_ACCESS_MODE.ADD
-    }]);
-
-    console.log(`[TopicGroupManager] Granted group access to ${participantIds.length} participants`);
+    // IMPORTANT: Do NOT grant person-based access to the Group object itself
+    // This would cause CHUM to try to sync the Group object, which is rejected
+    // Groups stay local - only IdAccess objects referencing them are shared (for channel access)
+    console.log(`[TopicGroupManager] Note: Not syncing group to participants - groups are local objects`);
   }
 
   /**
@@ -251,14 +253,10 @@ class TopicGroupManager {
    * Ensure a remote participant has access to a group they're a member of
    */
   async ensureGroupAccess(groupIdHash, remotePersonId) {
-    // Grant the remote person access to the group
-    await createAccess([{
-      id: groupIdHash,
-      person: [remotePersonId],
-      group: [],
-      mode: SET_ACCESS_MODE.ADD
-    }]);
-    console.log(`[TopicGroupManager] Ensured ${remotePersonId.substring(0, 8)} has access to group ${groupIdHash.substring(0, 8)}`);
+    // IMPORTANT: Do NOT grant person-based access to the Group object itself
+    // This would cause CHUM to try to sync the Group object, which is rejected
+    // Groups stay local - only IdAccess objects referencing them are shared (for channel access)
+    console.log(`[TopicGroupManager] Note: Groups are local objects, not syncing group ${groupIdHash.substring(0, 8)} to ${remotePersonId.substring(0, 8)}`);
   }
 
   /**
@@ -301,15 +299,11 @@ class TopicGroupManager {
       
       console.log(`[TopicGroupManager] Updated group for topic ${topicId} with new member`);
       console.log(`[TopicGroupManager] New group members:`, updatedGroup.person.map(p => p.substring(0, 8)).join(', '));
-      
-      // Grant the remote person access to the group
-      await createAccess([{
-        id: newGroupIdHash,
-        person: [remotePersonId],
-        group: [],
-        mode: SET_ACCESS_MODE.ADD
-      }]);
-      
+
+      // IMPORTANT: Do NOT grant person-based access to the Group object itself
+      // This would cause CHUM to try to sync the Group object, which is rejected
+      // Groups stay local - only IdAccess objects referencing them are shared
+
       // Create a channel for the remote participant in this topic
       if (this.nodeOneCore.channelManager) {
         await this.nodeOneCore.channelManager.createChannel(topicId, remotePersonId);
@@ -347,6 +341,52 @@ class TopicGroupManager {
   }
 
   /**
+   * Create a P2P topic with a single shared channel (null owner)
+   * @param {string} topicName - Display name for the topic
+   * @param {string} topicId - Topic ID in format: personId1<->personId2
+   * @param {Array<string>} participantIds - Array of exactly 2 person IDs
+   */
+  async createP2PTopic(topicName, topicId, participantIds) {
+    console.log(`[TopicGroupManager] Creating P2P topic: ${topicName} (${topicId})`)
+    console.log(`[TopicGroupManager] P2P participants:`, participantIds.map(p => p.substring(0, 8)).join(', '))
+
+    // Create the topic using TopicModel
+    if (!this.nodeOneCore.topicModel) {
+      throw new Error('TopicModel not initialized')
+    }
+
+    // Create the topic with null owner (shared channel)
+    // Pass null as channelOwner to create a no-owner channel
+    const topic = await this.nodeOneCore.topicModel.createGroupTopic(
+      topicName,
+      topicId,
+      null  // null = no owner, both participants can write
+    )
+
+    console.log(`[TopicGroupManager] Created P2P topic ${topicId} with null-owner channel`)
+
+    // Get the channel hash for the null-owner channel
+    const channelHash = await calculateIdHashOfObj({
+      $type$: 'ChannelInfo',
+      id: topicId,
+      owner: undefined  // undefined in the hash for null owner
+    })
+
+    // Grant person-based access to both participants
+    // NO Group objects for P2P - just direct person access
+    await createAccess([{
+      id: channelHash,
+      person: participantIds,  // Both participants get direct access
+      group: [],  // No groups for P2P
+      mode: SET_ACCESS_MODE.ADD
+    }])
+
+    console.log(`[TopicGroupManager] Granted P2P channel access to:`, participantIds.map(p => p.substring(0, 8)).join(', '))
+
+    return topic
+  }
+
+  /**
    * Create a topic with the conversation group - compatible with one.leute architecture
    * In one.leute: ONE topic ID, MULTIPLE channels (one per participant)
    * @param {string} topicName - Display name for the topic
@@ -355,20 +395,25 @@ class TopicGroupManager {
    * @param {boolean} autoAddChumConnections - Whether to automatically add all CHUM connections (default: false)
    */
   async createGroupTopic(topicName, topicId, participantIds = [], autoAddChumConnections = false) {
-    console.log(`[TopicGroupManager] Creating group topic: ${topicName} (${topicId})`);
+    console.log(`[TopicGroupManager] Creating topic: ${topicName} (${topicId})`);
     console.log(`[TopicGroupManager] Initial participants: ${participantIds.length} persons`);
 
     // Check if this is a P2P conversation (topicId contains <->)
     const isP2P = topicId.includes('<->');
     console.log(`[TopicGroupManager] Is P2P conversation: ${isP2P}`);
 
+    // Handle P2P differently - no groups, single shared channel
+    if (isP2P) {
+      return await this.createP2PTopic(topicName, topicId, participantIds);
+    }
+
     // Always include the node owner
     if (!participantIds.includes(this.nodeOneCore.ownerId)) {
       participantIds.unshift(this.nodeOneCore.ownerId);
     }
 
-    // Only add CHUM connections for group chats, not P2P
-    if (autoAddChumConnections && !isP2P) {
+    // Add CHUM connections for group chats
+    if (autoAddChumConnections) {
       const activeChumConnections = this.nodeOneCore.getActiveCHUMConnections();
       for (const chumPersonId of activeChumConnections) {
         if (!participantIds.includes(chumPersonId)) {
@@ -412,20 +457,36 @@ class TopicGroupManager {
       throw new Error('TopicModel not initialized');
     }
 
-    // Create the topic - for group chats, the topic creator owns the first channel
+    // Create the topic
+    // Each participant always owns their own channel
     const topic = await this.nodeOneCore.topicModel.createGroupTopic(
       topicName,
       topicId,
-      this.nodeOneCore.ownerId  // Topic creator owns their channel
+      this.nodeOneCore.ownerId
     );
+
+    console.log(`[TopicGroupManager] Created topic ${topicId}:`, {
+      topicId: topic.id,
+      channelIdHash: topic.channel,
+      owner: this.nodeOneCore.ownerId?.substring(0, 8)
+    });
 
     // Share the topic with the group
     await this.nodeOneCore.topicModel.addGroupToTopic(groupIdHash, topic);
+    console.log(`[TopicGroupManager] Added group ${groupIdHash.substring(0, 8)} access to topic ${topicId}`);
 
-    // Create channels for ALL participants
-    // In one.leute architecture, each participant needs their own channel
+    // Create additional channels based on conversation type
+    // For P2P: The main channel is null-owner (created above), but we can create individual channels too
+    // For Group: Create channels for local participants (ourselves and AI)
     for (const participantId of participantIds) {
-      if (participantId && this.nodeOneCore.channelManager) {
+      const isOurself = participantId === this.nodeOneCore.ownerId;
+      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some(c => c.personId === participantId);
+
+      // Only create channels for local participants (ourselves and AI)
+      // Remote participants must create their own channels
+      const shouldCreateChannel = isOurself || isAI;
+
+      if (shouldCreateChannel && participantId && this.nodeOneCore.channelManager) {
         try {
           // Check if channel already exists before creating
           const hasChannel = await this.nodeOneCore.channelManager.hasChannel(topicId, participantId);
@@ -433,7 +494,8 @@ class TopicGroupManager {
           if (!hasChannel) {
             // Create a channel owned by this participant
             await this.nodeOneCore.channelManager.createChannel(topicId, participantId);
-            console.log(`[TopicGroupManager] Created channel for participant ${participantId.substring(0, 8)}`);
+            const participantType = isAI ? 'AI' : (isOurself ? 'local' : 'remote');
+            console.log(`[TopicGroupManager] Created channel for ${participantType} participant ${participantId.substring(0, 8)}`);
           } else {
             console.log(`[TopicGroupManager] Channel already exists for participant ${participantId.substring(0, 8)}`);
           }
@@ -456,20 +518,63 @@ class TopicGroupManager {
         } catch (error) {
           console.warn(`[TopicGroupManager] Channel creation for ${participantId.substring(0, 8)} failed:`, error.message);
         }
+      } else if (!isOurself && !isAI) {
+        console.log(`[TopicGroupManager] Skipping channel creation for remote participant ${participantId.substring(0, 8)} - they will create it themselves`);
       }
     }
 
     console.log(`[TopicGroupManager] Topic ${topicId} created with group ${groupIdHash.substring(0, 8)}`);
-    console.log(`[TopicGroupManager] Created ${participantIds.length} channels for participants`);
+    console.log(`[TopicGroupManager] Created channels for local and AI participants only`);
 
-    // IMPORTANT: In one.leute architecture:
+    // IMPORTANT: Architecture:
     // - ONE topic ID for the conversation
     // - MULTIPLE channels (one per participant) with the SAME topic ID
-    // - Each participant posts to their OWN channel
+    // - Each participant writes to their OWN channel ONLY
     // - All participants can READ from all channels (via group access)
+    // - leute.one's RawChannelEntriesCache only reads from ONE channel at a time
     console.log(`[TopicGroupManager] All participants have their own channels with topic ID: ${topicId}`);
 
     return topic;
+  }
+
+  /**
+   * Scan for groups we're members of and ensure we have channels
+   * This should be called periodically or on CHUM sync
+   */
+  async scanAndEnsureGroupChannels() {
+    console.log('[TopicGroupManager] Scanning for group memberships...');
+
+    try {
+      const { getObjectsWithType } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+
+      // Find all Group objects we have access to
+      const groups = await getObjectsWithType('Group');
+
+      for (const group of groups) {
+        // Check if we're a member of this group
+        if (group.person && group.person.includes(this.nodeOneCore.ownerId)) {
+          // Extract topic ID from group name (format: "conversation-{topicId}")
+          if (group.name && group.name.startsWith('conversation-')) {
+            const topicId = group.name.substring('conversation-'.length);
+
+            // Calculate the group's ID hash
+            const groupIdHash = await calculateIdHashOfObj(group);
+
+            console.log(`[TopicGroupManager] Found membership in group for topic ${topicId}`);
+
+            // Ensure we have our channel for this topic
+            await this.ensureParticipantChannel(topicId, groupIdHash);
+
+            // Cache the group
+            this.conversationGroups.set(topicId, groupIdHash);
+          }
+        }
+      }
+
+      console.log('[TopicGroupManager] Group channel scan complete');
+    } catch (error) {
+      console.error('[TopicGroupManager] Failed to scan for group channels:', error);
+    }
   }
 
   /**
@@ -493,245 +598,146 @@ class TopicGroupManager {
   }
 
   /**
-   * Ensure channels exist for profile-based P2P conversations
-   * This is called when creating a conversation with a Someone
-   * @param {string} someoneId - The Someone ID (profile hash)
-   * @param {string} peerPersonId - The peer's person ID (for permissions)
+   * Ensure participant has their own channel for a group they're part of
+   * This should be called when a participant discovers they're in a group
+   * @param {string} topicId - The topic ID
+   * @param {string} groupIdHash - The group's ID hash
    */
-  async ensureP2PChannelsForProfile(someoneId, peerPersonId) {
-    console.log(`[TopicGroupManager] Ensuring P2P channels for profile ${someoneId.substring(0, 8)}`);
-    
-    // For profile-based management, use the Someone ID as the topic ID
-    const p2pTopicId = someoneId;
-    console.log(`[TopicGroupManager] Profile-based Topic ID: ${p2pTopicId}`);
-    
+  async ensureParticipantChannel(topicId, groupIdHash) {
+    console.log(`[TopicGroupManager] Ensuring participant has channel for topic ${topicId}`);
+
+    if (!this.nodeOneCore.channelManager) {
+      throw new Error('ChannelManager not initialized');
+    }
+
     try {
-      // Check if we already have a group for this P2P conversation
-      let groupIdHash = this.conversationGroups.get(p2pTopicId);
-      
-      if (!groupIdHash) {
-        console.log(`[TopicGroupManager] No existing group for profile conversation, creating...`);
-        
-        // Create a group with both participants (using Person IDs for permissions)
-        const group = {
-          $type$: 'Group',
-          name: `conversation-${p2pTopicId}`,
-          person: [this.nodeOneCore.ownerId, peerPersonId]
-        };
-        
-        const storedGroup = await storeVersionedObject(group);
-        groupIdHash = storedGroup.idHash;
-        
-        // Cache the group
-        this.conversationGroups.set(p2pTopicId, groupIdHash);
-        
-        console.log(`[TopicGroupManager] Created profile-based P2P group ${groupIdHash.substring(0, 8)}`);
-        
-        // Grant both participants access to the group
+      // Check if we already have our channel
+      const hasChannel = await this.nodeOneCore.channelManager.hasChannel(topicId, this.nodeOneCore.ownerId);
+
+      if (!hasChannel) {
+        // Create our channel for this topic
+        await this.nodeOneCore.channelManager.createChannel(topicId, this.nodeOneCore.ownerId);
+        console.log(`[TopicGroupManager] Created our channel for topic ${topicId}`);
+
+        // Grant the group access to our channel
+        const channelHash = await calculateIdHashOfObj({
+          $type$: 'ChannelInfo',
+          id: topicId,
+          owner: this.nodeOneCore.ownerId
+        });
+
         await createAccess([{
-          id: groupIdHash,
-          person: [this.nodeOneCore.ownerId, peerPersonId],
-          group: [],
+          id: channelHash,
+          person: [],
+          group: [groupIdHash],
           mode: SET_ACCESS_MODE.ADD
         }]);
-      }
-      
-      // Create channel for this profile-based conversation
-      await this.nodeOneCore.channelManager.createChannel(p2pTopicId, this.nodeOneCore.ownerId);
-      console.log(`[TopicGroupManager] Channel created for profile-based conversation`);
-      
-      // Grant peer access to our channel
-      const nodeChannelHash = await calculateIdHashOfObj({
-        $type$: 'ChannelInfo',
-        id: p2pTopicId,
-        owner: this.nodeOneCore.ownerId
-      });
-      
-      await createAccess([{
-        id: nodeChannelHash,
-        person: [peerPersonId],
-        group: [groupIdHash],
-        mode: SET_ACCESS_MODE.ADD
-      }]);
-      
-      console.log(`[TopicGroupManager] Access granted for profile-based P2P conversation`);
-      
-      // IMPORTANT: Create the actual Topic object with the profile ID
-      if (!this.nodeOneCore.topicModel) {
-        throw new Error('TopicModel not initialized');
-      }
-      
-      // Check if topic already exists
-      const topics = await this.nodeOneCore.topicModel.topics.all();
-      const existingTopic = topics.find(t => t.id === p2pTopicId);
-      
-      if (!existingTopic) {
-        console.log(`[TopicGroupManager] Creating Topic object for profile ${someoneId.substring(0, 8)}`);
-        
-        // Create the topic with the profile ID as the topic name
-        const topic = await this.nodeOneCore.topicModel.createGroupTopic(
-          p2pTopicId,  // Use Someone ID as both name and ID
-          p2pTopicId,  // Topic ID is the Someone ID
-          this.nodeOneCore.ownerId
-        );
-        
-        // Add the conversation group to the topic
-        await this.nodeOneCore.topicModel.addGroupToTopic(groupIdHash, topic);
-        
-        console.log(`[TopicGroupManager] Topic ${p2pTopicId.substring(0, 8)} created with group ${groupIdHash.substring(0, 8)}`);
+
+        console.log(`[TopicGroupManager] Granted group ${groupIdHash.substring(0, 8)} access to our channel`);
       } else {
-        console.log(`[TopicGroupManager] Topic already exists for profile ${someoneId.substring(0, 8)}`);
+        console.log(`[TopicGroupManager] We already have a channel for topic ${topicId}`);
       }
-      
+
+      return true;
     } catch (error) {
-      console.error(`[TopicGroupManager] Failed to ensure profile P2P channels:`, error);
+      console.error(`[TopicGroupManager] Failed to ensure participant channel:`, error);
       throw error;
     }
   }
-  
+
+  /**
+   * @deprecated Do not use - creates duplicate conversations
+   * P2P conversations should always use personId1<->personId2 format
+   */
+  async ensureP2PChannelsForProfile(someoneId, peerPersonId) {
+    console.warn(`[TopicGroupManager] DEPRECATED: ensureP2PChannelsForProfile called - redirecting to ensureP2PChannelsForPeer`);
+    // Redirect to the proper method
+    return this.ensureP2PChannelsForPeer(peerPersonId);
+  }
+
   /**
    * Ensure channels exist for P2P conversations with a specific peer
    * This is called when a CHUM connection is established
    * @param {string} peerPersonId - The peer's person ID
    */
   async ensureP2PChannelsForPeer(peerPersonId) {
-    console.log(`[TopicGroupManager] Ensuring P2P channels for peer ${peerPersonId.substring(0, 8)}`);
-    
-    // For backward compatibility, still support Person ID based topics
-    // But we should transition to profile-based management
+    console.log(`[TopicGroupManager] Ensuring P2P conversation for peer ${peerPersonId.substring(0, 8)}`);
+
+    // Use sorted Person IDs for consistent topic ID
     const sortedIds = [this.nodeOneCore.ownerId, peerPersonId].sort();
     const p2pTopicId = `${sortedIds[0]}<->${sortedIds[1]}`;
-    
-    console.log(`[TopicGroupManager] Legacy P2P Topic ID: ${p2pTopicId}`);
-    
+
+    console.log(`[TopicGroupManager] P2P Topic ID: ${p2pTopicId}`);
+
     try {
-      // Check if we already have a group for this P2P conversation
-      let groupIdHash = this.conversationGroups.get(p2pTopicId);
-      
-      if (!groupIdHash) {
-        console.log(`[TopicGroupManager] No existing group for P2P conversation, creating...`);
-        
-        // Create a group with both participants
-        const group = {
-          $type$: 'Group',
-          name: `conversation-${p2pTopicId}`,
-          person: [this.nodeOneCore.ownerId, peerPersonId]
-        };
-        
-        const storedGroup = await storeVersionedObject(group);
-        groupIdHash = storedGroup.idHash;
-        
-        // Cache the group
-        this.conversationGroups.set(p2pTopicId, groupIdHash);
-        
-        console.log(`[TopicGroupManager] Created P2P group ${groupIdHash.substring(0, 8)}`);
-        
-        // Grant both participants access to the group
-        await createAccess([{
-          id: groupIdHash,
-          person: [this.nodeOneCore.ownerId, peerPersonId],
-          group: [],
-          mode: SET_ACCESS_MODE.ADD
-        }]);
-      }
-      
-      // Ensure channels exist for both participants
-      console.log(`[TopicGroupManager] Ensuring channels for both participants...`);
-      
-      // Create channel for local node owner
-      let nodeChannelHash;
+      // Check if topic already exists
+      let topic = null;
       try {
-        await this.nodeOneCore.channelManager.createChannel(p2pTopicId, this.nodeOneCore.ownerId);
-        console.log(`[TopicGroupManager] Channel created/verified for node owner`);
-        
-        // Calculate the channel hash for access control
-        nodeChannelHash = await calculateIdHashOfObj({
-          $type$: 'ChannelInfo',
-          id: p2pTopicId,
-          owner: this.nodeOneCore.ownerId
-        });
-        
-        // Grant group access to node owner's channel
-        await createAccess([{
-          id: nodeChannelHash,
-          person: [],
-          group: [groupIdHash],
-          mode: SET_ACCESS_MODE.ADD
-        }]);
-        
-        // Grant the peer direct access to our channel so they can read it
-        await createAccess([{
-          id: nodeChannelHash, 
-          person: [peerPersonId],
-          group: [],
-          mode: SET_ACCESS_MODE.ADD
-        }]);
-        console.log(`[TopicGroupManager] Granted peer direct access to our channel`);
-      } catch (error) {
-        console.log(`[TopicGroupManager] Node owner channel might already exist:`, error.message);
-      }
-      
-      // Create channel for the peer if it doesn't exist
-      // This creates the ChannelInfo object so we can properly receive messages from them
-      try {
-        const hasPeerChannel = await this.nodeOneCore.channelManager.hasChannel(p2pTopicId, peerPersonId);
-        
-        if (!hasPeerChannel) {
-          await this.nodeOneCore.channelManager.createChannel(p2pTopicId, peerPersonId);
-          console.log(`[TopicGroupManager] Created channel for peer ${peerPersonId.substring(0, 8)}`);
-        } else {
-          console.log(`[TopicGroupManager] Channel already exists for peer ${peerPersonId.substring(0, 8)}`);
+        if (this.nodeOneCore.topicModel) {
+          topic = await this.nodeOneCore.topicModel.topics.queryById(p2pTopicId);
         }
-        
-        // Calculate the channel hash for access control
-        const peerChannelHash = await calculateIdHashOfObj({
-          $type$: 'ChannelInfo',
-          id: p2pTopicId,
-          owner: peerPersonId
-        });
-        
-        // Grant group access to peer's channel
-        await createAccess([{
-          id: peerChannelHash,
-          person: [],
-          group: [groupIdHash],
-          mode: SET_ACCESS_MODE.ADD
-        }]);
-        
-        console.log(`[TopicGroupManager] Granted group access to peer's channel`);
-      } catch (error) {
-        console.log(`[TopicGroupManager] Could not create channel for peer:`, error.message);
+      } catch (e) {
+        // Topic doesn't exist yet
       }
-      
-      // Ensure the Topic object exists for this P2P conversation
-      if (this.nodeOneCore.topicModel) {
+
+      if (!topic) {
+        console.log(`[TopicGroupManager] Creating P2P topic...`);
+
+        // Get the contact's actual name if available, otherwise use their hash
+        let topicName = peerPersonId.substring(0, 8);
         try {
-          const topics = await this.nodeOneCore.topicModel.topics.all();
-          const existingTopic = topics.find(t => t.id === p2pTopicId);
-
-          if (!existingTopic) {
-            console.log(`[TopicGroupManager] Creating Topic object for P2P conversation`);
-
-            // Create the topic with proper group association
-            const topic = await this.nodeOneCore.topicModel.createGroupTopic(
-              p2pTopicId,  // Use P2P ID as both name and ID
-              p2pTopicId,  // Topic ID
-              this.nodeOneCore.ownerId
-            );
-
-            // Associate the conversation group with the topic
-            await this.nodeOneCore.topicModel.addGroupToTopic(groupIdHash, topic);
-
-            console.log(`[TopicGroupManager] Topic ${p2pTopicId} created with group ${groupIdHash.substring(0, 8)}`);
-          } else {
-            console.log(`[TopicGroupManager] Topic already exists for P2P conversation`);
+          if (this.nodeOneCore.leuteModel) {
+            const contactName = this.nodeOneCore.leuteModel.getPersonName(peerPersonId);
+            if (contactName) {
+              topicName = contactName;
+            }
           }
-        } catch (error) {
-          console.warn(`[TopicGroupManager] Could not create/check topic:`, error.message);
+        } catch (e) {
+          // Fall back to hash if name lookup fails
+        }
+
+        await this.createP2PTopic(topicName, p2pTopicId, [this.nodeOneCore.ownerId, peerPersonId]);
+
+        console.log(`[TopicGroupManager] ✅ Created P2P topic and channel for ${p2pTopicId}`);
+      } else {
+        console.log(`[TopicGroupManager] P2P topic already exists for ${p2pTopicId}`);
+
+        // Check what channels exist for this topic
+        const channels = await this.nodeOneCore.channelManager.getMatchingChannelInfos({channelId: p2pTopicId});
+        console.log(`[TopicGroupManager] Existing channels for P2P topic:`, channels.map(ch => ({
+          id: ch.id,
+          owner: ch.owner ? ch.owner.substring(0, 8) : 'null'
+        })));
+
+        // For P2P, we should have ONE channel with null owner
+        // If we have channels with owners, we need to fix this
+        const hasNullOwnerChannel = channels.some(ch => !ch.owner);
+        const hasOwnerChannels = channels.some(ch => ch.owner);
+
+        if (hasOwnerChannels && !hasNullOwnerChannel) {
+          console.warn(`[TopicGroupManager] ⚠️ P2P topic has owner-based channels, need to create null-owner channel`);
+
+          // Create the null-owner channel for P2P
+          await this.nodeOneCore.channelManager.createChannel(p2pTopicId, null);
+          console.log(`[TopicGroupManager] Created null-owner channel for existing P2P topic`);
+
+          // Grant access to both participants
+          const channelHash = await calculateIdHashOfObj({
+            $type$: 'ChannelInfo',
+            id: p2pTopicId,
+            owner: undefined
+          });
+
+          await createAccess([{
+            id: channelHash,
+            person: [this.nodeOneCore.ownerId, peerPersonId],
+            group: [],
+            mode: SET_ACCESS_MODE.ADD
+          }]);
+
+          console.log(`[TopicGroupManager] ✅ Fixed P2P topic configuration`);
         }
       }
-
-      console.log(`[TopicGroupManager] ✅ P2P channels and topic ensured for conversation ${p2pTopicId}`);
 
     } catch (error) {
       console.error(`[TopicGroupManager] Failed to ensure P2P channels:`, error);

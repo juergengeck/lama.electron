@@ -104,24 +104,26 @@ const chatHandlers = {
       console.log('[ChatHandler] DEBUG: nodeOneCore.ownerId:', nodeOneCore.ownerId)
       console.log('[ChatHandler] DEBUG: text:', text)
       
-      // For group topics, we need to write to the correct channel
-      // Check which channels exist for this topic
-      const channels = await nodeOneCore.channelManager.getMatchingChannelInfos({ channelId: conversationId })
-      console.log('[ChatHandler] DEBUG: Found channels for topic:', channels.map(c => ({
-        id: c.id,
-        owner: c.owner?.substring(0, 8)
-      })))
-      
-      // Find our channel (owned by node)
-      const ourChannel = channels.find(c => c.owner === nodeOneCore.ownerId)
-      if (ourChannel) {
-        console.log('[ChatHandler] DEBUG: Using our channel, owner:', ourChannel.owner?.substring(0, 8))
-        await topicRoom.sendMessage(text, undefined, ourChannel.owner)
-      } else {
-        console.log('[ChatHandler] DEBUG: No channel owned by us, using nodeOneCore.ownerId')
-        await topicRoom.sendMessage(text, undefined, nodeOneCore.ownerId)
+      // Determine channel owner based on conversation type
+      // P2P: null owner (shared channel)
+      // Group: our own channel
+      const isP2P = conversationId.includes('<->')
+      const channelOwner = isP2P ? null : nodeOneCore.ownerId
+      console.log('[ChatHandler] DEBUG: Writing to channel, owner:', isP2P ? 'null (shared)' : channelOwner?.substring(0, 8))
+
+      // For P2P conversations, also log what channels exist
+      if (isP2P && nodeOneCore.channelManager) {
+        const channels = await nodeOneCore.channelManager.getMatchingChannelInfos({channelId: conversationId})
+        console.log('[ChatHandler] P2P channels for this topic:', channels.map(ch => ({
+          id: ch.id,
+          owner: ch.owner ? ch.owner.substring(0, 8) : 'null'
+        })))
       }
-      
+
+      // Send message
+      console.log('[ChatHandler] Calling topicRoom.sendMessage with owner:', channelOwner)
+      await topicRoom.sendMessage(text, undefined, channelOwner)
+
       console.log('[ChatHandler] DEBUG: Message sent to TopicRoom')
       
       // Create message object for UI
@@ -214,6 +216,17 @@ const chatHandlers = {
                   // For P2P conversations, extract both participant IDs
                   const [id1, id2] = conversationId.split('<->')
                   participantIds = [id1, id2]
+
+                  // Also add the default AI to P2P conversations
+                  // This ensures there's always at least one channel that both sides can see
+                  if (nodeOneCore.aiAssistantModel) {
+                    const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
+                    if (aiContacts.length > 0 && !participantIds.includes(aiContacts[0].personId)) {
+                      participantIds.push(aiContacts[0].personId)
+                      console.log('[ChatHandler] Added AI to P2P conversation for channel visibility')
+                    }
+                  }
+
                   console.log('[ChatHandler] P2P conversation - participants:', participantIds.map(p => p.substring(0, 8)).join(', '))
                 } else {
                   // For default topic, include default AI if available
@@ -315,119 +328,102 @@ const chatHandlers = {
       }
       
       // Get messages from the topic room
-      // For P2P conversations, manually aggregate from all channels since TopicRoom might not do it properly
+      // TopicRoom.retrieveAllMessages() aggregates from ALL channels with the same topic ID
       let rawMessages = []
-      
-      // Check if this is a P2P conversation
+
+      // Check if this is a P2P conversation for logging purposes
       if (conversationId.includes('<->')) {
-        // Get all channels with this topic ID
-        const allChannels = await nodeOneCore.channelManager.getMatchingChannelInfos({ 
-          channelId: conversationId 
+        // Get all channels with this topic ID for debugging
+        const allChannels = await nodeOneCore.channelManager.getMatchingChannelInfos({
+          channelId: conversationId
         })
-        
-        console.log(`[ChatHandler] P2P conversation - Found ${allChannels.length} channels:`, 
-          allChannels.map(c => ({ 
+
+        console.log(`[ChatHandler] P2P conversation - Found ${allChannels.length} channels:`,
+          allChannels.map(c => ({
             id: c.id,
             owner: c.owner?.substring(0, 8) || 'undefined'
           })))
-        
-        // For P2P conversations, get messages from the current channel ID
-        let channelMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-          channelId: conversationId
-        })
-        console.log(`[ChatHandler] Retrieved ${channelMessages.length} messages from primary channel ID`)
-        
-        // FALLBACK: Also check for messages using Someone IDs if we got no messages
-        // This handles the case where messages were sent before the fix
-        if (channelMessages.length === 0) {
-          console.log('[ChatHandler] No messages found with Person ID channel, checking Someone ID patterns...')
+      }
+
+      // Use standard method for ALL conversations (P2P and group)
+      rawMessages = await topicRoom.retrieveAllMessages()
+      console.log('[ChatHandler] Retrieved', rawMessages.length, 'messages from TopicRoom')
+
+      // FALLBACK: Check for messages using Someone IDs if we got no messages in P2P
+      // This handles the case where messages were sent before fixes
+      if (conversationId.includes('<->') && rawMessages.length === 0) {
+        console.log('[ChatHandler] No messages found, checking Someone ID patterns...')
           
-          // Extract the person IDs from the conversation ID
-          const [id1, id2] = conversationId.split('<->')
+        // Extract the person IDs from the conversation ID
+        const [id1, id2] = conversationId.split('<->')
           
-          // Try to find Someone IDs for these Person IDs
-          if (nodeOneCore.leuteModel) {
-            const others = await nodeOneCore.leuteModel.others()
-            
-            // Find Someone IDs that match our Person IDs
-            const someoneIds = []
-            for (const contact of others) {
-              if (contact.personId === id1 || contact.personId === id2) {
-                someoneIds.push(contact.id)
-                console.log(`[ChatHandler] Found Someone ID ${contact.id} for Person ID ${contact.personId}`)
+        // Try to find Someone IDs for these Person IDs
+        if (nodeOneCore.leuteModel) {
+          const others = await nodeOneCore.leuteModel.others()
+
+          // Find Someone IDs that match our Person IDs
+          const someoneIds = []
+          for (const contact of others) {
+            if (contact.personId === id1 || contact.personId === id2) {
+              someoneIds.push(contact.id)
+              console.log(`[ChatHandler] Found Someone ID ${contact.id} for Person ID ${contact.personId}`)
+          }
+
+          // Try different channel ID combinations with Someone IDs
+          if (someoneIds.length > 0) {
+            let fallbackMessages = []
+            for (const someoneId of someoneIds) {
+              // Try patterns like someoneId<->personId
+              const altChannelIds = [
+                `${someoneId}<->${id1}`,
+                `${someoneId}<->${id2}`,
+                `${id1}<->${someoneId}`,
+                `${id2}<->${someoneId}`
+              ]
+
+              for (const altId of altChannelIds) {
+                const altMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
+                  channelId: altId
+                })
+
+                if (altMessages.length > 0) {
+                  console.log(`[ChatHandler] Found ${altMessages.length} messages in alternate channel: ${altId}`)
+                  fallbackMessages = [...fallbackMessages, ...altMessages]
+                }
               }
             }
-            
-            // Try different channel ID combinations with Someone IDs
-            if (someoneIds.length > 0) {
-              for (const someoneId of someoneIds) {
-                // Try patterns like someoneId<->personId
-                const altChannelIds = [
-                  `${someoneId}<->${id1}`,
-                  `${someoneId}<->${id2}`,
-                  `${id1}<->${someoneId}`,
-                  `${id2}<->${someoneId}`
-                ]
-                
-                for (const altId of altChannelIds) {
-                  const altMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-                    channelId: altId
-                  })
-                  
-                  if (altMessages.length > 0) {
-                    console.log(`[ChatHandler] Found ${altMessages.length} messages in alternate channel: ${altId}`)
-                    channelMessages = [...channelMessages, ...altMessages]
-                  }
-                }
+
+            // Also try Someone<->Someone patterns
+            if (someoneIds.length >= 2) {
+              const sortedSomeoneIds = someoneIds.sort()
+              const someoneChannelId = `${sortedSomeoneIds[0]}<->${sortedSomeoneIds[1]}`
+              const someoneMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
+                channelId: someoneChannelId
+              })
+
+              if (someoneMessages.length > 0) {
+                console.log(`[ChatHandler] Found ${someoneMessages.length} messages in Someone<->Someone channel: ${someoneChannelId}`)
+                fallbackMessages = [...fallbackMessages, ...someoneMessages]
               }
-              
-              // Also try Someone<->Someone patterns
-              if (someoneIds.length >= 2) {
-                const sortedSomeoneIds = someoneIds.sort()
-                const someoneChannelId = `${sortedSomeoneIds[0]}<->${sortedSomeoneIds[1]}`
-                const someoneMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-                  channelId: someoneChannelId
-                })
-                
-                if (someoneMessages.length > 0) {
-                  console.log(`[ChatHandler] Found ${someoneMessages.length} messages in Someone<->Someone channel: ${someoneChannelId}`)
-                  channelMessages = [...channelMessages, ...someoneMessages]
-                }
-              }
+            }
+
+            rawMessages = [...rawMessages, ...fallbackMessages]
             }
           }
         }
         
-        console.log(`[ChatHandler] Total messages after fallback check: ${channelMessages.length}`)
-        
-        // Log details about each message
-        channelMessages.forEach((msg, idx) => {
-          console.log(`[ChatHandler] Message ${idx + 1}:`, {
-            sender: msg.data?.sender?.substring(0, 8) || 'unknown',
-            author: msg.author?.substring(0, 8) || 'unknown',
-            text: msg.data?.text?.substring(0, 50) || 'no text',
-            timestamp: msg.creationTime || msg.timestamp || 'no timestamp'
-          })
-        })
-        
-        rawMessages = channelMessages
-        
-        // Sort by timestamp
-        rawMessages.sort((a, b) => {
-          const timeA = a.creationTime || a.timestamp || 0
-          const timeB = b.creationTime || b.timestamp || 0
-          return timeA - timeB
-        })
-        
-        console.log(`[ChatHandler] Total P2P messages: ${rawMessages.length}`)
-      } else {
-        // For non-P2P conversations, use standard method
-        rawMessages = await topicRoom.retrieveAllMessages()
-        console.log('[ChatHandler] Retrieved', rawMessages.length, 'messages from TopicRoom')
+        console.log(`[ChatHandler] Total messages after fallback check: ${rawMessages.length}`)
       }
       
+      // Sort messages by timestamp
+      rawMessages.sort((a, b) => {
+        const timeA = a.creationTime || a.timestamp || 0
+        const timeB = b.creationTime || b.timestamp || 0
+        return timeA - timeB
+      })
+
       // Filter for actual ChatMessage objects - they have data.text
-      const validMessages = rawMessages.filter(msg => 
+      const validMessages = rawMessages.filter(msg =>
         msg.data?.text && typeof msg.data.text === 'string' && msg.data.text.trim() !== ''
       )
       
@@ -630,7 +626,7 @@ const chatHandlers = {
           if (!channelDebug[ch.id]) channelDebug[ch.id] = []
           channelDebug[ch.id].push(ch.owner?.substring(0, 8) || 'undefined')
         })
-        console.log('[ChatHandler] Channels by ID:', channelDebug)
+        console.log('[ChatHandler] Channels by ID:', JSON.stringify(channelDebug, null, 2))
         
         // Group channels by topic ID to handle group chats and P2P correctly
         // In both cases, each participant has their own channel with the same topic ID
@@ -640,20 +636,33 @@ const chatHandlers = {
         channels.forEach(channel => {
           // Skip system channels
           if (channel.id === 'contacts') return
-          
+
+          // For P2P conversations, normalize the ID to prevent duplicates
+          // Both "someoneId<->personId" and "personId1<->personId2" should be treated as same conversation
+          let normalizedId = channel.id
+          if (channel.id.includes('<->')) {
+            const parts = channel.id.split('<->')
+            // Always sort the IDs to get a consistent key
+            normalizedId = parts.sort().join('<->')
+            console.log(`[ChatHandler] P2P channel ${channel.id} normalized to ${normalizedId}`)
+          }
+
           // Skip if we've already processed this topic ID
-          if (processedIds.has(channel.id)) return
-          
+          if (processedIds.has(normalizedId)) {
+            console.log(`[ChatHandler] Skipping duplicate: ${channel.id} (normalized: ${normalizedId})`)
+            return
+          }
+
           // For ALL topics (group and P2P), consolidate by topic ID
           // We only need to show each conversation once, not once per channel
-          processedIds.add(channel.id)
+          processedIds.add(normalizedId)
           
           // Find the best channel for this topic (prefer our own for writing)
           const allChannelsForTopic = channels.filter(ch => ch.id === channel.id)
           const ourChannel = allChannelsForTopic.find(ch => ch.owner === nodeOneCore.ownerId)
           const channelToUse = ourChannel || allChannelsForTopic[0]
-          
-          topicMap.set(channel.id, {
+
+          topicMap.set(normalizedId, {
             ...channelToUse,
             isOurs: channelToUse.owner === nodeOneCore.ownerId,
             participantCount: allChannelsForTopic.length // Track how many participants
