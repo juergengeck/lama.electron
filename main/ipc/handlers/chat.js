@@ -12,6 +12,21 @@ import { BrowserWindow } from 'electron';
 const topicCreationInProgress = new Map()
 
 const chatHandlers = {
+  async uiReady(event) {
+    console.log('[ChatHandler] UI signaled ready for messages')
+    // Notify the PeerMessageListener that UI is ready
+    const nodeOneCore = require('../../core/node-one-core.js').default
+    if (nodeOneCore.peerMessageListener) {
+      const { BrowserWindow } = require('electron')
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (mainWindow) {
+        nodeOneCore.peerMessageListener.setMainWindow(mainWindow)
+        console.log('[ChatHandler] Updated PeerMessageListener with current window')
+      }
+    }
+    return { success: true }
+  },
+
   async sendMessage(event, { conversationId, text, attachments = [] }) {
     console.log('[ChatHandler] Send message:', { conversationId, text })
     
@@ -47,50 +62,36 @@ const chatHandlers = {
 
           // Check if this is a P2P conversation
           if (conversationId.includes('<->')) {
-            // For P2P conversations, extract both participant IDs
+            // For P2P conversations, let TopicModel handle it with createOneToOneTopic
             const [id1, id2] = conversationId.split('<->')
-            participantIds = [id1, id2]
-            console.log('[ChatHandler] P2P conversation - participants:', participantIds.map(p => p.substring(0, 8)).join(', '))
+            console.log('[ChatHandler] P2P conversation - using TopicModel.createOneToOneTopic')
+
+            await nodeOneCore.topicModel.createOneToOneTopic(id1, id2)
+            console.log('[ChatHandler] Created P2P topic via TopicModel')
           } else {
-            // For default topic, include default AI if available
+            // For group topics, include default AI if available
             if (nodeOneCore.aiAssistantModel) {
               const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
               if (aiContacts.length > 0) {
                 participantIds.push(aiContacts[0].personId) // Add first AI as default participant
               }
             }
-          }
 
-          await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId, participantIds)
-          console.log('[ChatHandler] Created group topic with channels for all participants')
-        } else {
-          // Fallback to old method if TopicGroupManager not available
-          await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
-          console.log('[ChatHandler] Created group topic with channel')
-          
-          // Grant access to browser Person ID for CHUM sync
-          const browserPersonId = stateManager.getState('browserPersonId')
-          if (browserPersonId) {
-            const { createAccess } = await import('@refinio/one.core/lib/access.js')
-            const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
-            const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
-            
-            const channelInfoHash = await calculateIdHashOfObj({
-              $type$: 'ChannelInfo',
-              id: conversationId,
-              owner: nodeOneCore.ownerId
-            })
-            
-            // Grant direct person-to-person access to browser
-            await createAccess([{
-              id: channelInfoHash,
-              person: [browserPersonId], // Direct access to browser person
-              group: [],
-              mode: SET_ACCESS_MODE.ADD
-            }])
-            
-            console.log(`[ChatHandler] Granted channel access to browser person: ${browserPersonId.substring(0, 8)}`)
+            await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId, participantIds)
+            console.log('[ChatHandler] Created group topic with channels for all participants')
           }
+        } else {
+          // Fallback - let TopicModel handle it
+          const isP2P = conversationId.includes('<->')
+
+          if (isP2P) {
+            const [id1, id2] = conversationId.split('<->')
+            await nodeOneCore.topicModel.createOneToOneTopic(id1, id2)
+          } else {
+            // For group topics, use createGroupTopic with our owner
+            await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
+          }
+          console.log('[ChatHandler] Created topic via TopicModel - access handled by library')
         }
         
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
@@ -99,33 +100,16 @@ const chatHandlers = {
       // Send message through TopicModel (this syncs via ChannelManager)
       // TopicRoom.sendMessage expects (message, author, channelOwner)
       // undefined author means "use my main identity"
+      // For P2P: channelOwner should be null (shared channel)
+      // For group: channelOwner should be undefined (use my main identity)
       console.log('[ChatHandler] DEBUG: About to send message to topicRoom')
-      console.log('[ChatHandler] DEBUG: conversationId:', conversationId)
-      console.log('[ChatHandler] DEBUG: nodeOneCore.ownerId:', nodeOneCore.ownerId)
-      console.log('[ChatHandler] DEBUG: text:', text)
-      
-      // Determine channel owner based on conversation type
-      // P2P: null owner (shared channel)
-      // Group: our own channel
+
       const isP2P = conversationId.includes('<->')
-      const channelOwner = isP2P ? null : nodeOneCore.ownerId
-      console.log('[ChatHandler] DEBUG: Writing to channel, owner:', isP2P ? 'null (shared)' : channelOwner?.substring(0, 8))
+      const channelOwner = isP2P ? null : undefined
 
-      // For P2P conversations, also log what channels exist
-      if (isP2P && nodeOneCore.channelManager) {
-        const channels = await nodeOneCore.channelManager.getMatchingChannelInfos({channelId: conversationId})
-        console.log('[ChatHandler] P2P channels for this topic:', channels.map(ch => ({
-          id: ch.id,
-          owner: ch.owner ? ch.owner.substring(0, 8) : 'null'
-        })))
-      }
-
-      // Send message
-      console.log('[ChatHandler] Calling topicRoom.sendMessage with owner:', channelOwner)
+      // Use sendMessage method (as per one.leute reference implementation)
       await topicRoom.sendMessage(text, undefined, channelOwner)
 
-      console.log('[ChatHandler] DEBUG: Message sent to TopicRoom')
-      
       // Create message object for UI
       const message = {
         id: `msg-${Date.now()}`,
@@ -136,14 +120,11 @@ const chatHandlers = {
         timestamp: new Date().toISOString(),
         status: 'sent'
       }
-      
+
       // Don't store in stateManager - TopicModel is the source of truth
-      
-      // Notify renderer about the new message
-      event.sender.send('chat:messageSent', message)
-      
-      // Also emit a message update event so UI refreshes from source
-      event.sender.send('message:updated', { conversationId })
+
+      // Notify renderer about the new message - single event for consistency
+      event.sender.send('chat:newMessages', { conversationId, messages: [message] })
       
       return {
         success: true,
@@ -178,7 +159,7 @@ const chatHandlers = {
       // Get messages from TopicModel
       let topicRoom
       let topicWasJustCreated = false
-      
+
       try {
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
       } catch (error) {
@@ -213,37 +194,31 @@ const chatHandlers = {
 
                 // Check if this is a P2P conversation
                 if (conversationId.includes('<->')) {
-                  // For P2P conversations, extract both participant IDs
+                  // For P2P conversations, use createP2PTopic (single null-owner channel)
                   const [id1, id2] = conversationId.split('<->')
                   participantIds = [id1, id2]
-
-                  // Also add the default AI to P2P conversations
-                  // This ensures there's always at least one channel that both sides can see
-                  if (nodeOneCore.aiAssistantModel) {
-                    const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
-                    if (aiContacts.length > 0 && !participantIds.includes(aiContacts[0].personId)) {
-                      participantIds.push(aiContacts[0].personId)
-                      console.log('[ChatHandler] Added AI to P2P conversation for channel visibility')
-                    }
-                  }
-
                   console.log('[ChatHandler] P2P conversation - participants:', participantIds.map(p => p.substring(0, 8)).join(', '))
+
+                  await nodeOneCore.topicGroupManager.createP2PTopic(conversationId, conversationId, participantIds)
+                  console.log('[ChatHandler] Created P2P topic with null-owner channel')
                 } else {
-                  // For default topic, include default AI if available
+                  // For group topics, include default AI if available
                   if (nodeOneCore.aiAssistantModel) {
                     const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
                     if (aiContacts.length > 0) {
                       participantIds.push(aiContacts[0].personId)
                     }
                   }
-                }
 
-                await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId, participantIds)
-                console.log('[ChatHandler] Topic created successfully with channels for all participants')
+                  await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId, participantIds)
+                  console.log('[ChatHandler] Topic created successfully with channels for all participants')
+                }
               } else {
                 // Fallback to old method
-                await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
-                console.log('[ChatHandler] Topic created successfully')
+                const isP2P = conversationId.includes('<->')
+                const channelOwner = isP2P ? null : nodeOneCore.ownerId
+                await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, channelOwner)
+                console.log('[ChatHandler] Topic created with', isP2P ? 'null owner (P2P)' : 'owner')
               }
               return true
             } catch (createError) {
@@ -382,14 +357,15 @@ const chatHandlers = {
               ]
 
               for (const altId of altChannelIds) {
-                const altMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-                  channelId: altId
-                })
+                // TODO: getObjectsWithType is no longer available in the new vendor packages
+                // const altMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
+                //   channelId: altId
+                // })
 
-                if (altMessages.length > 0) {
-                  console.log(`[ChatHandler] Found ${altMessages.length} messages in alternate channel: ${altId}`)
-                  fallbackMessages = [...fallbackMessages, ...altMessages]
-                }
+                // if (altMessages.length > 0) {
+                //   console.log(`[ChatHandler] Found ${altMessages.length} messages in alternate channel: ${altId}`)
+                //   fallbackMessages = [...fallbackMessages, ...altMessages]
+                // }
               }
             }
 
@@ -397,14 +373,15 @@ const chatHandlers = {
             if (someoneIds.length >= 2) {
               const sortedSomeoneIds = someoneIds.sort()
               const someoneChannelId = `${sortedSomeoneIds[0]}<->${sortedSomeoneIds[1]}`
-              const someoneMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-                channelId: someoneChannelId
-              })
+              // TODO: getObjectsWithType is no longer available in the new vendor packages
+              // const someoneMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
+              //   channelId: someoneChannelId
+              // })
 
-              if (someoneMessages.length > 0) {
-                console.log(`[ChatHandler] Found ${someoneMessages.length} messages in Someone<->Someone channel: ${someoneChannelId}`)
-                fallbackMessages = [...fallbackMessages, ...someoneMessages]
-              }
+              // if (someoneMessages.length > 0) {
+              //   console.log(`[ChatHandler] Found ${someoneMessages.length} messages in Someone<->Someone channel: ${someoneChannelId}`)
+              //   fallbackMessages = [...fallbackMessages, ...someoneMessages]
+              // }
             }
 
             rawMessages = [...rawMessages, ...fallbackMessages]
@@ -574,7 +551,9 @@ const chatHandlers = {
           // Fallback to creating channel only
           if (nodeOneCore.channelManager) {
             try {
-              await nodeOneCore.channelManager.createChannel(conversation.id, nodeOneCore.ownerId)
+              const isP2P = conversation.id.includes('<->')
+              const channelOwner = isP2P ? null : nodeOneCore.ownerId
+              await nodeOneCore.channelManager.createChannel(conversation.id, channelOwner)
             } catch (channelError) {
               console.log('[ChatHandler] Channel might already exist:', channelError.message)
             }
@@ -584,8 +563,10 @@ const chatHandlers = {
         // Fallback if TopicGroupManager not available
         try {
           console.log('[ChatHandler] Creating Node.js channel for conversation:', conversation.id)
-          await nodeOneCore.channelManager.createChannel(conversation.id, nodeOneCore.ownerId)
-          console.log('[ChatHandler] Created Node.js channel with owner:', nodeOneCore.ownerId)
+          const isP2P = conversation.id.includes('<->')
+          const channelOwner = isP2P ? null : nodeOneCore.ownerId
+          await nodeOneCore.channelManager.createChannel(conversation.id, channelOwner)
+          console.log('[ChatHandler] Created Node.js channel with owner:', isP2P ? 'null (P2P)' : nodeOneCore.ownerId)
         } catch (error) {
           console.error('[ChatHandler] Error creating channel in Node.js:', error)
         }
@@ -632,31 +613,123 @@ const chatHandlers = {
         // In both cases, each participant has their own channel with the same topic ID
         const topicMap = new Map()
         const processedIds = new Set() // Track which IDs we've already processed
-        
-        channels.forEach(channel => {
+
+        // Pre-fetch contact names for P2P chats
+        const p2pNameCache = new Map()
+
+        for (const channel of channels) {
           // Skip system channels
-          if (channel.id === 'contacts') return
+          if (channel.id === 'contacts') continue
 
           // For P2P conversations, normalize the ID to prevent duplicates
           // Both "someoneId<->personId" and "personId1<->personId2" should be treated as same conversation
           let normalizedId = channel.id
           if (channel.id.includes('<->')) {
             const parts = channel.id.split('<->')
+
+            // Skip self-P2P channels (conversations with ourselves)
+            if (parts[0] === parts[1]) {
+              console.log(`[ChatHandler] Skipping self-P2P channel: ${channel.id}`)
+              continue
+            }
+
             // Always sort the IDs to get a consistent key
             normalizedId = parts.sort().join('<->')
             console.log(`[ChatHandler] P2P channel ${channel.id} normalized to ${normalizedId}`)
+
+            // Look up contact name for P2P chats
+            if (!p2pNameCache.has(normalizedId) && nodeOneCore.leuteModel) {
+              try {
+                const otherPersonId = parts.find(id => id !== nodeOneCore.ownerId)
+                console.log('[ChatHandler] Looking up name for P2P chat, otherPersonId:', otherPersonId?.substring(0, 8))
+
+                if (otherPersonId) {
+                  // Get all contacts and find the one with this personId
+                  const others = await nodeOneCore.leuteModel.others()
+                  console.log('[ChatHandler] Total contacts:', others.length)
+
+                  // Need to check the person ID from the profile, not directly from Someone
+                  let contact = null
+                  for (const someone of others) {
+                    try {
+                      const profile = await someone.mainProfile()
+                      if (profile?.personId === otherPersonId) {
+                        contact = someone
+                        break
+                      }
+                    } catch (e) {
+                      // Profile might not be available
+                    }
+                  }
+                  console.log('[ChatHandler] Found matching contact:', contact ? 'YES' : 'NO')
+
+                  let displayName = null
+                  if (contact) {
+                    try {
+                      const profile = await contact.mainProfile()
+                      console.log('[ChatHandler] Got profile:', profile ? 'YES' : 'NO')
+
+                      // Look for PersonName in profile descriptions
+                      const nameDesc = profile?.personDescriptions?.find(d =>
+                        d.$type$ === 'PersonName'
+                      )
+                      console.log('[ChatHandler] Found PersonName:', nameDesc?.name || 'NONE')
+
+                      if (nameDesc?.name) {
+                        displayName = nameDesc.name
+                      } else if (profile?.name) {
+                        // Fallback to profile name field
+                        displayName = profile.name
+                      }
+                    } catch (e) {
+                      console.log('[ChatHandler] Error getting profile:', e.message)
+                    }
+
+                    // If still no name, try to get from the Someone's name property
+                    if (!displayName && contact.name) {
+                      displayName = contact.name
+                      console.log('[ChatHandler] Using Someone name:', displayName)
+                    }
+
+                    // If still no name, try to get from the Someone object itself
+                    if (!displayName) {
+                      try {
+                        // Some Someone objects might have a getName method or similar
+                        const someoneObj = await contact.object()
+                        if (someoneObj?.name) {
+                          displayName = someoneObj.name
+                          console.log('[ChatHandler] Using Someone object name:', displayName)
+                        }
+                      } catch (e) {
+                        // Ignore
+                      }
+                    }
+                  }
+
+                  if (!displayName) {
+                    // Fallback to shortened ID
+                    displayName = otherPersonId.substring(0, 8) + '...'
+                  }
+
+                  p2pNameCache.set(normalizedId, `Chat with ${displayName}`)
+                  console.log(`[ChatHandler] Cached P2P name for ${normalizedId}: Chat with ${displayName}`)
+                }
+              } catch (e) {
+                console.warn('[ChatHandler] Could not look up contact name:', e)
+              }
+            }
           }
 
           // Skip if we've already processed this topic ID
           if (processedIds.has(normalizedId)) {
             console.log(`[ChatHandler] Skipping duplicate: ${channel.id} (normalized: ${normalizedId})`)
-            return
+            continue
           }
 
           // For ALL topics (group and P2P), consolidate by topic ID
           // We only need to show each conversation once, not once per channel
           processedIds.add(normalizedId)
-          
+
           // Find the best channel for this topic (prefer our own for writing)
           const allChannelsForTopic = channels.filter(ch => ch.id === channel.id)
           const ourChannel = allChannelsForTopic.find(ch => ch.owner === nodeOneCore.ownerId)
@@ -664,10 +737,12 @@ const chatHandlers = {
 
           topicMap.set(normalizedId, {
             ...channelToUse,
+            id: normalizedId, // Use the normalized ID
             isOurs: channelToUse.owner === nodeOneCore.ownerId,
-            participantCount: allChannelsForTopic.length // Track how many participants
+            participantCount: allChannelsForTopic.length, // Track how many participants
+            cachedName: p2pNameCache.get(normalizedId) // Store the cached name if available
           })
-        })
+        }
         
         // Convert map back to array for processing
         const filteredChannels = Array.from(topicMap.values())
@@ -675,11 +750,11 @@ const chatHandlers = {
         // Process channels with async operations
         conversations = await Promise.all(filteredChannels.map(async channel => {
             // Try to get the actual topic to access its name property
-            let name = channel.name
+            let name = channel.cachedName || channel.name // Use cached name if available
             let topic = null
-            
+
             try {
-              if (nodeOneCore.topicModel) {
+              if (nodeOneCore.topicModel && !name) {
                 topic = await nodeOneCore.topicModel.topics.queryById(channel.id)
                 if (topic?.name) {
                   name = topic.name
@@ -688,43 +763,14 @@ const chatHandlers = {
             } catch (e) {
               // Topic might not exist yet
             }
-            
+
             if (!name) {
               // For person-to-person conversations (ID format: personA<->personB)
               if (channel.id.includes('<->')) {
+                // Name should have been cached already, but fallback just in case
                 const parts = channel.id.split('<->')
-                // Try to look up actual contact names
-                let displayName = null
-                
-                if (nodeOneCore.leuteModel) {
-                  try {
-                    // Find which person is not us
-                    const otherPersonId = parts.find(id => id !== nodeOneCore.ownerId)
-                    if (otherPersonId) {
-                      // Try to get contact info using proper LeuteModel API
-                      const someone = await nodeOneCore.leuteModel.getSomeone(otherPersonId)
-                      if (someone) {
-                        const profile = await someone.mainProfile()
-                        // Look for PersonName in profile descriptions
-                        const nameDesc = profile.personDescriptions?.find(d => 
-                          d.$type$ === 'PersonName'
-                        )
-                        if (nameDesc?.name) {
-                          displayName = nameDesc.name
-                        }
-                      }
-                    }
-                  } catch (e) {
-                    console.warn('[ChatHandler] Could not look up contact name:', e)
-                  }
-                }
-                
-                if (!displayName) {
-                  // Fallback to shortened ID
-                  const otherPersonId = parts.find(id => id !== nodeOneCore.ownerId) || parts[1]
-                  displayName = otherPersonId.substring(0, 8) + '...'
-                }
-                
+                const otherPersonId = parts.find(id => id !== nodeOneCore.ownerId) || parts[1]
+                const displayName = otherPersonId.substring(0, 8) + '...'
                 name = `Chat with ${displayName}`
               } else if (channel.id === 'default') {
                 name = 'General Chat'
@@ -747,11 +793,32 @@ const chatHandlers = {
               }
             }
             
+            // Determine conversation type
+            let conversationType = 'direct'
+            let isGroupChat = false
+
+            if (channel.id.includes('<->')) {
+              conversationType = 'direct'
+              isGroupChat = false
+            } else if (channel.id === 'default') {
+              conversationType = 'direct' // Default is treated as direct AI chat
+              isGroupChat = false
+            } else if (channel.id.startsWith('topic-')) {
+              conversationType = 'group'
+              isGroupChat = true
+            } else if (channel.participantCount > 2) {
+              conversationType = 'group'
+              isGroupChat = true
+            }
+
             return {
               id: channel.id,
               name: name,
-              isGroup: channel.members && channel.members.length > 2,
+              type: conversationType,
+              isGroup: isGroupChat,
               members: channel.members || [],
+              participants: channel.participants || [],
+              participantCount: channel.participantCount,
               createdAt: channel.createdAt || new Date().toISOString()
             }
           }))
@@ -952,6 +1019,162 @@ const chatHandlers = {
     }
   },
 
+  async addParticipants(event, { conversationId, participantIds }) {
+    console.log('[ChatHandler] Add participants to conversation:', { conversationId, participantIds })
+
+    try {
+      if (!nodeProvisioning.isProvisioned()) {
+        throw new Error('Node not provisioned')
+      }
+
+      if (!nodeOneCore.topicGroupManager) {
+        throw new Error('TopicGroupManager not initialized')
+      }
+
+      // Validate participant IDs
+      const validParticipantIds = participantIds.filter(id => id && typeof id === 'string')
+      if (validParticipantIds.length === 0) {
+        throw new Error('No valid participant IDs provided')
+      }
+
+      // Check if this is a P2P conversation or default chat - if so, create a new group chat
+      if (conversationId.includes('<->') || conversationId === 'default') {
+        const isP2P = conversationId.includes('<->')
+        const isDefault = conversationId === 'default'
+
+        console.log(`[ChatHandler] ${isP2P ? 'P2P' : 'Default'} conversation detected - creating new group chat`)
+
+        let originalParticipants = []
+        let groupName = 'Group Chat'
+
+        if (isP2P) {
+          // Extract the two participants from the P2P conversation ID
+          const [person1, person2] = conversationId.split('<->')
+          originalParticipants = [person1, person2]
+
+          // Try to get the original P2P conversation name
+          try {
+            const channels = await nodeOneCore.channelManager.channels()
+            const p2pChannel = channels.find(ch => ch.id === conversationId)
+            if (p2pChannel && p2pChannel.name) {
+              groupName = `${p2pChannel.name} (Group)`
+            }
+          } catch (e) {
+            console.log('[ChatHandler] Could not get P2P conversation name')
+          }
+        } else if (isDefault) {
+          // For default chat, include the current user and AI
+          originalParticipants = [nodeOneCore.ownerId]
+
+          // Add the default AI assistant if available
+          if (nodeOneCore.aiAssistantModel) {
+            const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
+            if (aiContacts.length > 0) {
+              originalParticipants.push(aiContacts[0].personId)
+            }
+          }
+
+          groupName = 'AI Group Chat'
+        }
+
+        // Create a new group conversation with all participants
+        // Include both original participants and the new ones
+        const allParticipants = [...originalParticipants, ...validParticipantIds]
+        // Remove duplicates
+        const uniqueParticipants = [...new Set(allParticipants)]
+
+        // Create new group topic ID
+        const newGroupId = `topic-${Date.now()}`
+
+        console.log('[ChatHandler] Creating group chat with participants:', uniqueParticipants.map(id => id.substring(0, 8)).join(', '))
+
+        // Create the group topic
+        await nodeOneCore.topicGroupManager.createGroupTopic(
+          groupName,
+          newGroupId,
+          uniqueParticipants
+        )
+
+        console.log('[ChatHandler] Created new group chat:', newGroupId)
+
+        // Copy messages from P2P conversation to new group (default behavior)
+        try {
+          console.log('[ChatHandler] Copying messages from P2P to new group...')
+
+          // Get messages from the P2P conversation
+          const p2pMessages = await nodeOneCore.topicRoom.retrieveAllMessages(conversationId)
+
+          if (p2pMessages && p2pMessages.length > 0) {
+            console.log(`[ChatHandler] Found ${p2pMessages.length} messages to copy`)
+
+            // Post each message to the new group (preserving order and timestamps)
+            for (const message of p2pMessages) {
+              if (message.data && message.data.text) {
+                // Determine the sender (could be either participant in P2P)
+                const sender = message.author || message.data.sender
+
+                // Post to new group on behalf of the original sender
+                await nodeOneCore.topicRoom.postMessage(
+                  newGroupId,
+                  {
+                    text: message.data.text,
+                    sender: sender,
+                    originalTimestamp: message.creationTime || message.data.timestamp
+                  },
+                  sender // Post as the original sender
+                )
+              }
+            }
+
+            console.log(`[ChatHandler] Copied ${p2pMessages.length} messages to new group`)
+          } else {
+            console.log('[ChatHandler] No messages to copy from P2P conversation')
+          }
+        } catch (error) {
+          console.warn('[ChatHandler] Failed to copy messages from P2P:', error.message)
+          // Continue even if message copy fails
+        }
+
+        // Notify renderer about the new group creation
+        event.sender.send('chat:p2pConvertedToGroup', {
+          oldConversationId: conversationId,
+          newConversationId: newGroupId,
+          participantIds: uniqueParticipants
+        })
+
+        return {
+          success: true,
+          message: `Created new group chat with ${uniqueParticipants.length} participants`,
+          newConversationId: newGroupId
+        }
+      }
+
+      // Regular group chat - just add participants
+      console.log('[ChatHandler] Adding participants:', validParticipantIds.map(id => id.substring(0, 8)).join(', '))
+
+      // Add participants to the topic's group
+      await nodeOneCore.topicGroupManager.addParticipantsToTopic(conversationId, validParticipantIds)
+      console.log('[ChatHandler] Successfully added participants to topic group')
+
+      // Notify renderer about the change
+      event.sender.send('chat:participantsAdded', {
+        conversationId,
+        participantIds: validParticipantIds
+      })
+
+      return {
+        success: true,
+        message: `Added ${validParticipantIds.length} participants to conversation`
+      }
+    } catch (error) {
+      console.error('[ChatHandler] Error adding participants:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
   async clearConversation(event, { conversationId }) {
     console.log('[ChatHandler] Clear conversation:', conversationId)
     
@@ -961,7 +1184,7 @@ const chatHandlers = {
       }
 
       // Get the topic room
-      const topicRoom = nodeOneCore.topicModel.getTopicRoom(conversationId)
+      const topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
       if (!topicRoom) {
         console.log('[ChatHandler] Topic room not found for:', conversationId)
         return {

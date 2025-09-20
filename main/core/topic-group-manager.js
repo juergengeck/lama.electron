@@ -355,33 +355,21 @@ class TopicGroupManager {
       throw new Error('TopicModel not initialized')
     }
 
-    // Create the topic with null owner (shared channel)
-    // Pass null as channelOwner to create a no-owner channel
-    const topic = await this.nodeOneCore.topicModel.createGroupTopic(
-      topicName,
-      topicId,
-      null  // null = no owner, both participants can write
+    // Use createOneToOneTopic for P2P conversations (matches one.leute reference)
+    // This properly creates a topic with undefined/null owner
+    const [from, to] = participantIds
+    const topic = await this.nodeOneCore.topicModel.createOneToOneTopic(
+      from,
+      to
+      // No third parameter = undefined owner (both participants can write)
     )
 
     console.log(`[TopicGroupManager] Created P2P topic ${topicId} with null-owner channel`)
 
-    // Get the channel hash for the null-owner channel
-    const channelHash = await calculateIdHashOfObj({
-      $type$: 'ChannelInfo',
-      id: topicId,
-      owner: undefined  // undefined in the hash for null owner
-    })
-
-    // Grant person-based access to both participants
-    // NO Group objects for P2P - just direct person access
-    await createAccess([{
-      id: channelHash,
-      person: participantIds,  // Both participants get direct access
-      group: [],  // No groups for P2P
-      mode: SET_ACCESS_MODE.ADD
-    }])
-
-    console.log(`[TopicGroupManager] Granted P2P channel access to:`, participantIds.map(p => p.substring(0, 8)).join(', '))
+    // Note: createOneToOneTopic automatically handles access control through:
+    // addTopicToRegistry -> applyAccessRightsIfOneToOneChat -> addPersonsToTopic
+    // This grants both channel and Topic object access to both participants
+    console.log(`[TopicGroupManager] Access automatically granted to P2P participants via TopicModel`)
 
     return topic
   }
@@ -545,6 +533,10 @@ class TopicGroupManager {
     console.log('[TopicGroupManager] Scanning for group memberships...');
 
     try {
+      // TODO: getObjectsWithType is no longer available in the new vendor packages
+      // Need to implement a different approach to scan for all Group objects
+      // For now, we'll skip scanning for existing groups
+      /*
       const { getObjectsWithType } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
 
       // Find all Group objects we have access to
@@ -570,6 +562,7 @@ class TopicGroupManager {
           }
         }
       }
+      */
 
       console.log('[TopicGroupManager] Group channel scan complete');
     } catch (error) {
@@ -714,28 +707,47 @@ class TopicGroupManager {
         const hasNullOwnerChannel = channels.some(ch => !ch.owner);
         const hasOwnerChannels = channels.some(ch => ch.owner);
 
-        if (hasOwnerChannels && !hasNullOwnerChannel) {
-          console.warn(`[TopicGroupManager] ⚠️ P2P topic has owner-based channels, need to create null-owner channel`);
+        if (!hasNullOwnerChannel) {
+          console.warn(`[TopicGroupManager] ⚠️ P2P topic missing null-owner channel, creating it...`);
 
           // Create the null-owner channel for P2P
           await this.nodeOneCore.channelManager.createChannel(p2pTopicId, null);
           console.log(`[TopicGroupManager] Created null-owner channel for existing P2P topic`);
+        }
 
-          // Grant access to both participants
-          const channelHash = await calculateIdHashOfObj({
-            $type$: 'ChannelInfo',
-            id: p2pTopicId,
-            owner: undefined
-          });
+        // ALWAYS ensure access is granted for the null-owner channel
+        // This is critical - even if the channel exists, the peer might not have access
+        const channelHash = await calculateIdHashOfObj({
+          $type$: 'ChannelInfo',
+          id: p2pTopicId,
+          owner: undefined
+        });
 
+        await createAccess([{
+          id: channelHash,
+          person: [this.nodeOneCore.ownerId, peerPersonId],
+          group: [],
+          mode: SET_ACCESS_MODE.ADD
+        }]);
+
+        console.log(`[TopicGroupManager] ✅ Ensured P2P channel access for both participants`);
+
+        // Also ensure access to the Topic object itself (like one.leute does)
+        const { calculateHashOfObj } = await import('@refinio/one.core/lib/util/object.js');
+        if (topic) {
+          const topicHash = await calculateHashOfObj(topic);
           await createAccess([{
-            id: channelHash,
+            object: topicHash,
             person: [this.nodeOneCore.ownerId, peerPersonId],
             group: [],
             mode: SET_ACCESS_MODE.ADD
           }]);
+          console.log(`[TopicGroupManager] ✅ Ensured Topic object access for both participants`);
+        }
 
-          console.log(`[TopicGroupManager] ✅ Fixed P2P topic configuration`);
+        if (hasOwnerChannels) {
+          console.warn(`[TopicGroupManager] ⚠️ P2P topic has owned channels - these should be removed`);
+          console.warn(`[TopicGroupManager] P2P should only have null-owner channel for shared access`);
         }
       }
 

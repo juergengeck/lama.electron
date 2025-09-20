@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
-import { MessageSquare, Plus, Trash2, Bot, Loader2, MoreVertical, Edit, Check, CheckCheck } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { MessageSquare, Plus, Trash2, Bot, Loader2, MoreVertical, Edit, Check, CheckCheck, UserPlus, Users } from 'lucide-react'
 import { ChatView } from './ChatView'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
+import { lamaBridge } from '@/bridge/lama-bridge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,13 +12,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { InputDialog } from './InputDialog'
+import { UserSelectionDialog } from './UserSelectionDialog'
+import { GroupChatDialog } from './GroupChatDialog'
 
 interface Conversation {
   id: string
   name: string
+  type?: 'direct' | 'group'
+  participants?: string[]
   lastMessage?: string
   lastMessageTime?: Date | string
   modelName?: string
+  isGroup?: boolean
 }
 
 interface ChatLayoutProps {
@@ -30,11 +36,15 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   const [searchQuery, setSearchQuery] = useState('')
   const [processingConversations, setProcessingConversations] = useState<Set<string>>(new Set())
   const [showNewChatDialog, setShowNewChatDialog] = useState(false)
+  const [showNewGroupDialog, setShowNewGroupDialog] = useState(false)
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [conversationToRename, setConversationToRename] = useState<string | null>(null)
+  const [showAddUsersDialog, setShowAddUsersDialog] = useState(false)
+  const [conversationToAddUsers, setConversationToAddUsers] = useState<string | null>(null)
 
   // Update selected conversation when prop changes
   useEffect(() => {
+    console.log('[ChatLayout] 🔴 selectedConversationId prop changed to:', selectedConversationId)
     if (selectedConversationId) {
       setSelectedConversation(selectedConversationId)
     }
@@ -47,14 +57,15 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         if (!window.electronAPI) {
           throw new Error('Electron API not available')
         }
-        
+
         const result = await window.electronAPI.invoke('chat:getConversations')
         if (!result.success) {
           throw new Error(result.error || 'Failed to get conversations')
         }
-        
+
         const conversations = result.data || []
-        
+        console.log('[ChatLayout] 🔴 Loaded conversations from backend:', conversations.map((c: any) => ({ id: c.id, name: c.name })))
+
         // Convert to UI format
         const uiConversations: Conversation[] = conversations.map((conv: any) => ({
           id: conv.id,
@@ -63,8 +74,9 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
           lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
           modelName: conv.modelName || 'GPT-OSS'
         }))
-        
+
         setConversations(uiConversations)
+        console.log('[ChatLayout] 🔴 UI conversations set:', uiConversations.map(c => ({ id: c.id, name: c.name })))
         
         if (selectedConversationId) {
           setSelectedConversation(selectedConversationId)
@@ -78,6 +90,49 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
     }
     
     loadConversations()
+  }, [])
+
+  // Listen for new messages globally to update conversation list
+  useEffect(() => {
+    if (!window.electronAPI) return
+
+    const handleNewMessages = (data: { conversationId: string; messages: any[] }) => {
+      console.log('[ChatLayout] 📬 New messages received for conversation:', data.conversationId)
+
+      // Update the conversation list to reflect the new message
+      if (data.messages && data.messages.length > 0) {
+        const lastMessage = data.messages[data.messages.length - 1]
+
+        setConversations(prev => prev.map(conv =>
+          conv.id === data.conversationId
+            ? {
+                ...conv,
+                lastMessage: lastMessage.content || lastMessage.text || '',
+                lastMessageTime: new Date()
+              }
+            : conv
+        ))
+      }
+    }
+
+    const handleP2PConverted = async (data: { oldConversationId: string; newConversationId: string; participantIds: string[] }) => {
+      console.log('[ChatLayout] P2P converted to group:', data)
+
+      // Reload conversations to get the new group
+      await reloadConversations()
+
+      // Select the new group conversation
+      setSelectedConversation(data.newConversationId)
+    }
+
+    // Subscribe to events
+    const unsubscribe = lamaBridge.on('chat:newMessages', handleNewMessages)
+    const unsubP2P = window.electronAPI?.on?.('chat:p2pConvertedToGroup', handleP2PConverted)
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+      if (unsubP2P) unsubP2P()
+    }
   }, [])
 
   // Reload conversations from Node.js
@@ -170,6 +225,93 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
     setShowRenameDialog(true)
   }
 
+  // Open add users dialog
+  const openAddUsersDialog = (id: string) => {
+    setConversationToAddUsers(id)
+    setShowAddUsersDialog(true)
+  }
+
+  // Handle adding users to conversation
+  const handleAddUsers = async (selectedUserIds: string[]) => {
+    if (!conversationToAddUsers) return
+
+    try {
+      if (!window.electronAPI) {
+        throw new Error('Electron API not available')
+      }
+
+      console.log('[ChatLayout] Adding users to conversation:', conversationToAddUsers, selectedUserIds)
+
+      const result = await window.electronAPI.invoke('chat:addParticipants', {
+        conversationId: conversationToAddUsers,
+        participantIds: selectedUserIds
+      })
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to add users')
+      }
+
+      console.log('[ChatLayout] Successfully added users to conversation')
+
+      // Check if a new group was created (P2P converted to group)
+      if (result.newConversationId) {
+        console.log('[ChatLayout] P2P converted to group, new ID:', result.newConversationId)
+
+        // Reload conversations and select the new group
+        await reloadConversations()
+        setSelectedConversation(result.newConversationId)
+
+        // Show success message
+        alert(`Created new group chat with ${selectedUserIds.length + 2} participants`)
+      } else {
+        // Regular add to existing group
+        await reloadConversations()
+      }
+
+    } catch (error: any) {
+      console.error('[ChatLayout] Error adding users:', error)
+      const errorMessage = error?.message || 'Failed to add users to conversation'
+      alert(`Error: ${errorMessage}`)
+    } finally {
+      setConversationToAddUsers(null)
+    }
+  }
+
+  // Create new group conversation with selected users
+  const handleCreateGroupConversation = async (selectedUserIds: string[], chatName?: string) => {
+    try {
+      if (!window.electronAPI) {
+        throw new Error('Electron API not available')
+      }
+
+      // Create group conversation through IPC handler
+      const result = await window.electronAPI.invoke('chat:createConversation', {
+        type: 'group',
+        participants: selectedUserIds,
+        name: chatName || `Group Chat ${conversations.length + 1}`
+      })
+
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Failed to create group conversation')
+      }
+
+      // Reload conversations from Node.js to get fresh data
+      await reloadConversations()
+      setSelectedConversation(result.data.id)
+
+      // Mark as processing since welcome message may be generated
+      setProcessingConversations(prev => {
+        const next = new Set(prev)
+        next.add(result.data.id)
+        return next
+      })
+    } catch (error: any) {
+      console.error('[ChatLayout] Error creating group conversation:', error)
+      const errorMessage = error?.message || 'Failed to create group conversation'
+      alert(`Error: ${errorMessage}`)
+    }
+  }
+
   // Filter conversations by search
   const filteredConversations = conversations.filter(conv =>
     conv.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -184,12 +326,34 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
     const diff = now.getTime() - date.getTime()
     const hours = Math.floor(diff / (1000 * 60 * 60))
     const days = Math.floor(hours / 24)
-    
+
     if (hours < 1) return 'now'
     if (hours < 24) return `${hours}h ago`
     if (days < 7) return `${days}d ago`
     return time.toLocaleDateString()
   }
+
+  // Memoize callbacks to prevent re-renders
+  const handleProcessingChange = useCallback((isProcessing: boolean) => {
+    setProcessingConversations(prev => {
+      const next = new Set(prev)
+      if (isProcessing && selectedConversation) {
+        next.add(selectedConversation)
+      } else if (!isProcessing && selectedConversation) {
+        next.delete(selectedConversation)
+      }
+      return next
+    })
+  }, [selectedConversation])
+
+  const handleMessageUpdate = useCallback((lastMessage: string) => {
+    // Update the conversation's last message for preview
+    setConversations(prev => prev.map(conv =>
+      conv.id === selectedConversation
+        ? { ...conv, lastMessage, lastMessageTime: new Date() }
+        : conv
+    ))
+  }, [selectedConversation])
 
   return (
     <>
@@ -200,14 +364,27 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold">Conversations</h2>
-            <Button
-              onClick={() => setShowNewChatDialog(true)}
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setShowNewChatDialog(true)}>
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  New Chat
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowNewGroupDialog(true)}>
+                  <Users className="mr-2 h-4 w-4" />
+                  New Group Chat
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           
           {/* Search */}
@@ -232,7 +409,10 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
               filteredConversations.map((conv) => (
                 <div
                   key={conv.id}
-                  onClick={() => setSelectedConversation(conv.id)}
+                  onClick={() => {
+                    console.log('[ChatLayout] 🔴 Conversation clicked, selecting:', conv.id)
+                    setSelectedConversation(conv.id)
+                  }}
                   className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
                     selectedConversation === conv.id
                       ? 'bg-primary/10 border-2 border-primary/20'
@@ -264,7 +444,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation()
                               openRenameDialog(conv.id)
@@ -273,7 +453,20 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                             <Edit className="mr-2 h-4 w-4" />
                             Rename
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          {/* Show Add User option for all chats */}
+                          {/* For P2P chats, this will create a new group chat */}
+                          {(
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openAddUsersDialog(conv.id)
+                              }}
+                            >
+                              <UserPlus className="mr-2 h-4 w-4" />
+                              Add User
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation()
                               deleteConversation(conv.id)
@@ -316,29 +509,11 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       {/* Main chat area */}
       <div className="flex-1">
         {selectedConversation ? (
-          <ChatView 
-            key={selectedConversation} 
+          <ChatView
             conversationId={selectedConversation}
             isInitiallyProcessing={processingConversations.has(selectedConversation)}
-            onProcessingChange={(isProcessing) => {
-              setProcessingConversations(prev => {
-                const next = new Set(prev)
-                if (isProcessing) {
-                  next.add(selectedConversation)
-                } else {
-                  next.delete(selectedConversation)
-                }
-                return next
-              })
-            }}
-            onMessageUpdate={(lastMessage: string) => {
-              // Update the conversation's last message for preview
-              setConversations(prev => prev.map(conv => 
-                conv.id === selectedConversation 
-                  ? { ...conv, lastMessage, lastMessageTime: new Date() }
-                  : conv
-              ))
-            }}
+            onProcessingChange={handleProcessingChange}
+            onMessageUpdate={handleMessageUpdate}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -373,6 +548,23 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       label="Chat Name"
       defaultValue={conversations.find(c => c.id === conversationToRename)?.name || ''}
       onSubmit={handleRenameConversation}
+    />
+
+    {/* Add Users Dialog */}
+    <UserSelectionDialog
+      open={showAddUsersDialog}
+      onOpenChange={setShowAddUsersDialog}
+      title="Add Users to Chat"
+      description="Select users to add to this conversation"
+      onSubmit={handleAddUsers}
+      excludeUserIds={[]} // TODO: Get current participants to exclude them
+    />
+
+    {/* New Group Chat Dialog */}
+    <GroupChatDialog
+      open={showNewGroupDialog}
+      onOpenChange={setShowNewGroupDialog}
+      onSubmit={handleCreateGroupConversation}
     />
   </>
   )

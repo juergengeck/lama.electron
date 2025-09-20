@@ -1,14 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Debug: Log that preload script is running
+console.log('[PRELOAD] Preload script loaded, setting up node-log listener...');
+
 // Listen for Node.js logs and forward to browser console
 ipcRenderer.on('node-log', (event, data) => {
   const { level, message, timestamp } = data;
   const time = timestamp ? timestamp.split('T')[1].split('.')[0] : '';
   const prefix = `[NODE ${time}]`;
-  
+
   // Style the logs to distinguish them from browser logs
   const style = 'color: #007ACC; font-weight: bold;';
-  
+
   switch(level) {
     case 'error':
       console.error(`%c${prefix}`, style, message);
@@ -23,6 +26,8 @@ ipcRenderer.on('node-log', (event, data) => {
       console.log(`%c${prefix}`, style, message);
   }
 });
+
+console.log('[PRELOAD] Node-log listener registered');
 
 // Use contextBridge to safely expose APIs to renderer
 // This maintains context isolation and prevents Node.js detection in renderer
@@ -80,9 +85,11 @@ const originalWarn = console.warn;
 
 console.log = (...args) => {
   originalLog.apply(console, args);
-  // Forward to main process if it contains EncryptionPlugin
+  // Forward to main process if it contains specific keywords
   const msg = args.join(' ');
-  if (msg.includes('EncryptionPlugin') || msg.includes('evenLocalNonceCounter')) {
+  if (msg.includes('EncryptionPlugin') || msg.includes('evenLocalNonceCounter') ||
+      msg.includes('LamaBridge') || msg.includes('useLamaMessages') ||
+      msg.includes('chat:newMessages') || msg.includes('IPC event')) {
     ipcRenderer.send('browser-log', 'log', msg);
   }
 };

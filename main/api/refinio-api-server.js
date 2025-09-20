@@ -12,7 +12,8 @@ import { ObjectHandler } from '../../packages/refinio.api/dist/handlers/ObjectHa
 import { RecipeHandler } from '../../packages/refinio.api/dist/handlers/RecipeHandler.js'
 import { AIHandler } from './handlers/AIHandler.js'
 import path from 'path'
-import { app } from 'electron'
+import electron from 'electron'
+const { app } = electron
 import nodeOneCore from '../core/node-one-core.js'
 
 class RefinioApiServer {

@@ -313,99 +313,154 @@ ipcMain.handle('create-udp-socket', async (event, options) => {
 // Handler for clearing app data
 ipcMain.handle('app:clearData', async (event) => {
   console.log('[ClearData] Starting app data reset...');
-  
+
   try {
-    // Step 1: Shutdown services
+    // Step 1: Set clearing flag immediately to prevent any saves
+    global.isClearing = true;
+
+    // Step 2: Shutdown services properly
     console.log('[ClearData] Shutting down services...');
-    
+
+    // Shutdown main app first
+    try {
+      await mainApp.shutdown();
+      console.log('[ClearData] Main app shut down');
+    } catch (error) {
+      console.error('[ClearData] Error shutting down main app:', error);
+    }
+
     // Shutdown Node.js ONE.core instance
     try {
       const { default: nodeOneCore } = await import('./main/core/node-one-core.js');
-      if (nodeOneCore && nodeOneCore.shutdown) {
-        await nodeOneCore.shutdown();
-        console.log('[ClearData] Node.js ONE.core shut down');
+      if (nodeOneCore) {
+        // Call shutdown first if it exists
+        if (nodeOneCore.shutdown) {
+          await nodeOneCore.shutdown();
+          console.log('[ClearData] Node.js ONE.core shut down');
+        }
+
+        // Then reset to clean state
+        if (nodeOneCore.reset) {
+          nodeOneCore.reset();
+          console.log('[ClearData] NodeOneCore reset to clean state');
+        }
       }
-      
+
       // Reset node provisioning state
       const { default: nodeProvisioning } = await import('./main/hybrid/node-provisioning.js');
-      nodeProvisioning.reset();
-      console.log('[ClearData] Node provisioning reset');
-      
-      // Clear the initialized flag on NodeOneCore
-      if (nodeOneCore) {
-        nodeOneCore.initialized = false;
-        nodeOneCore.initFailed = false;
-        console.log('[ClearData] NodeOneCore flags reset');
+      if (nodeProvisioning && nodeProvisioning.reset) {
+        nodeProvisioning.reset();
+        console.log('[ClearData] Node provisioning reset');
       }
     } catch (e) {
       console.error('[ClearData] Error shutting down Node.js instance:', e);
     }
-    
-    // Step 2: Clear IndexedDB and localStorage
+
+    // Step 3: Clear browser storage
     console.log('[ClearData] Clearing browser storage...');
-    
-    // Clear IndexedDB, localStorage, and other browser storage
-    await session.defaultSession.clearStorageData({
-      storages: ['indexdb', 'localstorage']
-    });
-    console.log('[ClearData] Browser storage cleared');
-    
-    // Step 3: Delete data folders
+
+    try {
+      // Clear all browser storage data
+      await session.defaultSession.clearStorageData({
+        storages: ['indexdb', 'localstorage', 'cookies', 'cachestorage', 'websql']
+      });
+
+      // Also clear cache
+      await session.defaultSession.clearCache();
+
+      console.log('[ClearData] Browser storage cleared');
+    } catch (error) {
+      console.error('[ClearData] Error clearing browser storage:', error);
+    }
+
+    // Step 4: Delete data folders
     console.log('[ClearData] Deleting data folders...');
-    
+
     const oneDbPath = path.join(process.cwd(), 'OneDB');
     const oneCoreStorageDir = path.join(process.cwd(), 'one-core-storage');
-    
-    // Delete OneDB folder
-    if (fs.existsSync(oneDbPath)) {
-      try {
-        fs.rmSync(oneDbPath, { recursive: true, force: true });
-        console.log('[ClearData] Deleted OneDB directory');
-      } catch (error) {
-        console.error('[ClearData] Error deleting OneDB:', error);
+    const oneDataNodePath = path.join(process.cwd(), 'one-data-node');
+
+    // Delete all data directories
+    const dataDirs = [
+      { path: oneDbPath, name: 'OneDB' },
+      { path: oneCoreStorageDir, name: 'one-core-storage' },
+      { path: oneDataNodePath, name: 'one-data-node' }
+    ];
+
+    for (const dir of dataDirs) {
+      if (fs.existsSync(dir.path)) {
+        try {
+          fs.rmSync(dir.path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          console.log(`[ClearData] Deleted ${dir.name} directory`);
+        } catch (error) {
+          console.error(`[ClearData] Error deleting ${dir.name}:`, error);
+        }
       }
     }
-    
-    // Delete one-core-storage folder
-    if (fs.existsSync(oneCoreStorageDir)) {
-      try {
-        fs.rmSync(oneCoreStorageDir, { recursive: true, force: true });
-        console.log('[ClearData] Deleted one-core-storage directory');
-      } catch (error) {
-        console.error('[ClearData] Error deleting one-core-storage:', error);
-      }
-    }
-    
-    // Step 4: Clear application state
+
+    // Step 5: Clear application state
     console.log('[ClearData] Resetting application state...');
-    
+
     try {
       const { default: stateManager } = await import('./main/state/manager.js');
-      stateManager.clearState();
-      console.log('[ClearData] State manager cleared');
+      if (stateManager && stateManager.clearState) {
+        stateManager.clearState();
+        console.log('[ClearData] State manager cleared');
+      }
     } catch (error) {
       console.error('[ClearData] Error clearing state manager:', error);
     }
-    
+
+    // Step 6: Clear module cache to ensure fresh restart
+    console.log('[ClearData] Clearing module cache...');
+
+    // Clear the require cache for key modules
+    const modulePathsToDelete = [
+      './main/core/node-one-core.js',
+      './main/hybrid/node-provisioning.js',
+      './main/hybrid/node-instance.js',
+      './main/state/manager.js',
+      './main/app.js'
+    ];
+
+    for (const modulePath of modulePathsToDelete) {
+      try {
+        const fullPath = path.join(__dirname, modulePath);
+        delete require.cache[require.resolve(fullPath)];
+        console.log(`[ClearData] Cleared cache for ${modulePath}`);
+      } catch (error) {
+        // Module might not be in cache yet, that's ok
+      }
+    }
+
     console.log('[ClearData] All data cleared successfully');
-    
-    // Step 5: Restart the application
-    console.log('[ClearData] Restarting application...');
-    
-    // Set flag to prevent saving any state on exit
-    global.isClearing = true;
-    
-    // Schedule restart
+
+    // Step 7: Restart the application with a clean state
+    console.log('[ClearData] Scheduling application restart...');
+
+    // Give a bit more time to ensure everything is cleaned up
     setTimeout(() => {
+      console.log('[ClearData] Restarting application now...');
+
+      // Use app.relaunch with no arguments to start fresh
       app.relaunch();
+
+      // Exit with code 0 to indicate successful termination
       app.exit(0);
-    }, 500);
-    
+    }, 1000);
+
     return { success: true, message: 'App data cleared successfully. Application will restart...' };
-    
+
   } catch (error) {
     console.error('[ClearData] FATAL ERROR:', error);
     console.error('[ClearData] Stack trace:', error.stack);
+
+    // Even on error, try to restart the app
+    setTimeout(() => {
+      app.relaunch();
+      app.exit(0);
+    }, 1000);
+
     return { success: false, error: error.message || 'Failed to clear app data' };
   }
 });

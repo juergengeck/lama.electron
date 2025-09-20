@@ -6,9 +6,10 @@ import { JournalView } from '@/components/JournalView'
 import { ContactsView } from '@/components/ContactsView'
 import { SettingsView } from '@/components/SettingsView'
 import { DataDashboard } from '@/components/DataDashboard'
+import { DevicesView } from '@/components/DevicesView'
 import { LoginDeploy } from '@/components/LoginDeploy'
 import { ModelOnboarding } from '@/components/ModelOnboarding'
-import { MessageSquare, BookOpen, Users, Settings, Loader2, Network, BarChart3 } from 'lucide-react'
+import { MessageSquare, BookOpen, Users, Settings, Loader2, Smartphone, BarChart3 } from 'lucide-react'
 import { useLamaInit } from '@/hooks/useLamaInit'
 import { lamaBridge } from '@/bridge/lama-bridge'
 import { ipcStorage } from '@/services/ipc-storage'
@@ -22,10 +23,51 @@ function App() {
   
   // Load onboarding status
   useEffect(() => {
-    ipcStorage.getItem('lama-onboarding-completed').then(value => {
-      setHasCompletedOnboarding(value === 'true')
-    })
+    // Try IPC storage first, fallback to localStorage
+    ipcStorage.getItem('lama-onboarding-completed')
+      .then(value => {
+        if (value) {
+          setHasCompletedOnboarding(value === 'true')
+        } else {
+          // Check localStorage as fallback
+          const localValue = localStorage.getItem('lama-onboarding-completed')
+          setHasCompletedOnboarding(localValue === 'true')
+        }
+      })
+      .catch(() => {
+        // If IPC fails, check localStorage
+        const localValue = localStorage.getItem('lama-onboarding-completed')
+        setHasCompletedOnboarding(localValue === 'true')
+      })
   }, [])
+
+  // Signal UI is ready when authenticated
+  useEffect(() => {
+    if (isAuthenticated && window.electronAPI) {
+      console.log('[App] Signaling UI ready for IPC messages')
+      window.electronAPI.invoke('chat:uiReady').catch(err =>
+        console.error('[App] Failed to signal UI ready:', err)
+      )
+    }
+  }, [isAuthenticated])
+
+  // Global listener for new messages - keeps conversation list updated app-wide
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    const handleNewMessages = (data: { conversationId: string; messages: any[] }) => {
+      console.log('[App] 📬 Global: New messages received for conversation:', data.conversationId)
+      // This ensures the lamaBridge event system knows there's at least one listener
+      // The actual UI updates happen in ChatLayout or other components
+    }
+
+    // Register as a global listener so messages are always acknowledged
+    lamaBridge.on('chat:newMessages', handleNewMessages)
+
+    return () => {
+      lamaBridge.off('chat:newMessages', handleNewMessages)
+    }
+  }, [isAuthenticated])
   
   // Listen for navigation from Electron menu
   useEffect(() => {
@@ -76,7 +118,12 @@ function App() {
   
   if (shouldShowOnboarding) {
     return <ModelOnboarding onComplete={async () => {
-      await ipcStorage.setItem('lama-onboarding-completed', 'true')
+      try {
+        await ipcStorage.setItem('lama-onboarding-completed', 'true')
+      } catch (error) {
+        console.log('[App] Could not save onboarding status, saving to localStorage instead')
+        localStorage.setItem('lama-onboarding-completed', 'true')
+      }
       setHasCompletedOnboarding(true)
     }} />
   }
@@ -85,8 +132,7 @@ function App() {
     { id: 'chats', label: 'Chats', icon: MessageSquare },
     { id: 'journal', label: 'Journal', icon: BookOpen },
     { id: 'contacts', label: 'Contacts', icon: Users },
-    { id: 'data', label: 'Data', icon: BarChart3 },
-    { id: 'hierarchy', label: 'Storage', icon: Network },
+    { id: 'devices', label: 'Devices', icon: Smartphone },
     { id: 'settings', label: null, icon: Settings },  // No label for settings, just icon
   ]
 
@@ -114,7 +160,7 @@ function App() {
           // Add or update the conversation in localStorage
           const savedConversations = await ipcStorage.getItem('lama-conversations')
           let conversations = []
-          
+
           try {
             if (savedConversations) {
               conversations = JSON.parse(savedConversations)
@@ -122,10 +168,10 @@ function App() {
           } catch (e) {
             console.error('Failed to parse saved conversations:', e)
           }
-          
+
           // Check if conversation already exists
           const existingConv = conversations.find((c: any) => c.id === topicId)
-          
+
           if (!existingConv) {
             // Create new conversation entry
             const newConversation = {
@@ -136,21 +182,19 @@ function App() {
               lastMessageTime: new Date().toISOString(),
               modelName: null // No AI model for person-to-person chat
             }
-            
+
             // Add to beginning of list
             conversations.unshift(newConversation)
             await ipcStorage.setItem('lama-conversations', JSON.stringify(conversations))
             console.log('[App] Created new conversation for contact:', contactName)
           }
-          
+
           // Navigate to chat
           setSelectedConversationId(topicId)
           setActiveTab('chats')
         }} />
-      case 'data':
-        return <DataDashboard onNavigate={handleNavigate} />
-      case 'hierarchy':
-        return <DataDashboard showHierarchyView={true} onNavigate={handleNavigate} />
+      case 'devices':
+        return <DevicesView />
       case 'settings':
         return <SettingsView onLogout={logout} onNavigate={handleNavigate} />
       default:

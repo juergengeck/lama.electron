@@ -13,6 +13,18 @@ import AIAssistantModel from './ai-assistant-model.js';
 import RefinioApiServer from '../api/refinio-api-server.js';
 import TopicGroupManager from './topic-group-manager.js';
 
+// Import ONE.core model classes at the top as singletons
+// These will be instantiated after platform loading but importing them
+// here prevents dynamic loading state corruption
+import LeuteModel from '@refinio/one.models/lib/models/Leute/LeuteModel.js';
+import ProfileModel from '@refinio/one.models/lib/models/Leute/ProfileModel.js';
+import SomeoneModel from '@refinio/one.models/lib/models/Leute/SomeoneModel.js';
+import GroupModel from '@refinio/one.models/lib/models/Leute/GroupModel.js';
+import ChannelManager from '@refinio/one.models/lib/models/ChannelManager.js';
+import ConnectionsModel from '@refinio/one.models/lib/models/ConnectionsModel.js';
+import TopicModel from '@refinio/one.models/lib/models/Chat/TopicModel.js';
+import { storeVersionedObject, storeVersionObjectAsChange } from '@refinio/one.core/lib/storage-versioned-objects.js';
+
 // Get __dirname equivalent in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,7 +45,76 @@ class NodeOneCore {
     this.apiServer = null // Refinio API server
     this.topicGroupManager = null // Will be initialized after models are ready
     this.federationGroup = null // Track federation group for access
+    this.grantedAccessPeers = new Set() // Track peers we've already granted access to
   }
+
+  /**
+   * Grant a peer access to our main profile and P2P channel
+   * Centralized method to avoid duplication
+   */
+  async grantPeerAccess(remotePersonId, context = 'unknown') {
+    if (!remotePersonId || !this.leuteModel) {
+      console.warn('[NodeOneCore] Cannot grant peer access - missing requirements')
+      return
+    }
+
+    // Avoid duplicate grants
+    if (this.grantedAccessPeers.has(remotePersonId)) {
+      console.log(`[NodeOneCore] Already granted access to peer: ${remotePersonId.substring(0, 8)}`)
+      return
+    }
+
+    const { createAccess } = await import('@refinio/one.core/lib/access.js')
+    const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+    const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
+
+    console.log(`[NodeOneCore] Granting peer access (${context}):`, remotePersonId.substring(0, 8))
+
+    // 1. Grant access to our main profile only
+    try {
+      const me = await this.leuteModel.me()
+      const mainProfile = await me.mainProfile()
+
+      if (mainProfile && mainProfile.idHash) {
+        await createAccess([{
+          id: mainProfile.idHash,
+          person: [remotePersonId],
+          group: [],
+          mode: SET_ACCESS_MODE.ADD
+        }])
+        console.log('[NodeOneCore] ✅ Granted access to our main profile')
+      }
+    } catch (error) {
+      console.warn('[NodeOneCore] Failed to grant profile access:', error.message)
+    }
+
+    // 2. Grant access to P2P channel
+    try {
+      const myId = this.ownerId
+      const p2pChannelId = myId < remotePersonId ? `${myId}<->${remotePersonId}` : `${remotePersonId}<->${myId}`
+
+      const p2pChannelInfoHash = await calculateIdHashOfObj({
+        $type$: 'ChannelInfo',
+        id: p2pChannelId,
+        owner: undefined  // P2P channels have no owner
+      })
+
+      await createAccess([{
+        id: p2pChannelInfoHash,
+        person: [remotePersonId],
+        group: [],
+        mode: SET_ACCESS_MODE.ADD
+      }])
+
+      console.log('[NodeOneCore] ✅ Granted P2P channel access:', p2pChannelId)
+    } catch (error) {
+      console.warn('[NodeOneCore] Failed to grant P2P channel access:', error.message)
+    }
+
+    // Mark this peer as having been granted access
+    this.grantedAccessPeers.add(remotePersonId)
+  }
+
 
   /**
    * Initialize Node.js ONE.core using the proper template
@@ -263,14 +344,120 @@ class NodeOneCore {
    */
   setupConnectionMonitoring() {
     console.log('[NodeOneCore] Setting up connection monitoring...')
-    
-    // Just monitor what ConnectionsModel is doing - don't interfere
+
+    // Register pairing callbacks - must be done BEFORE init (like one.leute.replicant)
     if (this.connectionsModel?.pairing) {
-      this.connectionsModel.pairing.onPairingSuccess((initiatedLocally, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, token) => {
-        console.log('[NodeOneCore] ✅ Pairing successful')
-        console.log('[NodeOneCore] Remote person:', remotePersonId?.substring(0, 8))
+      console.log('[NodeOneCore] Registering pairing event handlers...')
+
+      // Log pairing start events
+      this.connectionsModel.pairing.onPairingStarted?.((token) => {
+        console.log('[NodeOneCore] 🤝 PAIRING STARTED - Token:', token?.substring(0, 20) + '...')
+      })
+
+      // Log pairing failures
+      this.connectionsModel.pairing.onPairingFailed?.((error) => {
+        console.log('[NodeOneCore] ❌ PAIRING FAILED:', error)
+      })
+
+      // Handle successful pairing - create Someone and Profile
+      this.connectionsModel.pairing.onPairingSuccess(async (initiatedLocally, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, token) => {
+        console.log('[NodeOneCore] ✅ PAIRING SUCCESS EVENT TRIGGERED')
+        console.log('[NodeOneCore] ═══════════════════════════════════════════')
+        console.log('[NodeOneCore] 📊 Pairing Details:')
+        console.log('[NodeOneCore]   • Initiated locally:', initiatedLocally)
+        console.log('[NodeOneCore]   • Local person:', localPersonId?.substring(0, 8) || 'null')
+        console.log('[NodeOneCore]   • Local instance:', localInstanceId?.substring(0, 8) || 'null')
+        console.log('[NodeOneCore]   • Remote person:', remotePersonId?.substring(0, 8) || 'null')
+        console.log('[NodeOneCore]   • Remote instance:', remoteInstanceId?.substring(0, 8) || 'null')
+        console.log('[NodeOneCore] ═══════════════════════════════════════════')
+        console.log('[NodeOneCore] 🔧 Starting remote contact setup...')
+
+        // CRITICAL: Establish trust first (like one.leute does)
+        if (remotePersonId && this.leuteModel) {
+          try {
+            // Step 1: Trust establishment (must come first)
+            console.log('[NodeOneCore] 🔐 Step 1: Establishing trust with remote peer...')
+            const { completePairingTrust } = await import('./pairing-trust-handler.js')
+
+            const trustResult = await completePairingTrust({
+              trust: this.leuteModel.trust,
+              leuteModel: this.leuteModel,
+              initiatedLocally,
+              localPersonId,
+              localInstanceId,
+              remotePersonId,
+              remoteInstanceId,
+              token
+            })
+
+            if (trustResult.success) {
+              console.log('[NodeOneCore] ✅ Trust established successfully!')
+            } else {
+              console.warn('[NodeOneCore] ⚠️ Trust establishment had issues:', trustResult)
+            }
+
+            // Step 2: Create address book entry
+            console.log('[NodeOneCore] 📁 Step 2: Creating address book entry...')
+
+            // Use the proper contact creation helper that uses ONE.models APIs
+            const { handleNewConnection } = await import('./contact-creation-proper.js')
+
+            const someone = await handleNewConnection(remotePersonId, this.leuteModel)
+            console.log('[NodeOneCore] ✅ Address book entry created successfully!')
+            console.log('[NodeOneCore]   • Someone ID:', someone?.idHash?.toString()?.substring(0, 8) || 'null')
+
+            // Step 3: Auto-create P2P topic for immediate messaging
+            console.log('[NodeOneCore] 💬 Step 3: Creating P2P topic for messaging...')
+            const { autoCreateP2PTopicAfterPairing } = await import('./p2p-topic-creator.js')
+
+            const topicRoom = await autoCreateP2PTopicAfterPairing({
+              topicModel: this.topicModel,
+              channelManager: this.channelManager,
+              localPersonId,
+              remotePersonId,
+              initiatedLocally
+            })
+
+            if (topicRoom) {
+              console.log('[NodeOneCore] ✅ P2P topic ready for messaging!')
+            } else {
+              console.warn('[NodeOneCore] ⚠️ Could not create P2P topic')
+            }
+
+            // Log the profile info
+            if (someone?.mainProfile) {
+              try {
+                const profile = typeof someone.mainProfile === 'function' ?
+                  await someone.mainProfile() : someone.mainProfile
+                console.log('[NodeOneCore]   • Profile ID:', profile?.idHash?.toString()?.substring(0, 8) || 'null')
+              } catch (e) {
+                console.log('[NodeOneCore]   • Profile info not available')
+              }
+            }
+
+            // Grant access to our profile
+            console.log('[NodeOneCore] 🔓 Granting mutual access permissions...')
+            await this.grantPeerAccess(remotePersonId, 'pairing')
+            console.log('[NodeOneCore] ✅ Access permissions granted')
+            console.log('[NodeOneCore] ═══════════════════════════════════════════')
+            console.log('[NodeOneCore] 🎉 PAIRING COMPLETE - Remote contact is ready!')
+
+          } catch (error) {
+            console.error('[NodeOneCore] ❌ Failed to create address book entry:', error)
+            console.error('[NodeOneCore]    Error stack:', error.stack)
+          }
+        } else {
+          console.log('[NodeOneCore] ⚠️ Cannot create contact:', {
+            hasRemotePersonId: !!remotePersonId,
+            hasLeuteModel: !!this.leuteModel
+          })
+        }
+
         // ConnectionsModel will handle the transition to CHUM automatically
       })
+      console.log('[NodeOneCore] ✅ Pairing callbacks registered')
+    } else {
+      console.log('[NodeOneCore] ⚠️  Pairing module not available')
     }
   }
 
@@ -289,13 +476,103 @@ class NodeOneCore {
       await objectEvents.init()
       console.log('[NodeOneCore] ✅ ObjectEventDispatcher initialized')
       
-      // TRACE: Log when ChannelInfo objects are received
+      // TRACE: Log ALL objects received via CHUM to debug
       objectEvents.onNewVersion(async (obj) => {
+        console.log('[NodeOneCore] 📨 OBJECT RECEIVED:', {
+          type: obj.$type$,
+          text: obj.text?.substring?.(0, 30),
+          author: obj.author?.substring?.(0, 8),
+          sender: obj.sender?.substring?.(0, 8)
+        })
+
         if (obj.$type$ === 'ChannelInfo') {
           console.log('[NodeOneCore] 📨 NODE: Received ChannelInfo via CHUM!', {
             channelId: obj.id,
             owner: obj.owner?.substring(0, 8)
           })
+        }
+
+        // Handle Profile objects received via CHUM
+        if (obj.$type$ === 'Profile' && obj.personId) {
+          console.log('[NodeOneCore] 📨 NODE: Received Profile via CHUM!', {
+            personId: obj.personId.substring(0, 8),
+            name: obj.name || 'No name'
+          })
+
+          // Update the Someone object with this Profile using proper APIs
+          if (this.leuteModel) {
+            try {
+              const { handleReceivedProfile } = await import('./contact-creation-proper.js')
+              await handleReceivedProfile(obj.personId, obj, this.leuteModel)
+              console.log('[NodeOneCore] ✅ Handled received Profile data')
+            } catch (error) {
+              console.error('[NodeOneCore] Failed to handle received Profile:', error)
+            }
+          }
+        }
+
+        // Handle TopicMessage objects received via CHUM
+        if (obj.$type$ === 'TopicMessage') {
+          console.log('[NodeOneCore] 📨 NODE: Received TopicMessage via CHUM!', {
+            text: obj.text?.substring(0, 50) || 'No text',
+            author: obj.author?.substring(0, 8),
+            timestamp: obj.creationTime
+          })
+
+          // Get the channel this message belongs to
+          if (this.channelManager && this.topicModel) {
+            try {
+              // Find the channel this message belongs to
+              const allChannels = await this.channelManager.getChannelInfos()
+
+              // Notify UI about new message
+              const { BrowserWindow } = require('electron')
+              const windows = BrowserWindow.getAllWindows()
+
+              // For each channel, check if this message belongs to it
+              for (const channelInfo of allChannels) {
+                const channelId = channelInfo.id
+
+                try {
+                  const topicRoom = await this.topicModel.enterTopicRoom(channelId)
+                  if (topicRoom) {
+                    // Check if this message is in this topic
+                    const messages = await topicRoom.retrieveAllMessages()
+                    const hasMessage = messages.some(msg =>
+                      msg.data?.text === obj.text &&
+                      msg.data?.author === obj.author
+                    )
+
+                    if (hasMessage) {
+                      console.log('[NodeOneCore] 📬 Message belongs to channel:', channelId)
+
+                      // Send notification to UI
+                      windows.forEach(window => {
+                        window.webContents.send('chat:newMessages', {
+                          conversationId: channelId,
+                          messages: [{
+                            id: obj.idHash || `msg-${Date.now()}`,
+                            conversationId: channelId,
+                            text: obj.text || '',
+                            sender: obj.author,
+                            timestamp: obj.creationTime ? new Date(obj.creationTime).toISOString() : new Date().toISOString(),
+                            status: 'received',
+                            isAI: false
+                          }],
+                          source: 'chum-direct'
+                        })
+                      })
+                      break // Found the channel, stop searching
+                    }
+                  }
+                } catch (e) {
+                  // Not a topic channel, continue
+                }
+              }
+            } catch (error) {
+              console.error('[NodeOneCore] Error processing TopicMessage:', error)
+            }
+          }
         }
       })
     } catch (error) {
@@ -309,7 +586,7 @@ class NodeOneCore {
     
     // Initialize LeuteModel with commserver for external connections
     console.log('[NodeOneCore] About to initialize LeuteModel...')
-    
+
     // Double-check owner ID is still available
     const { getInstanceOwnerIdHash: checkOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
     const currentOwnerId = checkOwnerIdHash()
@@ -320,13 +597,90 @@ class NodeOneCore {
       throw new Error('Owner ID disappeared before LeuteModel initialization')
     }
     
-    const { default: LeuteModel } = await import('@refinio/one.models/lib/models/Leute/LeuteModel.js')
+    // Use the imported LeuteModel class - no dynamic import
     this.leuteModel = new LeuteModel(commServerUrl, true) // true = create everyone group
-    console.log('[NodeOneCore] LeuteModel created, calling init()...')
+
+    // Set the appId to 'one.leute' as required by the recipe validation
+    this.leuteModel.appId = 'one.leute'
+
+    console.log('[NodeOneCore] LeuteModel created with appId: one.leute, calling init()...')
+
+    // Patch LeuteModel's createGroupInternal to handle frozen arrays
+    const originalCreateGroupInternal = this.leuteModel.createGroupInternal.bind(this.leuteModel)
+    this.leuteModel.createGroupInternal = async function(name, creationTime) {
+      try {
+        // Try the original method first
+        return await originalCreateGroupInternal(name, creationTime)
+      } catch (error) {
+        if (error.message.includes('not extensible')) {
+          console.log('[NodeOneCore] Working around frozen groups array for group:', name)
+
+          // Manually create the group and update the Leute object
+          const group = await GroupModel.constructWithNewGroup(name, creationTime)
+
+          const currentLeute = this.leute
+          if (currentLeute) {
+            // Create a new Leute object with the updated group array
+            // Filter out any null/undefined values and ensure we have valid hashes
+            const existingGroups = (currentLeute.group || []).filter(g => g && typeof g === 'string')
+            const newGroups = [...existingGroups]
+
+            // Only add the new group if it has a valid idHash
+            if (group && group.idHash) {
+              newGroups.push(group.idHash)
+            }
+
+            const newLeute = {
+              $type$: currentLeute.$type$,
+              appId: currentLeute.appId || 'one.leute',  // Ensure appId is present (recipe requires 'one.leute')
+              me: currentLeute.me,
+              other: currentLeute.other || [],
+              group: newGroups  // Array of valid group hashes only
+            }
+
+            // Store the new version
+            const result = await storeVersionObjectAsChange(newLeute)
+
+            // Update the model's internal references
+            this.leute = result.obj
+            this.pLoadedVersion = result.hash
+
+            console.log('[NodeOneCore] ✅ Added group via workaround:', name)
+          }
+
+          return group
+        } else {
+          throw error
+        }
+      }
+    }.bind(this.leuteModel)
+
     await this.leuteModel.init()
     console.log('[NodeOneCore] ✅ LeuteModel initialized with commserver:', commServerUrl)
-    
+
+    // Set up listener for new profiles discovered through CHUM
+    this.leuteModel.onProfileUpdate(async (profileIdHash) => {
+      try {
+        // Check if this is a new contact
+        const allContacts = await this.leuteModel.others()
+        console.log(`[NodeOneCore] Profile update detected, total contacts: ${allContacts.length}`)
+
+        // Notify browser about contact list changes
+        const { BrowserWindow } = await import('electron')
+        const mainWindow = BrowserWindow.getAllWindows()[0]
+        if (mainWindow) {
+          mainWindow.webContents.send('contacts:updated', {
+            count: allContacts.length,
+            profileIdHash
+          })
+        }
+      } catch (error) {
+        console.error('[NodeOneCore] Error handling profile update:', error)
+      }
+    })
+
     // Now that LeuteModel is initialized, get the person ID (but keep instance owner ID)
+    // And create/update our profile with a proper name
     try {
       const me = await this.leuteModel.me()
       if (me) {
@@ -335,6 +689,42 @@ class NodeOneCore {
           // DO NOT overwrite this.ownerId - it should remain the instance owner ID hash
           console.log('[NodeOneCore] Person ID from LeuteModel:', personId)
           console.log('[NodeOneCore] Keeping instance owner ID:', this.ownerId)
+
+          // Create or update our profile with PersonName
+          try {
+            const profile = await me.mainProfile()
+
+            // Check if we already have a PersonName
+            const hasName = profile.personDescriptions?.some(d => d.$type$ === 'PersonName')
+
+            if (!hasName) {
+              console.log('[NodeOneCore] Adding PersonName to our profile')
+
+              // Extract username from email (e.g., "demo" from "node-demo@lama.local")
+              let displayName = 'LAMA User'
+              if (this.email) {
+                const emailParts = this.email.split('@')
+                const userPart = emailParts[0]
+                // Remove "node-" prefix if present
+                displayName = userPart.replace(/^node-/, '')
+                // Capitalize first letter
+                displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1)
+              }
+
+              // Add PersonName to profile
+              profile.personDescriptions = profile.personDescriptions || []
+              profile.personDescriptions.push({
+                $type$: 'PersonName',
+                name: displayName
+              })
+
+              // Save the updated profile
+              await profile.saveAndLoad()
+              console.log(`[NodeOneCore] ✅ Profile updated with name: ${displayName}`)
+            }
+          } catch (profileError) {
+            console.warn('[NodeOneCore] Could not update profile with name:', profileError)
+          }
         }
       }
     } catch (error) {
@@ -347,15 +737,10 @@ class NodeOneCore {
     this.contentSharing = new ContentSharingManager(this)
     console.log('[NodeOneCore] ✅ Content Sharing Manager initialized')
     
-    // Create Access objects for the browser instance
-    // We need to know the browser's person ID to grant it access
-    // For now, assume it's the same person (will be updated when browser connects)
-    this.browserPersonId = this.ownerId
-    await this.contentSharing.initializeSharing(this.browserPersonId)
-    console.log('[NodeOneCore] ✅ Initial Access objects created for content sharing')
+    // Remove browser access - browser has no ONE instance
     
     // Initialize ChannelManager - needs leuteModel
-    const { default: ChannelManager } = await import('@refinio/one.models/lib/models/ChannelManager.js')
+    // Use the imported ChannelManager class - no dynamic import
     this.channelManager = new ChannelManager(this.leuteModel)
     await this.channelManager.init()
     console.log('[NodeOneCore] ✅ ChannelManager initialized')
@@ -392,25 +777,58 @@ class NodeOneCore {
     
     // Add more detailed CHUM data reception logging
     console.log('[NodeOneCore] 🎯🎯🎯 NODE: Setting up detailed CHUM data reception logging')
-    this.channelManager.onUpdated((channelInfoIdHash, channelId, owner, time, data) => {
+    this.channelManager.onUpdated(async (channelInfoIdHash, channelId, owner, time, data) => {
+      // For P2P channels, check which channel we're receiving from
+      const isP2P = channelId.includes('<->')
+
       console.log('[NodeOneCore] 🔔🔔🔔 NODE CHUM DATA RECEIVED!', {
         channelId,
-        owner: owner?.substring(0, 8),
+        owner: owner?.substring(0, 8) || 'null',
+        isP2P,
         dataLength: data?.length,
         timestamp: new Date(time).toISOString(),
         myOwnerId: this.ownerId?.substring(0, 8),
         isMyChannel: owner === this.ownerId
       })
+
+      if (isP2P && owner) {
+        console.warn('[NodeOneCore] ⚠️ P2P message received in OWNED channel! Owner:', owner.substring(0, 8))
+        console.warn('[NodeOneCore] This suggests the peer is using owned channels for P2P')
+      }
+
+      // Auto-create P2P topic if it doesn't exist when receiving messages
+      if (isP2P && data?.length > 0) {
+        console.log('[NodeOneCore] 📨 P2P message received, ensuring topic exists...')
+        const { ensureP2PTopicForIncomingMessage } = await import('./p2p-topic-creator.js')
+
+        try {
+          await ensureP2PTopicForIncomingMessage({
+            topicModel: this.topicModel,
+            channelManager: this.channelManager,
+            leuteModel: this.leuteModel,
+            channelId,
+            message: data[0]
+          })
+        } catch (error) {
+          console.error('[NodeOneCore] Failed to ensure P2P topic:', error.message)
+        }
+      }
       
       // Log what's actually in the data
       if (data && data.length > 0) {
         data.forEach((item, idx) => {
-          console.log(`[NodeOneCore]   CHUM Data[${idx}]:`, {
-            type: item.$type$,
-            content: item.content ? item.content.substring(0, 50) + '...' : undefined,
-            author: item.author?.substring(0, 8),
-            timestamp: item.creationTime
-          })
+          // Check if item is a string (hash) or object
+          if (typeof item === 'string') {
+            console.log(`[NodeOneCore]   CHUM Data[${idx}]: HASH: ${item.substring(0, 16)}...`)
+          } else {
+            console.log(`[NodeOneCore]   CHUM Data[${idx}]:`, {
+              type: item.$type$,
+              content: item.content ? item.content.substring(0, 50) + '...' : undefined,
+              text: item.text ? item.text.substring(0, 50) + '...' : undefined,
+              author: item.author?.substring(0, 8),
+              timestamp: item.creationTime
+            })
+          }
         })
         
         // Check if this is a ChatMessage
@@ -423,16 +841,32 @@ class NodeOneCore {
               author: msg.author?.substring(0, 8)
             })
           })
+
+          // Notify UI about new messages
+          import('electron').then(({ BrowserWindow }) => {
+            const windows = BrowserWindow.getAllWindows()
+            windows.forEach(window => {
+              window.webContents.send('message:updated', {
+                conversationId: channelId,
+                source: 'chum-sync'
+              })
+            })
+          })
         }
       }
     })
     
     // Initialize TopicModel - needs channelManager and leuteModel
-    const { default: TopicModel } = await import('@refinio/one.models/lib/models/Chat/TopicModel.js')
+    // Use the imported TopicModel class - no dynamic import
     this.topicModel = new TopicModel(this.channelManager, this.leuteModel)
     await this.topicModel.init()
     console.log('[NodeOneCore] ✅ TopicModel initialized')
-    
+
+    // Set up P2P channel access monitoring
+    const { monitorP2PChannels } = await import('./p2p-channel-access.js')
+    monitorP2PChannels(this.channelManager, this.leuteModel)
+    console.log('[NodeOneCore] ✅ P2P channel access monitoring enabled')
+
     // TODO: Fix AppStateModel - AppStateJournal recipe needs to be versioned
     // Initialize AppStateModel for CRDT-based state journaling
     // const { AppStateModel } = await import('@refinio/refinio-api/dist/state/index.js')
@@ -468,7 +902,7 @@ class NodeOneCore {
     // External connections still use commserver via ConnectionsModel
     
     // Create blacklist group for ConnectionsModel
-    const { default: GroupModel } = await import('@refinio/one.models/lib/models/Leute/GroupModel.js')
+    // Use the imported GroupModel class - no dynamic import
     let blacklistGroup
     try {
       blacklistGroup = await GroupModel.constructFromLatestProfileVersionByGroupName('blacklist')
@@ -487,8 +921,8 @@ class NodeOneCore {
     console.log('[NodeOneCore] Federation API initialized')
     
     // Create ConnectionsModel with standard configuration matching one.leute
-    const { default: ConnectionsModel } = await import('@refinio/one.models/lib/models/ConnectionsModel.js')
-    
+    // Use the imported ConnectionsModel class - no dynamic import
+
     // ConnectionsModel configuration with separate sockets for pairing and CHUM
     // Port 8765: Pairing only (accepts unknown instances)
     // Port 8766: CHUM sync only (known instances only)
@@ -532,10 +966,11 @@ class NodeOneCore {
     })
     
     console.log('[NodeOneCore] Initializing ConnectionsModel with blacklist group...')
-    
-    // Monitor connections (ConnectionsModel handles transitions automatically)
+
+    // Set up monitoring BEFORE init (like one.leute.replicant does)
+    // This ensures callbacks are registered before any events can fire
     this.setupConnectionMonitoring()
-    
+
     // Initialize with blacklist group (standard one.leute pattern)
     await this.connectionsModel.init(blacklistGroup)
     
@@ -642,114 +1077,7 @@ class NodeOneCore {
       }
     }
     
-    // Listen for successful pairing to add new contacts and grant access
-    this.connectionsModel.pairing.onPairingSuccess(async (isInitiator, localPersonId, localInstanceId, remotePersonId, remoteInstanceId, token) => {
-      console.log(`[NodeOneCore] 🎉 Pairing successful! Remote person: ${remotePersonId?.substring(0, 8)}`)
-      
-      // Grant access to channels for CHUM sync
-      console.log('[NodeOneCore] Granting channel access to browser person...')
-      try {
-        const { createAccess } = await import('@refinio/one.core/lib/access.js')
-        const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
-        
-        // Get all our channels
-        const channels = await this.channelManager.channels()
-        console.log(`[NodeOneCore] Granting access to ${channels.length} channels`)
-        
-        // Grant browser person access to each channel
-        for (const channel of channels) {
-          if (channel.channelInfoIdHash) {
-            await createAccess([{
-              id: channel.channelInfoIdHash,
-              person: [remotePersonId], // Grant access to browser person
-              group: [],
-              mode: SET_ACCESS_MODE.ADD
-            }])
-            console.log(`[NodeOneCore] Granted access to channel: ${channel.id}`)
-          }
-        }
-        
-        console.log('[NodeOneCore] ✅ Access rights configured for CHUM sync')
-      } catch (error) {
-        console.error('[NodeOneCore] Failed to grant access:', error)
-      }
-      
-      // Check if this person is already a contact
-      const others = await this.leuteModel.others()
-      let isContact = false
-      
-      for (const someone of others) {
-        try {
-          const personId = await someone.person()
-          if (personId === remotePersonId) {
-            isContact = true
-            console.log('[NodeOneCore] Person is already a contact')
-            break
-          }
-        } catch (e) {
-          // Ignore
-        }
-      }
-      
-      if (!isContact && remotePersonId !== this.ownerId) {
-        console.log(`[NodeOneCore] 🆕 Adding new contact from pairing: ${remotePersonId.substring(0, 8)}...`)
-        
-        try {
-          // Import profile functions
-          const { default: ProfileModel } = await import('@refinio/one.models/lib/models/Leute/ProfileModel.js')
-          const { default: SomeoneModel } = await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')
-          
-          // Wait a bit for the profile to be stored
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          
-          // Try to get the profile that was shared during pairing
-          let profileModel = null
-          try {
-            profileModel = await ProfileModel.constructFromLatestVersionByIdFields(
-              remotePersonId,
-              remotePersonId,
-              'default'
-            )
-            console.log('[NodeOneCore] Found profile for new contact')
-          } catch (e) {
-            console.log('[NodeOneCore] No profile found yet, creating basic Someone')
-          }
-          
-          // Create Someone for this contact
-          const someoneModel = await SomeoneModel.constructWithNewSomeone(remotePersonId)
-          
-          // Add to LeuteModel
-          await this.leuteModel.addSomeoneElse(someoneModel.idHash)
-          console.log(`[NodeOneCore] ✅ Added new contact to LeuteModel: ${someoneModel.idHash}`)
-          
-          // Grant browser access to the new contact
-          if (this.browserPersonId) {
-            const { createAccess } = await import('@refinio/one.core/lib/access.js')
-            const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
-            
-            await createAccess([{
-              id: someoneModel.idHash,
-              person: [this.browserPersonId],
-              group: [],
-              mode: SET_ACCESS_MODE.ADD
-            }])
-            console.log('[NodeOneCore] Granted browser access to new contact')
-          }
-          
-          // Notify browser via IPC
-          const { BrowserWindow } = await import('electron')
-          const mainWindow = BrowserWindow.getAllWindows()[0]
-          if (mainWindow) {
-            mainWindow.webContents.send('contact:added', {
-              personId: remotePersonId,
-              someoneHash: someoneModel.idHash
-            })
-          }
-        } catch (error) {
-          console.error('[NodeOneCore] Failed to add contact from pairing:', error)
-        }
-      }
-    })
+    // Duplicate pairing handler removed - handled above in setupConnectionMonitoring()
     
     // Set up connection event monitoring
     this.connectionsModel.onConnectionsChange(() => {
@@ -882,129 +1210,23 @@ class NodeOneCore {
       for (const conn of connections) {
         if (conn.isConnected && conn.protocolName === 'chum' && conn.remotePersonId) {
           console.log(`[NodeOneCore] CHUM connection detected with remote person: ${conn.remotePersonId.substring(0, 8)}...`)
-          
-          // Grant access rights to content objects (not Leute itself)
-          const { createAccess } = await import('@refinio/one.core/lib/access.js')
-          const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
-          
-          // Grant access to Someone objects (contacts in address book)
-          try {
-            const others = await this.leuteModel.others()
-            for (const someone of others) {
-              await createAccess([{
-                id: someone.idHash,
-                person: [conn.remotePersonId],
-                group: [],
-                mode: SET_ACCESS_MODE.ADD
-              }])
-            }
-            console.log(`[NodeOneCore] ✅ Granted access to ${others.length} Someone objects for ${conn.remotePersonId.substring(0, 8)}...`)
-          } catch (error) {
-            console.warn('[NodeOneCore] Failed to grant Someone access:', error.message)
-          }
 
-          // Ensure P2P channels exist for bidirectional messaging
+          // Grant the connected peer access to our profile and P2P channel
+          await this.grantPeerAccess(conn.remotePersonId, 'chum-connection')
+
+          // Contact discovery happens automatically through CHUM sync
+          // LeuteModel will receive the peer's profile through CHUM and create the contact
+          console.log(`[NodeOneCore] Contact will be discovered through CHUM sync`)
+
+          // When a new CHUM connection is established, scan for groups
+          // This ensures we create our channels for any groups we're part of
           if (this.topicGroupManager) {
-            try {
-              await this.topicGroupManager.ensureP2PChannelsForPeer(conn.remotePersonId)
-              console.log(`[NodeOneCore] ✅ P2P channels ensured for ${conn.remotePersonId.substring(0, 8)}`)
-            } catch (error) {
-              console.warn('[NodeOneCore] Failed to ensure P2P channels:', error.message)
-            }
+            setTimeout(async () => {
+              console.log('[NodeOneCore] New CHUM connection - scanning for group channels...')
+              await this.topicGroupManager.scanAndEnsureGroupChannels()
+            }, 2000) // Small delay to allow sync to complete
           }
         }
-      }
-      
-      try {
-        // Get all others (contacts) from LeuteModel
-        const others = await this.leuteModel.others()
-        console.log(`[NodeOneCore] Found ${others.length} contacts`)
-        
-        // Grant access to contacts channel for CHUM sync
-        for (const someone of others) {
-          try {
-            const personId = await someone.person()
-            console.log('[NodeOneCore] Contact detected:', personId)
-            
-            // Grant access to the contacts channel
-            const { createAccess } = await import('@refinio/one.core/lib/access.js')
-            const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
-            const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
-            
-            const myId = this.ownerId
-            
-            // Create access for the contacts channel
-            const channelId = await calculateIdHashOfObj({
-              $type$: 'ChannelInfo',
-              id: 'contacts',
-              owner: myId
-            })
-            
-            await createAccess([{
-              id: channelId,
-              person: [personId],
-              group: [],
-              mode: SET_ACCESS_MODE.ADD
-            }])
-            
-            console.log('[NodeOneCore] Access granted to contacts channel for:', personId)
-            
-            // Also grant mutual access to person-to-person message channels
-            const p2pChannelId = myId < personId ? `${myId}<->${personId}` : `${personId}<->${myId}`
-            
-            try {
-              // Calculate channel info hash for the person-to-person channel
-              const p2pChannelInfoHash = await calculateIdHashOfObj({
-                $type$: 'ChannelInfo',
-                id: p2pChannelId,
-                owner: myId  // I own the channel info
-              })
-              
-              // Grant the other person access to read messages I send in our shared channel
-              // Grant access for sync between instances
-              await createAccess([{
-                id: p2pChannelInfoHash,
-                person: [personId],
-                group: [],
-                mode: SET_ACCESS_MODE.ADD
-              }])
-              
-              console.log('[NodeOneCore] Mutual access granted for p2p channel:', p2pChannelId)
-            } catch (error) {
-              console.warn('[NodeOneCore] Failed to grant p2p channel access:', error.message)
-            }
-            
-            // Try to grant access to their channel info if they own it
-            try {
-              const theirChannelInfoHash = await calculateIdHashOfObj({
-                $type$: 'ChannelInfo', 
-                id: p2pChannelId,
-                owner: personId  // They own the channel info
-              })
-              
-              // This will fail if we don't have permission, but that's expected
-              // The other person needs to grant us access to their channel info
-              console.log('[NodeOneCore] Would need access from', personId.substring(0, 8), 'to read their channel info')
-            } catch (error) {
-              // This is expected - we can't grant ourselves access to their channel info
-            }
-            
-            // The browser instance will receive this contact via CHUM sync
-
-            // When a new CHUM connection is established, scan for groups
-            // This ensures we create our channels for any groups we're part of
-            if (this.topicGroupManager) {
-              setTimeout(async () => {
-                console.log('[NodeOneCore] New CHUM connection - scanning for group channels...')
-                await this.topicGroupManager.scanAndEnsureGroupChannels()
-              }, 2000) // Small delay to allow sync to complete
-            }
-          } catch (error) {
-            console.warn('[NodeOneCore] Error granting access to contact:', error)
-          }
-        }
-      } catch (error) {
-        console.error('[NodeOneCore] Failed to process connections change:', error)
       }
     })
     
@@ -1055,10 +1277,23 @@ class NodeOneCore {
         
         for (const [id, conversation] of conversationsMap) {
           try {
+            // Check if this is a P2P conversation (contains <->)
+            const isP2P = id.includes('<->')
+
+            // For P2P conversations, skip creating channels here
+            // P2P channels are managed by TopicGroupManager.ensureP2PChannelsForPeer
+            if (isP2P) {
+              console.log(`[NodeOneCore] Skipping P2P channel creation for: ${id} (handled by TopicGroupManager)`)
+              continue
+            }
+
+            // For group chats, use our owner ID
+            const channelOwner = this.ownerId
+
             // Create a channel for each conversation
             // This ensures the Node instance receives CHUM updates for messages in these conversations
-            await this.channelManager.createChannel(id, this.ownerId)
-            console.log(`[NodeOneCore] Created channel for conversation: ${id}`)
+            await this.channelManager.createChannel(id, channelOwner)
+            console.log(`[NodeOneCore] Created channel for conversation: ${id} (owner: ${channelOwner})`)
           } catch (error) {
             // Channel might already exist, that's fine
             if (!error.message?.includes('already exists')) {
@@ -1085,14 +1320,21 @@ class NodeOneCore {
       return
     }
     
-    // Import and create the AI message listener FIRST
+    // Import and create the message listeners
     const AIMessageListener = await import('./ai-message-listener.js')
+    const PeerMessageListener = await import('./peer-message-listener.js')
     const { default: llmManager } = await import('../services/llm-manager.js')
-    
+
     // Create the AI message listener before AIAssistantModel
     this.aiMessageListener = new AIMessageListener.default(
-      this.channelManager, 
+      this.channelManager,
       llmManager  // Use the actual LLM manager from main process
+    )
+
+    // Create the peer message listener for real-time UI updates
+    this.peerMessageListener = new PeerMessageListener.default(
+      this.channelManager,
+      this.topicModel
     )
     
     // Initialize Topic Group Manager for proper group topics
@@ -1120,10 +1362,19 @@ class NodeOneCore {
       await this.apiServer.start()
     }
     
-    // Start the listener
+    // Start the listeners
     this.aiMessageListener.start()
-    
-    console.log('[NodeOneCore] ✅ Event-based message sync set up for AI processing')
+
+    // Start peer message listener and set required properties
+    const { BrowserWindow } = await import('electron')
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      this.peerMessageListener.setMainWindow(mainWindow)
+    }
+    this.peerMessageListener.setOwnerId(this.ownerId)
+    this.peerMessageListener.start()
+
+    console.log('[NodeOneCore] ✅ Event-based message sync set up for AI and peer message processing')
   }
   
   /**
@@ -1266,7 +1517,7 @@ class NodeOneCore {
       }
       
       // Get or create Someone wrapper for this person
-      let someone = await this.leuteModel.someone(personId)
+      let someone = await this.leuteModel.getSomeone(personId)
       let someoneIdHash
       
       if (!someone) {
@@ -1275,7 +1526,7 @@ class NodeOneCore {
         const newProfile = await ProfileModel.constructWithNewProfile(personId, myIdentity, 'default')
         await this.leuteModel.addProfile(newProfile.idHash)
         
-        someone = await this.leuteModel.someone(personId)
+        someone = await this.leuteModel.getSomeone(personId)
         if (!someone) {
           throw new Error('Failed to create Someone wrapper for AI person')
         }
@@ -1341,39 +1592,7 @@ class NodeOneCore {
     }
   }
   
-  /**
-   * Setup channel access for browser-node federation
-   * Called when browser Person ID becomes available
-   */
-  async setupBrowserAccess(browserPersonId) {
-    try {
-      if (!this.channelManager || !browserPersonId) {
-        console.warn('[NodeOneCore] Cannot setup browser access - missing requirements')
-        return false
-      }
-      
-      console.log('\n' + '='.repeat(60))
-      console.log('🔐 NODE: Setting up Browser Access')
-      console.log('='.repeat(60))
-      console.log(`[TRACE] 🔐 NODE: Browser Person ID received: ${browserPersonId.substring(0, 8)}`)
-      console.log(`[NodeOneCore] Setting up direct channel access for browser: ${browserPersonId.substring(0, 8)}`)
-      
-      // Grant direct person-to-person access to channels
-      const { setupBrowserNodeChannelAccess } = await import('./channel-access-manager.js')
-      await setupBrowserNodeChannelAccess(this.ownerId, browserPersonId, this.channelManager)
-      
-      // Store browser person ID for future use
-      this.browserPersonId = browserPersonId
-      
-      console.log('[TRACE] ✅ NODE: Browser access setup complete')
-      console.log('[NodeOneCore] ✅ Browser access setup complete')
-      console.log('='.repeat(60) + '\n')
-      return true
-    } catch (error) {
-      console.error('[NodeOneCore] Failed to setup browser access:', error)
-      return false
-    }
-  }
+  // Removed setupBrowserAccess - browser has no ONE instance
   
   /**
    * Get current instance info
@@ -1382,8 +1601,7 @@ class NodeOneCore {
     return {
       initialized: this.initialized,
       name: this.instanceName,
-      ownerId: this.ownerId,
-      browserPersonId: this.browserPersonId
+      ownerId: this.ownerId
     }
   }
   
@@ -1522,12 +1740,17 @@ class NodeOneCore {
       const { closeInstance } = await import('@refinio/one.core/lib/instance.js')
       closeInstance()
       
-      // Reset all models
+      // Reset all models and groups
       this.leuteModel = null
       this.connectionsModel = null
       this.channelManager = null
       this.topicModel = null
       this.oneAuth = null
+      this.federationGroup = null
+      this.replicantGroup = null
+      this.topicGroupManager = null
+      this.aiAssistant = null
+      this.quickReply = null
         
       // Clear intervals
       if (this.messageSyncInterval) {
@@ -1604,25 +1827,67 @@ class NodeOneCore {
   // Direct WebSocket listener now handled by ConnectionsModel via socketConfig
 
   /**
+   * Reset the singleton instance to clean state
+   * Used when app data is cleared
+   */
+  reset() {
+    // Reset all properties to initial state
+    this.initialized = false
+    this.instanceName = null
+    this.ownerId = null
+    this.leuteModel = null
+    this.appStateModel = null
+    this.connectionsModel = null
+    this.channelManager = null
+    this.topicModel = null
+    this.localWsServer = null
+    this.instanceModule = null
+    this.aiAssistantModel = null
+    this.apiServer = null
+    this.topicGroupManager = null
+    this.federationGroup = null
+    this.replicantGroup = null
+    this.accessRightsManager = null
+    this.aiAssistant = null
+    this.quickReply = null
+    this.messageSyncInterval = null
+    this.aiMessageListener = null
+    this.initFailed = false
+
+    console.log('[NodeOneCore] Instance reset to clean state')
+  }
+
+  /**
    * Shutdown the instance properly
    */
   async shutdown() {
     console.log('[NodeOneCore] Shutting down...')
-    
+
+    // Stop message listeners
+    if (this.aiMessageListener) {
+      this.aiMessageListener.stop()
+      this.aiMessageListener = null
+    }
+
+    if (this.peerMessageListener) {
+      this.peerMessageListener.stop()
+      this.peerMessageListener = null
+    }
+
     // Stop direct WebSocket listener if running
     if (this.directSocketStopFn) {
       console.log('[NodeOneCore] Stopping direct WebSocket listener...')
       await this.directSocketStopFn()
       this.directSocketStopFn = null
     }
-    
+
     await this.cleanup()
-    
+
     if (this.accessRightsManager) {
       await this.accessRightsManager.shutdown()
       this.accessRightsManager = undefined
     }
-    
+
     this.initialized = false
     this.instanceName = null
     this.ownerId = null

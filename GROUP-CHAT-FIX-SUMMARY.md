@@ -1,15 +1,34 @@
-# Group Chat Architecture Fix Summary
+# Chat Architecture Fix Summary
 
-## The Problem
-Group chat messages were not visible to all participants because of a misunderstanding about how leute.one's channel architecture works.
+## Group vs P2P Chat Architectures
 
-## The Solution
+### P2P Conversations (Two Participants)
+1. **Single Shared Channel**: Both participants use ONE channel with null owner
+2. **Topic ID Format**: `personId1<->personId2` (lexicographically sorted)
+3. **Person-based Access**: Direct person access to both channel AND Topic object
+4. **Bidirectional Writing**: Both participants can write to the same channel
 
-### Core Architecture (as implemented in leute.one)
+### Group Conversations (3+ Participants)
 1. **Topic ID as Grouping Mechanism**: All channels with the same topic ID belong to the same conversation
 2. **One Channel Per Participant**: Each participant owns and writes to their OWN channel only
 3. **Aggregated Reading**: `retrieveAllMessages()` queries ALL channels with the topic ID and aggregates messages
 4. **Decentralized Writing**: You can only write to channels you own (exist in your cache)
+
+## P2P Messaging Fix
+
+### The Problem
+P2P messages were not visible to one.leute peers because:
+1. We were only granting access to the channel, not the Topic object itself
+2. one.leute requires access to both ChannelInfo AND Topic objects
+
+### The Solution
+Updated `topic-group-manager.js` to grant access to BOTH objects:
+- Channel access: `{id: channelHash, person: [person1, person2]}`
+- Topic access: `{object: topicHash, person: [person1, person2]}`
+
+This matches one.leute's implementation in `TopicModel.addPersonsToTopic()`.
+
+## Group Chat Fix
 
 ### Key Changes Made
 
@@ -17,6 +36,7 @@ Group chat messages were not visible to all participants because of a misunderst
 - Clarified that the topic ID acts as the grouping mechanism
 - Explained the decentralized write / aggregated read pattern
 - Documented why this architecture works (no conflicts, scalable, consistent)
+- Added P2P vs Group architecture differences
 
 #### 2. Fixed Channel Creation (`topic-group-manager.js`)
 - **Before**: Created channels for ALL participants locally (but they couldn't write to them)

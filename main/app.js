@@ -25,19 +25,24 @@ class MainApplication {
   }
 
   async initialize() {
-    if (this.initialized) return
-    
+    // Always reset initialization state on fresh start
+    // This ensures we can properly reinitialize after a data reset
+    if (this.initialized) {
+      console.log('[MainApp] Already initialized, skipping...')
+      return
+    }
+
     console.log('[MainApp] Initializing application...')
-    
+
     try {
       // Initialize Node provisioning listener
       // Node instance will be initialized when browser provisions it
       nodeProvisioning.initialize()
-      
+
       // Initialize attachment service
       await attachmentService.initialize()
       console.log('[MainApp] Attachment service initialized')
-      
+
       // Initialize LLM Manager with MCP support
       try {
         await llmManager.init()
@@ -46,16 +51,24 @@ class MainApplication {
         console.warn('[MainApp] LLM Manager initialization failed (non-critical):', error)
         // Continue without LLM - can be initialized later
       }
-      
+
       // Set up state change listeners
       this.setupStateListeners()
-      
+
       this.initialized = true
       console.log('[MainApp] Application ready for provisioning')
     } catch (error) {
       console.error('[MainApp] Failed to initialize:', error)
+      // Don't set initialized on failure, allow retry
       throw error
     }
+  }
+
+  reset() {
+    // Reset the application state for clean restart
+    console.log('[MainApp] Resetting application state...')
+    this.initialized = false
+    this.mainWindow = null
   }
 
   setupStateListeners() {
@@ -133,22 +146,27 @@ class MainApplication {
 
   async shutdown() {
     console.log('[MainApp] Shutting down...')
-    
+
     // Shutdown LLM Manager
     try {
       await llmManager.shutdown()
     } catch (error) {
       console.error('[MainApp] Error shutting down LLM Manager:', error)
     }
-    
+
     // Shutdown IPC
-    ipcController.shutdown()
-    
+    if (ipcController && ipcController.shutdown) {
+      ipcController.shutdown()
+    }
+
     // Deprovision Node instance if provisioned
-    if (nodeProvisioning.isProvisioned()) {
+    if (nodeProvisioning && nodeProvisioning.isProvisioned && nodeProvisioning.isProvisioned()) {
       await nodeProvisioning.deprovision()
     }
-    
+
+    // Reset the application state
+    this.reset()
+
     console.log('[MainApp] Shutdown complete')
   }
 

@@ -273,30 +273,30 @@ const oneCoreHandlers = {
       }
 
       const contacts = []
-      
-      // Add the owner (self) first
+
+      // Add the owner (self) first - useful for editing own profile
       try {
         const me = await nodeOneCore.leuteModel.me()
         const myId = await me.mainIdentity()
         const myProfile = await me.mainProfile()
-        
+
         let myName = nodeOneCore.instanceName || 'Node.js Owner'
         if (myProfile?.nickname) {
           myName = myProfile.nickname
         } else if (myProfile?.personDescriptions?.length > 0) {
-          const nameDesc = myProfile.personDescriptions.find(d => 
+          const nameDesc = myProfile.personDescriptions.find(d =>
             d.$type$ === 'PersonName' && d.name
           )
           if (nameDesc?.name) {
             myName = nameDesc.name
           }
         }
-        
+
         contacts.push({
           id: myId,
-          personId: myId,  // Add personId for UI display
-          name: myName + ' (Owner)',
-          displayName: myName + ' (Owner)',
+          personId: myId,
+          name: myName + ' (You)',
+          displayName: myName + ' (You)',
           status: 'owner',
           lastSeen: new Date().toISOString()
         })
@@ -396,16 +396,55 @@ const oneCoreHandlers = {
             isAI = true
           }
           
-          let displayName = 'Unknown Contact'
-          if (profile?.nickname) {
-            displayName = profile.nickname
-          } else if (profile?.personDescriptions?.length > 0) {
-            const nameDesc = profile.personDescriptions.find(d => 
-              d.$type$ === 'PersonName' && d.name
-            )
-            if (nameDesc?.name) {
-              displayName = nameDesc.name
+          let displayName = null
+
+          // Profile is a ProfileModel instance, need to access its properties correctly
+          if (profile) {
+            // Debug what type of object profile is
+            if (isAI) {
+              console.log(`[OneCoreHandler] AI Profile for ${personId.substring(0, 8)}: type=${typeof profile}, constructor=${profile?.constructor?.name}`)
+              console.log(`[OneCoreHandler]   - nickname: ${profile.nickname}`)
+              console.log(`[OneCoreHandler]   - personDescriptions type: ${typeof profile.personDescriptions}`)
+              if (profile.personDescriptions) {
+                console.log(`[OneCoreHandler]   - personDescriptions isArray: ${Array.isArray(profile.personDescriptions)}`)
+                console.log(`[OneCoreHandler]   - personDescriptions length: ${profile.personDescriptions?.length}`)
+                if (profile.personDescriptions.length > 0) {
+                  console.log(`[OneCoreHandler]   - personDescriptions[0]: ${JSON.stringify(profile.personDescriptions[0])}`)
+                }
+              }
             }
+
+            // Try nickname first
+            if (typeof profile.nickname === 'string') {
+              displayName = profile.nickname
+            }
+            // Then try personDescriptions - this is an array on the ProfileModel
+            else if (profile.personDescriptions && Array.isArray(profile.personDescriptions)) {
+              const nameDesc = profile.personDescriptions.find(d =>
+                d.$type$ === 'PersonName' && d.name
+              )
+              if (nameDesc?.name) {
+                displayName = nameDesc.name
+                console.log(`[OneCoreHandler] Found PersonName for ${personId.substring(0, 8)}: ${displayName}`)
+              }
+            }
+            // If personDescriptions is a method, call it
+            else if (typeof profile.personDescriptions === 'function') {
+              try {
+                const descriptions = await profile.personDescriptions()
+                const nameDesc = descriptions?.find(d =>
+                  d.$type$ === 'PersonName' && d.name
+                )
+                if (nameDesc?.name) {
+                  displayName = nameDesc.name
+                  console.log(`[OneCoreHandler] Found PersonName (via method) for ${personId.substring(0, 8)}: ${displayName}`)
+                }
+              } catch (e) {
+                console.log('[OneCoreHandler] Could not get personDescriptions:', e.message)
+              }
+            }
+          } else {
+            console.log(`[OneCoreHandler] No profile found for ${personId.substring(0, 8)}`)
           }
           
           // If still unknown and we have an email, try to extract name from it
@@ -430,14 +469,25 @@ const oneCoreHandlers = {
               }
             }
           }
-          
+
+          // If still no display name, use a better fallback
+          if (!displayName) {
+            // Try to get from Person object if available
+            if (personId) {
+              // Use first 8 chars of person ID as fallback
+              displayName = `Contact ${personId.substring(0, 8)}`
+            } else {
+              displayName = 'Unknown Contact'
+            }
+          }
+
           // Following one.leute pattern - don't check connection status for contacts
           // Contacts exist regardless of connection state
-          
+
           contacts.push({
-            id: someone.idHash, // Use Someone's ID as unique identifier, not Person ID
+            id: personId, // Use Person ID as the contact ID for P2P channels
             personId: personId,
-            someoneId: someone.idHash, // Also include it as someoneId for clarity
+            someoneId: someone.idHash,
             name: displayName,
             displayName: displayName,
             email: email || `${personId.substring(0, 8)}@lama.network`,

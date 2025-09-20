@@ -20,7 +20,12 @@ class IPCLogger {
   
   setMainWindow(window) {
     this.mainWindow = window
-    console.log('[IPCLogger] Main window set, logs will be sent to browser')
+    this.originalConsole.log('[IPCLogger] Main window set, logs will be sent to browser')
+
+    // Test the connection
+    setTimeout(() => {
+      console.log('[IPCLogger] Test message - if you see this in browser console, IPC logging is working!')
+    }, 2000)
   }
   
   setupInterceptors() {

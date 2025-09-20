@@ -388,7 +388,7 @@ export class LamaMCPServer {
   // Connection implementations
   async listConnections() {
     try {
-      const connections = this.nodeOneCore.connections?.connectionsInfo() || [];
+      const connections = this.nodeOneCore.connectionsModel?.connectionsInfo() || [];
       
       return {
         content: [
@@ -412,11 +412,11 @@ export class LamaMCPServer {
   
   async createInvitation() {
     try {
-      if (!this.nodeOneCore.connections?.pairing) {
+      if (!this.nodeOneCore.connectionsModel?.pairing) {
         throw new Error('Pairing manager not available');
       }
-      
-      const invitation = await this.nodeOneCore.connections.pairing.createInvitation();
+
+      const invitation = await this.nodeOneCore.connectionsModel.pairing.createInvitation();
       
       return {
         content: [

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { lamaBridge, type Message, type Peer } from '@/bridge/lama-bridge'
 
 // Main hook to access the bridge
@@ -9,118 +9,73 @@ export function useLama() {
 }
 
 export function useLamaMessages(conversationId: string) {
+  console.log('[useLamaMessages] 🎯 Hook called with conversationId:', conversationId)
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([])
-  const [updateCounter, setUpdateCounter] = useState(0) // Force re-render counter
 
-  useEffect(() => {
-    // Reset initial load flag when conversation changes
-    setIsInitialLoad(true)
-    
-    let debounceTimer: NodeJS.Timeout | null = null
-    let mounted = true
-    
-    const loadMessages = async () => {
-      if (!mounted) return
-      
-      try {
-        // Only show loading spinner on initial load, not on updates
-        if (isInitialLoad && mounted) {
-          setLoading(true)
-        }
-        const msgs = await lamaBridge.getMessages(conversationId)
-        console.log('🔵🔵🔵 MESSAGES LOADED from lamaBridge.getMessages:', msgs.length, 'messages')
-        msgs.forEach((msg, idx) => {
-          console.log(`  Message ${idx + 1}:`, {
-            content: msg.content.substring(0, 30),
-            senderId: msg.senderId?.substring(0, 8),
-            timestamp: msg.timestamp
-          })
-        })
-        
-        if (mounted) {
-          setMessages(msgs)
-          setIsInitialLoad(false)
-          setUpdateCounter(prev => prev + 1) // Force re-render
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load messages')
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
-        }
-      }
-    }
-
-    loadMessages()
-
-    // Listen for topic updates - reload for ANY update or matching conversation
-    const handleTopicUpdate = (data: { conversationId?: string; source?: string } | undefined) => {
-      console.log('[useLamaMessages] 📨 Received update event, data:', data, 'for conversation:', conversationId)
-      
-      // Reload if no data (generic update) OR if this conversation was updated
-      const shouldReload = !data || data?.conversationId === conversationId
-      
-      if (shouldReload) {
-        console.log('[useLamaMessages] ✅ Will reload messages for conversation:', conversationId)
-        
-        // Clear optimistic messages since we're getting real data
-        setOptimisticMessages([])
-        
-        // Debounce multiple rapid updates
-        if (debounceTimer) {
-          clearTimeout(debounceTimer)
-        }
-        
-        // Use shorter debounce for CHUM updates to ensure quick refresh
-        const debounceDelay = data?.source === 'node-chum-listener' ? 50 : 100
-        
-        debounceTimer = setTimeout(() => {
-          if (mounted) {
-            console.log('[useLamaMessages] 🔄 Executing loadMessages after debounce')
-            loadMessages()
-          }
-        }, debounceDelay)
-      } else {
-        console.log('[useLamaMessages] ⏭️ Skipping reload - different conversation')
-      }
-    }
-
-    // Listen for new peer messages pushed from the backend
-    const handleNewMessages = (data: { conversationId: string; messages: Message[] }) => {
-      console.log('[useLamaMessages] 📬 New peer messages received:', data.messages.length, 'for:', data.conversationId)
-      
-      if (data.conversationId === conversationId && mounted) {
-        console.log('[useLamaMessages] 🔄 Refreshing messages due to new peer messages')
-        // Force reload to get all messages including the new ones
-        loadMessages()
-      }
-    }
-    
-    console.log('[useLamaMessages] Setting up listeners for conversationId:', conversationId)
-    lamaBridge.on('message:updated', handleTopicUpdate)
-    lamaBridge.on('chat:newMessages', handleNewMessages)
-    
-    return () => {
-      mounted = false
-      if (debounceTimer) {
-        clearTimeout(debounceTimer)
-      }
-      lamaBridge.off('message:updated', handleTopicUpdate)
-      lamaBridge.off('chat:newMessages', handleNewMessages)
+  // Load messages from backend
+  const loadMessages = useCallback(async () => {
+    console.log('🔄 Loading messages for:', conversationId)
+    try {
+      setLoading(true)
+      const msgs = await lamaBridge.getMessages(conversationId)
+      console.log('✅ Loaded', msgs.length, 'messages')
+      setMessages(msgs)
+      setOptimisticMessages([])
+    } catch (err) {
+      console.error('❌ Failed to load messages:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load messages')
+    } finally {
+      setLoading(false)
     }
   }, [conversationId])
 
+  // Initial load
+  useEffect(() => {
+    loadMessages()
+  }, [conversationId]) // Only reload when conversation changes
+
+  // Listen for new messages
+  useEffect(() => {
+    const handleNewMessages = (data: { conversationId: string; messages: Message[] }) => {
+      console.log('[useLamaMessages] 📨 New message event:', data.conversationId, 'current:', conversationId)
+
+      // Normalize P2P channel IDs for comparison
+      const normalize = (id: string) => {
+        if (id?.includes('<->')) {
+          return id.split('<->').sort().join('<->')
+        }
+        return id
+      }
+
+      const eventId = normalize(data.conversationId)
+      const currentId = normalize(conversationId)
+
+      if (eventId === currentId) {
+        console.log('[useLamaMessages] ✅ Match! Refreshing messages...')
+        // Directly fetch and update messages - no complex state management
+        lamaBridge.getMessages(conversationId).then(msgs => {
+          console.log('[useLamaMessages] 🔄 Got', msgs.length, 'messages from refresh')
+          setMessages(msgs)
+        }).catch(err => {
+          console.error('[useLamaMessages] Failed to refresh:', err)
+        })
+      }
+    }
+
+    lamaBridge.on('chat:newMessages', handleNewMessages)
+    return () => {
+      lamaBridge.off('chat:newMessages', handleNewMessages)
+    }
+  }, [conversationId]) // Re-subscribe when conversation changes
+
   const sendMessage = useCallback(async (topicId: string, content: string, attachments?: any[]) => {
     try {
-      console.log('[useLama] 🚀 Starting sendMessage with:', { topicId, content, attachments: attachments?.length || 0 })
-      
-      // Add optimistic message immediately
+      console.log('[useLama] 📤 Sending message to:', topicId)
+
+      // Add optimistic message for instant UI feedback
       const optimisticMessage: Message = {
         id: `optimistic-${Date.now()}`,
         senderId: 'user',
@@ -131,46 +86,30 @@ export function useLamaMessages(conversationId: string) {
         attachments,
         topicId
       }
-      
-      // Add to optimistic messages immediately for instant display
-      setOptimisticMessages(prev => [...prev, optimisticMessage])
-      setUpdateCounter(prev => prev + 1) // Force re-render
-      
+      setOptimisticMessages([optimisticMessage])
+
+      // Send the actual message
       const messageId = await lamaBridge.sendMessage(topicId, content, attachments)
-      console.log('[useLama] ✅ sendMessage completed, messageId:', messageId, 'for topic:', topicId)
-      
-      // Force a refresh after a short delay to ensure we get the message
-      setTimeout(async () => {
-        console.log('[useLama] 🔄 Force refreshing messages after send')
-        try {
-          const msgs = await lamaBridge.getMessages(topicId)
-          console.log('[useLama] 📥 Got', msgs.length, 'messages after force refresh')
-          setMessages(msgs)
-          setOptimisticMessages([]) // Clear all optimistic messages
-          setUpdateCounter(prev => prev + 1) // Force re-render
-        } catch (err) {
-          console.error('[useLama] Force refresh failed:', err)
-        }
-      }, 500)
-      
+      console.log('[useLama] ✅ Message sent:', messageId)
+
+      // Refresh messages
+      const msgs = await lamaBridge.getMessages(topicId)
+      setMessages(msgs)
+      setOptimisticMessages([])
+
       return messageId
     } catch (err) {
-      console.error('[useLama] sendMessage error:', err)
-      // Remove optimistic message on error
+      console.error('[useLama] ❌ Send failed:', err)
       setOptimisticMessages([])
-      setError(err instanceof Error ? err.message : 'Failed to send message')
       throw err
     }
   }, [])
 
-  // Combine real messages with optimistic ones for display
-  // Use useMemo to ensure React sees this as a new array reference
+  // Combine real and optimistic messages
   const allMessages = useMemo(() => {
-    const combined = [...messages, ...optimisticMessages]
-    console.log('[useLama] 📦 Combined messages:', combined.length, '(', messages.length, 'real +', optimisticMessages.length, 'optimistic)', 'update:', updateCounter)
-    return combined
-  }, [messages, optimisticMessages, updateCounter])
-  
+    return [...messages, ...optimisticMessages]
+  }, [messages, optimisticMessages])
+
   return { messages: allMessages, loading, error, sendMessage }
 }
 

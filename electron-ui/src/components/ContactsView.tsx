@@ -52,20 +52,28 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
 
   const loadContacts = async () => {
     if (!bridge) return
-    
+
     setLoading(true)
     try {
       // Get real contacts from AppModel
       const allContacts = await bridge.getContacts()
-      setContacts(allContacts || [])
+      console.log('[ContactsView] Loaded contacts:', allContacts)
+      console.log('[ContactsView] Contact count:', allContacts?.length)
+      allContacts?.forEach((c, i) => {
+        console.log(`[ContactsView]   Contact ${i}: ${c.name || c.displayName} (${c.id?.substring(0, 8)}...) status=${c.status}`)
+      })
+      // Filter out the owner (You) from the contacts list
+      const nonOwnerContacts = (allContacts || []).filter(c => c.status !== 'owner')
+      setContacts(nonOwnerContacts)
     } finally {
       setLoading(false)
     }
   }
 
-  const filteredContacts = contacts.filter(contact =>
-    contact.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredContacts = contacts.filter(contact => {
+    const name = contact.name || contact.displayName || ''
+    return name.toLowerCase().includes(searchQuery.toLowerCase())
+  })
 
   const getStatusColor = (status: string) => {
     switch (status) {

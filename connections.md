@@ -4,40 +4,67 @@
 
 This document describes the connection establishment between Browser (Renderer) and Node.js (Main) instances in LAMA Electron, tracing the actual code paths and phases based on ONE.core architecture.
 
-## Profile-Based Chat Management
+## P2P Chat Architecture
 
-### Key Principle: Someone Objects as Address Book Containers
+### Key Principle: P2P Uses Null-Owner Shared Channels
 
-Someone objects are containers for the address book - they represent contacts as profiles. Chat topics and channels are managed by profile (Someone ID), not by underlying Person IDs.
+P2P conversations in LAMA follow the one.leute architecture:
+1. **Single shared channel**: Both participants write to the same channel
+2. **Null owner**: Channel has no owner (null), allowing both to write
+3. **Person-based access**: Direct person access control, no Group objects
+4. **Access to Topic object**: Both participants must have access to the Topic object itself
 
-### Topic Creation with Profile IDs
+### P2P Topic Creation
 
 When creating P2P conversations:
-1. **Topic ID = Someone ID**: The topic uses the Someone hash as its identifier
-2. **Channel ID = Someone ID**: Channels also use the Someone hash
-3. **Person IDs for permissions only**: Person IDs are used for access control and CHUM sync
+1. **Topic ID format**: `personId1<->personId2` (lexicographically sorted)
+2. **Channel owner**: `null` (shared channel)
+3. **Access control**: Person-based for BOTH channel AND Topic object
 
 Example:
 ```javascript
-// Profile-based topic creation
-const someoneId = "e466cc4a..."  // Someone hash (profile)
-const personId = "650f45cb..."   // Person ID (for permissions)
+// P2P topic creation
+const sortedIds = [myPersonId, peerPersonId].sort();
+const topicId = `${sortedIds[0]}<->${sortedIds[1]}`;
 
-// Create topic with profile ID
-await topicModel.createGroupTopic(
-  someoneId,  // Topic name = Someone ID
-  someoneId,  // Topic ID = Someone ID  
-  myPersonId  // Owner for permissions
+// Create topic with null owner (shared channel)
+const topic = await topicModel.createGroupTopic(
+  contactName,  // Topic name = contact's name
+  topicId,      // Topic ID = personId1<->personId2
+  null          // null = shared channel, both can write
 )
 
-// Create channel with profile ID
-await channelManager.createChannel(someoneId, myPersonId)
+// Grant person-based access to the channel
+await createAccess([{
+  id: channelHash,
+  person: [myPersonId, peerPersonId],  // Direct person access
+  group: [],                           // No groups for P2P
+  mode: SET_ACCESS_MODE.ADD
+}])
+
+// CRITICAL: Also grant access to the Topic object itself (like one.leute does)
+const topicHash = await calculateHashOfObj(topic)
+await createAccess([{
+  object: topicHash,
+  person: [myPersonId, peerPersonId],  // Both need access to Topic
+  group: [],                           // No groups for P2P
+  mode: SET_ACCESS_MODE.ADD
+}])
 ```
 
 This ensures:
-- One conversation per profile (no duplicates)
-- Topics exist for TopicModel operations
-- CHUM sync works with Person IDs for permissions
+- Both participants write to same channel
+- Both can see the Topic structure through CHUM sync
+- No duplicate conversations (normalized IDs)
+- Compatible with one.leute P2P architecture
+
+### Critical Access Rights Pattern
+
+one.leute grants access to TWO objects for P2P conversations:
+1. **ChannelInfo object** (via `id` field) - allows reading/writing messages
+2. **Topic object** (via `object` field) - allows seeing the topic structure
+
+Without access to the Topic object, peers cannot properly see the conversation structure even if they receive channel data.
 
 ## Key Concepts
 

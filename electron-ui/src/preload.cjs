@@ -101,12 +101,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Navigation from menu
   on: (channel, callback) => {
     const validChannels = [
-      'navigate', 
+      'navigate',
       'update:mainProcessLog',
       'message:updated',
+      'message:thinking',
+      'message:stream',
       'contact:added',
+      'contacts:updated',
+      'contacts:pending:new',
+      'contacts:accepted',
+      'contacts:vc:received',
       'chat:conversationCreated',
-      'chat:messageSent'
+      'chat:messageSent',
+      'chat:newMessages',
+      'node-log'
     ]
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, callback)
@@ -114,12 +122,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   off: (channel, callback) => {
     const validChannels = [
-      'navigate', 
+      'navigate',
       'update:mainProcessLog',
       'message:updated',
+      'message:thinking',
+      'message:stream',
       'contact:added',
+      'contacts:updated',
+      'contacts:pending:new',
+      'contacts:accepted',
+      'contacts:vc:received',
       'chat:conversationCreated',
-      'chat:messageSent'
+      'chat:messageSent',
+      'chat:newMessages',
+      'node-log'
     ]
     if (validChannels.includes(channel)) {
       ipcRenderer.removeListener(channel, callback)
@@ -127,12 +143,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   removeListener: (channel, callback) => {
     const validChannels = [
-      'navigate', 
+      'navigate',
       'update:mainProcessLog',
       'message:updated',
+      'message:thinking',
+      'message:stream',
       'contact:added',
+      'contacts:updated',
+      'contacts:pending:new',
+      'contacts:accepted',
+      'contacts:vc:received',
       'chat:conversationCreated',
-      'chat:messageSent'
+      'chat:messageSent',
+      'chat:newMessages',
+      'node-log'
     ]
     if (validChannels.includes(channel)) {
       ipcRenderer.removeListener(channel, callback)

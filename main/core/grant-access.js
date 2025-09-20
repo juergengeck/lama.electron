@@ -77,22 +77,21 @@ async function grantAccessRights(nodeOneCore, targetPersonId) {
     }
   }
   
-  // 4. Grant access to all Profile objects
+  // 4. Grant access to our MAIN profile only (not all profiles!)
   if (nodeOneCore.leuteModel) {
     try {
       const me = await nodeOneCore.leuteModel.me()
-      const profiles = await me.profiles()
-      
-      for (const profile of profiles) {
+      const mainProfile = await me.mainProfile()
+
+      if (mainProfile && mainProfile.idHash) {
         await createAccess([{
-          id: profile.idHash,
+          id: mainProfile.idHash,
           person: [targetPersonId],
           group: [],
           mode: SET_ACCESS_MODE.ADD
         }])
+        console.log('[GrantAccess] ✅ Granted access to main Profile object')
       }
-      
-      console.log('[GrantAccess] ✅ Granted access to Profile objects')
     } catch (error) {
       console.warn('[GrantAccess] Failed to grant Profile access:', error.message)
     }

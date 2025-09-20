@@ -2,6 +2,29 @@
 
 This file provides guidance to Claude Code when working with LAMA Electron.
 
+## Topic Analysis with AI (NEW)
+
+**Feature**: AI-powered analysis of conversations to extract subjects, keywords, and generate summaries.
+
+### Data Model (one.ai package)
+- **Subject**: Distinct theme identified by keyword combination (e.g., "children+education")
+- **Keyword**: Extracted term/concept from conversations
+- **Summary**: Versioned overview of all subjects in a topic
+
+### IPC Handlers for Topic Analysis
+- `topicAnalysis:analyzeMessages` - Extract subjects and keywords from messages
+- `topicAnalysis:getSubjects` - Retrieve subjects for a topic
+- `topicAnalysis:getSummary` - Get current or historical summary
+- `topicAnalysis:updateSummary` - Manually trigger summary update
+- `topicAnalysis:extractKeywords` - Extract keywords from text
+- `topicAnalysis:mergeSubjects` - Combine related subjects
+
+### Integration Points
+- Uses existing LLMManager for AI operations
+- Stores as ONE.core objects in Node.js
+- UI components in `/electron-ui/src/components/TopicSummary/`
+- All processing happens in Node.js, UI receives via IPC
+
 ## Single ONE.core Architecture
 
 **CRITICAL**: This Electron app runs ONE ONE.core instance in Node.js ONLY:
@@ -33,15 +56,21 @@ This file provides guidance to Claude Code when working with LAMA Electron.
    - Both participants read AND write to the same channel
 
 2. **Access Control for P2P**
-   - Direct person-based access to the channel
+   - Direct person-based access to BOTH channel AND Topic object
    - Both participants are granted individual access
    - NO Group objects needed or used for P2P
-   - Simple IdAccess: `{id: channelHash, person: [person1, person2]}`
+   - Channel access: `{id: channelHash, person: [person1, person2]}`
+   - Topic access: `{object: topicHash, person: [person1, person2]}`
 
 3. **Why P2P is Different**
    - Simpler: Only two people, no need for complex group management
    - Compatible: Works with one.leute's P2P expectations
    - No CHUM issues: No Group objects to be rejected
+
+4. **Critical Implementation Detail**
+   - Must grant access to Topic object itself (not just channel)
+   - one.leute pattern: Always grants access to both ChannelInfo and Topic
+   - Without Topic access, peer cannot see conversation structure
 
 ### Group Chats (3+ Participants including AI)
 
@@ -136,7 +165,7 @@ The app follows a simple authentication flow:
 ### Development Notes
 
 - Main process uses CommonJS (`require`)
-- Renderer uses ESM (`import`) 
+- Renderer uses ESM (`import`)
 - IPC communication via contextBridge for ALL operations
 - NO direct ONE.core access from browser
 - NO fallbacks - fail fast and fix
@@ -147,3 +176,58 @@ For consistency and simplicity:
 - IPC for everything
 - No complex federation/pairing needed
 - reference implementations are in ./reference
+
+## Transport Architecture
+
+**IMPORTANT**: Clean separation between transport and protocol layers:
+
+```
+Application Layer:  [CHUM Sync Protocol]
+                           |
+Protocol Layer:     [ConnectionsModel]
+                           |
+                    ---------------
+                    |             |
+Transport Layer:  [QUIC]    [WebSocket]
+                 (future)    (legacy)
+```
+
+### Transport Layers
+
+- **QUIC** (`/main/core/quic-transport.js`): Future direct P2P transport
+  - Direct peer-to-peer connections
+  - No relay server needed
+  - Lower latency, better performance
+  - Placeholder implementation until node:quic is stable
+
+- **WebSocket** (via commserver): Current transport
+  - Uses relay server (commserver)
+  - Works today, proven reliable
+  - Will be phased out once QUIC is ready
+
+### Protocol Layer
+
+- **CHUM**: Application-level sync protocol
+  - Handles data synchronization between peers
+  - Transport-agnostic - works over ANY transport
+  - Managed by ConnectionsModel
+
+- **ConnectionsModel**: Protocol manager
+  - Implements CHUM protocol logic
+  - Uses pluggable transports (QUIC, WebSocket, etc.)
+  - Transport selection is transparent to CHUM
+
+### Key Principles
+
+1. **Transports are dumb** - They only move bytes, no application logic
+2. **CHUM is transport-agnostic** - Works over any reliable transport
+3. **Clean separation** - Transport layer doesn't know about channels, sync, or application concepts
+4. **Pluggable architecture** - New transports can be added without changing CHUM
+
+### Common Mistakes to Avoid
+
+- **DON'T** implement CHUM logic in transport layer (like quic-vc-transport.js did)
+- **DON'T** create channels from transport layer
+- **DON'T** mix trust/verification with transport
+- **DO** keep transport as a simple byte pipe
+- **DO** let ConnectionsModel handle all CHUM protocol logic

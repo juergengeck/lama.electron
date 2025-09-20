@@ -1,0 +1,348 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Topic Analysis IPC Handlers",
+  "description": "IPC contract definitions for AI-powered topic analysis in LAMA Electron",
+  "handlers": {
+    "topicAnalysis:analyzeMessages": {
+      "description": "Analyze messages to extract subjects and keywords",
+      "request": {
+        "type": "object",
+        "required": ["topicId", "messages"],
+        "properties": {
+          "topicId": {
+            "type": "string",
+            "description": "Hash of the topic to analyze"
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "content", "timestamp"],
+              "properties": {
+                "id": { "type": "string" },
+                "content": { "type": "string" },
+                "timestamp": { "type": "number" },
+                "authorId": { "type": "string" }
+              }
+            }
+          },
+          "forceReanalysis": {
+            "type": "boolean",
+            "default": false,
+            "description": "Force complete reanalysis ignoring cache"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "required": ["subjects", "keywords", "summaryId"],
+        "properties": {
+          "subjects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "keywords", "messageCount"],
+              "properties": {
+                "id": { "type": "string" },
+                "keywords": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "messageCount": { "type": "number" },
+                "timestamp": { "type": "number" }
+              }
+            }
+          },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "All unique keywords found"
+          },
+          "summaryId": {
+            "type": "string",
+            "description": "ID of the generated/updated summary"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "TOPIC_NOT_FOUND",
+          "message": "Topic does not exist"
+        },
+        {
+          "code": "ANALYSIS_FAILED",
+          "message": "AI analysis failed"
+        },
+        {
+          "code": "ONECORE_NOT_INITIALIZED",
+          "message": "ONE.core not initialized"
+        }
+      ]
+    },
+    "topicAnalysis:getSubjects": {
+      "description": "Retrieve all subjects for a topic",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": {
+            "type": "string",
+            "description": "Hash of the topic"
+          },
+          "includeArchived": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include archived subjects"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "required": ["subjects"],
+        "properties": {
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/Subject"
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "TOPIC_NOT_FOUND",
+          "message": "Topic does not exist"
+        }
+      ]
+    },
+    "topicAnalysis:getSummary": {
+      "description": "Get the current summary for a topic",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": {
+            "type": "string",
+            "description": "Hash of the topic"
+          },
+          "version": {
+            "type": "number",
+            "description": "Specific version to retrieve (optional)"
+          },
+          "includeHistory": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include version history"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "required": ["summary"],
+        "properties": {
+          "summary": {
+            "$ref": "#/definitions/Summary"
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": { "type": "number" },
+                "created": { "type": "number" },
+                "changeReason": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "SUMMARY_NOT_FOUND",
+          "message": "No summary exists for this topic"
+        },
+        {
+          "code": "VERSION_NOT_FOUND",
+          "message": "Specified version does not exist"
+        }
+      ]
+    },
+    "topicAnalysis:updateSummary": {
+      "description": "Manually trigger summary update",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": {
+            "type": "string",
+            "description": "Hash of the topic"
+          },
+          "content": {
+            "type": "string",
+            "description": "Manual summary content (optional)"
+          },
+          "changeReason": {
+            "type": "string",
+            "description": "Reason for update"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "required": ["summary", "version"],
+        "properties": {
+          "summary": {
+            "$ref": "#/definitions/Summary"
+          },
+          "version": {
+            "type": "number",
+            "description": "New version number"
+          },
+          "previousVersion": {
+            "type": "number",
+            "description": "Previous version number"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "UPDATE_FAILED",
+          "message": "Failed to update summary"
+        }
+      ]
+    },
+    "topicAnalysis:extractKeywords": {
+      "description": "Extract keywords from text",
+      "request": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to analyze"
+          },
+          "maxKeywords": {
+            "type": "number",
+            "default": 10,
+            "description": "Maximum keywords to extract"
+          },
+          "existingKeywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Existing keywords for context"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "required": ["keywords"],
+        "properties": {
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": { "type": "string" },
+                "score": { "type": "number" }
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "EXTRACTION_FAILED",
+          "message": "Keyword extraction failed"
+        }
+      ]
+    },
+    "topicAnalysis:mergeSubjects": {
+      "description": "Merge two subjects into one",
+      "request": {
+        "type": "object",
+        "required": ["subjectId1", "subjectId2", "topicId"],
+        "properties": {
+          "subjectId1": { "type": "string" },
+          "subjectId2": { "type": "string" },
+          "topicId": { "type": "string" },
+          "newKeywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Override keywords for merged subject"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "required": ["mergedSubject"],
+        "properties": {
+          "mergedSubject": {
+            "$ref": "#/definitions/Subject"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "SUBJECT_NOT_FOUND",
+          "message": "One or both subjects not found"
+        },
+        {
+          "code": "MERGE_FAILED",
+          "message": "Failed to merge subjects"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "Subject": {
+      "type": "object",
+      "required": ["id", "topic", "keywords", "timestamp"],
+      "properties": {
+        "id": { "type": "string" },
+        "topic": { "type": "string" },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "timestamp": { "type": "number" },
+        "messageCount": { "type": "number" },
+        "lastAnalyzed": { "type": "number" },
+        "created": { "type": "number" },
+        "updated": { "type": "number" }
+      }
+    },
+    "Summary": {
+      "type": "object",
+      "required": ["id", "topic", "version", "content", "subjects"],
+      "properties": {
+        "id": { "type": "string" },
+        "topic": { "type": "string" },
+        "version": { "type": "number" },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "keywords": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "weight": { "type": "number" }
+            }
+          }
+        },
+        "content": { "type": "string" },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "created": { "type": "number" },
+        "updated": { "type": "number" },
+        "previousVersion": { "type": "string" },
+        "changeReason": { "type": "string" }
+      }
+    }
+  }
+}

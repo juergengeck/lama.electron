@@ -49,6 +49,10 @@ Desktop.ini
 # ONE.CORE runtime data
 one-data-node/
 one-data-browser/
+OneDB/
+preferences/
+Preferences/
+.preferences/
 
 # Keep vendor .tgz files in git
 !electron-ui/vendor/*.tgz

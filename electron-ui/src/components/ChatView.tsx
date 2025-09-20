@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MessageView } from './MessageView'
-import { useLamaMessages, useLamaAuth, useLamaPeers } from '@/hooks/useLama'
+import { useLamaMessages } from '@/hooks/useLamaMessages'
+import { useLamaAuth, useLamaPeers } from '@/hooks/useLama'
 import { MessageSquare } from 'lucide-react'
 import { lamaBridge } from '@/bridge/lama-bridge'
 
-export function ChatView({ 
+export function ChatView({
   conversationId = 'default',
   onProcessingChange,
   onMessageUpdate,
   isInitiallyProcessing = false
-}: { 
+}: {
   conversationId?: string
   onProcessingChange?: (isProcessing: boolean) => void
   onMessageUpdate?: (lastMessage: string) => void
@@ -19,26 +20,23 @@ export function ChatView({
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
-  
-  // Store messages locally to prevent loss during re-renders
-  const [localMessages, setLocalMessages] = useState<typeof messages>([])
-  
+
+  // Debug: log messages received from hook
+  console.log('[ChatView] Received from hook - messages:', messages?.length || 0, 'loading:', loading)
+  if (messages && messages.length > 0) {
+    console.log('[ChatView] First message in ChatView:', messages[0])
+  }
+
+  // Separate effect for updating parent
   useEffect(() => {
-    // Always update local messages, even if empty (for initial load)
-    setLocalMessages(messages)
-    console.log('[ChatView] 📊 Updated local messages:', messages.length, 'for conversation:', conversationId)
-    
-    // Update the last message preview when messages change
     if (messages.length > 0 && onMessageUpdate) {
       const lastMessage = messages[messages.length - 1]
       if (lastMessage && lastMessage.content) {
         onMessageUpdate(lastMessage.content)
       }
     }
-  }, [messages, conversationId])
-  
-  console.log('[ChatView] 📊 Rendering with', localMessages.length, 'messages (hook:', messages.length, ') for conversation:', conversationId)
-  console.log('[ChatView] Loading state:', loading)
+  }, [messages, onMessageUpdate]) // Proper dependencies
+
   const { peers } = useLamaPeers()
   const [conversationName, setConversationName] = useState<string>('Messages')
   const [isProcessing, setIsProcessing] = useState(false)
@@ -155,26 +153,22 @@ export function ChatView({
   }, [conversationId, messages, peers])
 
   const handleSendMessage = async (content: string, attachments?: any[]) => {
-    console.log('\n🔴🔴🔴 CRITICAL TRACE: handleSendMessage CALLED 🔴🔴🔴')
-    console.log('[ChatView] handleSendMessage called with:', content, 'attachments:', attachments?.length || 0, 'for conversation:', conversationId)
-    console.trace('Call stack for message send')
     setIsProcessing(true)
     onProcessingChange?.(true)
-    
+
     // Check if this is an AI conversation to show processing indicator
-    const isAIConversation = conversationId === 'default' || 
-                             conversationId === 'ai-chat' || 
+    const isAIConversation = conversationId === 'default' ||
+                             conversationId === 'ai-chat' ||
                              messages.some(m => m.isAI)
-    
+
     if (isAIConversation) {
       setIsAIProcessing(true)
       setAiStreamingContent('')
     }
-    
+
     try {
       await sendMessage(conversationId, content, attachments)
-      console.log('[ChatView] sendMessage completed for conversation:', conversationId)
-      
+
       // Update last message preview with the sent message
       if (onMessageUpdate) {
         onMessageUpdate(content)
@@ -185,6 +179,30 @@ export function ChatView({
       // AI processing indicator will be cleared by streaming events
     }
   }
+
+  // Test function to trigger message update
+  const testMessageUpdate = useCallback(async () => {
+    console.log('[ChatView] TEST: Triggering message update for:', conversationId)
+    if (window.electronAPI) {
+      try {
+        const result = await window.electronAPI.invoke('test:triggerMessageUpdate', { conversationId })
+        console.log('[ChatView] TEST: Trigger result:', result)
+      } catch (error) {
+        console.error('[ChatView] TEST: Failed to trigger:', error)
+      }
+    } else {
+      console.error('[ChatView] TEST: No electronAPI available')
+    }
+  }, [conversationId])
+
+  // Add test function to window for debugging
+  useEffect(() => {
+    (window as any).testMessageUpdate = testMessageUpdate
+    console.log('[ChatView] Test function available: window.testMessageUpdate()')
+    return () => {
+      delete (window as any).testMessageUpdate
+    }
+  }, [testMessageUpdate])
   
   const handleClearConversation = async () => {
     if (confirm('Clear all messages in this conversation? This cannot be undone.')) {
@@ -207,7 +225,7 @@ export function ChatView({
       </CardHeader>
       <CardContent className="flex-1 p-0 min-h-0">
         <MessageView
-          messages={localMessages.length > 0 ? localMessages : messages}
+          messages={messages}
           currentUserId={user?.id}
           onSendMessage={handleSendMessage}
           placeholder="Type a message..."

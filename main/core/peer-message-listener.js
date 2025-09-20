@@ -150,25 +150,44 @@ class PeerMessageListener {
    * Notify the UI about new peer messages
    */
   notifyUI(channelId, newMessages) {
-    if (!this.mainWindow) {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return
     }
-    
-    console.log(`[PeerMessageListener] 📤 Sending new message notification to UI for ${channelId}`)
-    
-    // Send IPC event to renderer
-    this.mainWindow.webContents.send('chat:newMessages', {
-      conversationId: channelId,
-      messages: newMessages.map(msg => ({
-        id: msg.id || msg.channelEntryHash || `msg-${Date.now()}`,
-        conversationId: channelId,
+
+    // Normalize P2P channel IDs to match what the UI expects
+    // The UI normalizes P2P IDs by sorting them alphabetically
+    let normalizedChannelId = channelId
+    if (channelId.includes('<->')) {
+      const parts = channelId.split('<->')
+      normalizedChannelId = parts.sort().join('<->')
+      console.log(`[PeerMessageListener] Normalized P2P channel ID: ${channelId} -> ${normalizedChannelId}`)
+    }
+
+    console.log(`[PeerMessageListener] 📤 Sending new message notification to UI for ${normalizedChannelId}`)
+
+    // Ensure webContents is ready
+    if (!this.mainWindow.webContents || this.mainWindow.webContents.isLoading()) {
+      console.log('[PeerMessageListener] WebContents not ready, queuing notification')
+      setTimeout(() => this.notifyUI(channelId, newMessages), 100)
+      return
+    }
+
+    // Send IPC event to renderer with normalized channel ID
+    const eventData = {
+      conversationId: normalizedChannelId,
+      messages: newMessages.map((msg, index) => ({
+        id: msg.id || msg.channelEntryHash || `msg-${Date.now()}-${index}`,
+        conversationId: normalizedChannelId,
         text: msg.data?.text || '',
         sender: msg.data?.sender || msg.data?.author || msg.author,
         timestamp: msg.creationTime ? new Date(msg.creationTime).toISOString() : new Date().toISOString(),
         status: 'received',
         isAI: false
       }))
-    })
+    }
+
+    console.log(`[PeerMessageListener] 📤📤📤 Sending chat:newMessages event with conversationId: ${eventData.conversationId}`)
+    this.mainWindow.webContents.send('chat:newMessages', eventData)
   }
   
   /**

@@ -52,14 +52,10 @@ export async function getOrCreateTopicForContact(event, contactId) {
     // Return the P2P topic ID directly - no need to create it again
     console.log('[Topics IPC] Topic ready:', p2pTopicId)
 
-    // Create the channel for this topic (if it doesn't exist)
-    try {
-      await channelManager.createChannel(p2pTopicId, myPersonId)
-      console.log('[Topics IPC] Channel created for topic')
-    } catch (channelError) {
-      // Channel might already exist, which is fine
-      console.log('[Topics IPC] Channel might already exist:', channelError.message)
-    }
+    // For P2P conversations, the channel should already be created with null owner
+    // by TopicGroupManager.ensureP2PChannelsForPeer
+    // Don't create another channel with owner here
+    console.log('[Topics IPC] P2P channel should already exist with null owner')
 
     return { 
       success: true, 

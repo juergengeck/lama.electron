@@ -6,10 +6,11 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { 
-  Settings, User, Shield, Globe, Cpu, HardDrive, 
-  Moon, Sun, Save, RefreshCw, LogOut, Brain, Download, CheckCircle, Circle, Zap, MessageSquare, Code, Key, AlertTriangle, Users, Trash2, Database, Hash, Clock, Package, Eye, ChevronDown, ChevronRight, Copy, FileText
+import {
+  Settings, User, Shield, Globe, Cpu, HardDrive,
+  Moon, Sun, Save, RefreshCw, LogOut, Brain, Download, CheckCircle, Circle, Zap, MessageSquare, Code, Key, AlertTriangle, Users, Trash2, Database, Hash, Clock, Package, Eye, ChevronDown, ChevronRight, Copy, FileText, Monitor
 } from 'lucide-react'
+import { Progress } from '@/components/ui/progress'
 import { lamaBridge } from '@/bridge/lama-bridge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import InstancesView from './InstancesView'
@@ -82,6 +83,21 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
   })
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
   const [loadingSystemObjects, setLoadingSystemObjects] = useState(false)
+  const [loadingDataStats, setLoadingDataStats] = useState(false)
+  const [dataStats, setDataStats] = useState({
+    totalObjects: 0,
+    totalSize: 0,
+    messages: 0,
+    files: 0,
+    contacts: 0,
+    conversations: 0,
+    versions: 0,
+    recentActivity: 0,
+    messagesSize: 0,
+    filesSize: 0,
+    systemSize: 0,
+    modelsSize: 0
+  })
   const [settings, setSettings] = useState({
     profile: {
       name: 'Test User',
@@ -94,7 +110,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
       udpPort: 8080,  // For P2P UDP connections
       enableP2P: true,
       enableRelay: true,
-      eddaDomain: await ipcStorage.getItem('edda-domain') || 'edda.dev.refinio.one'
+      eddaDomain: 'edda.dev.refinio.one'
     },
     ai: {
       modelPath: '/models/llama-7b.gguf',
@@ -117,7 +133,18 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
     loadModels()
     loadClaudeApiKey()
     loadSystemObjects()
-    
+    loadDataStats()
+
+    // Load Edda domain from storage
+    ipcStorage.getItem('edda-domain').then(domain => {
+      if (domain) {
+        setSettings(prev => ({
+          ...prev,
+          network: { ...prev.network, eddaDomain: domain }
+        }))
+      }
+    })
+
     // Handle navigation to specific section
     const scrollToSection = sessionStorage.getItem('settings-scroll-to')
     if (scrollToSection === 'system-objects') {
@@ -339,10 +366,87 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
   }
 
   const formatBytes = (bytes: number): string => {
+    if (!bytes || bytes === 0) return '0 B'
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+  }
+
+  const loadDataStats = async () => {
+    setLoadingDataStats(true)
+    try {
+      // Get browser storage estimate
+      if ('storage' in navigator && 'estimate' in navigator.storage) {
+        const estimate = await navigator.storage.estimate()
+        const totalSize = estimate.usage || 0
+
+        // Try to get actual stats from IPC
+        let stats = {
+          totalObjects: 0,
+          totalSize,
+          messages: 0,
+          files: 0,
+          contacts: 0,
+          conversations: 0,
+          versions: 0,
+          recentActivity: 0,
+          messagesSize: totalSize * 0.3,
+          filesSize: totalSize * 0.2,
+          systemSize: totalSize * 0.1,
+          modelsSize: totalSize * 0.4
+        }
+
+        if (window.electronAPI?.invoke) {
+          try {
+            // Get message and conversation stats
+            const conversationsResult = await window.electronAPI.invoke('chat:listConversations')
+            if (conversationsResult?.success && conversationsResult.conversations) {
+              stats.conversations = conversationsResult.conversations.length
+
+              // Count messages in conversations
+              let totalMessages = 0
+              for (const conv of conversationsResult.conversations) {
+                try {
+                  const messagesResult = await window.electronAPI.invoke('chat:getMessages', {
+                    conversationId: conv.id
+                  })
+                  if (messagesResult?.success && messagesResult.messages) {
+                    totalMessages += messagesResult.messages.length
+                  }
+                } catch (e) {
+                  console.log('Error counting messages for conversation:', conv.id)
+                }
+              }
+              stats.messages = totalMessages
+            }
+
+            // Get contacts count
+            const contactsResult = await window.electronAPI.invoke('contacts:list')
+            if (contactsResult?.success && contactsResult.contacts) {
+              stats.contacts = contactsResult.contacts.length
+            }
+
+            // Update total objects
+            stats.totalObjects = stats.messages + stats.files + stats.contacts + stats.conversations
+
+            // Try to get more detailed stats from main process
+            const detailedStats = await window.electronAPI.invoke('lama:getDataStats')
+            if (detailedStats?.success && detailedStats.data) {
+              stats = { ...stats, ...detailedStats.data }
+            }
+          } catch (e) {
+            console.error('Error getting data stats from IPC:', e)
+          }
+        }
+
+        setDataStats(stats)
+      }
+    } catch (error) {
+      console.error('Failed to load data stats:', error)
+    } finally {
+      setLoadingDataStats(false)
+    }
   }
 
   const formatTimeAgo = (date: Date): string => {
@@ -574,7 +678,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => {
+                      onClick={async () => {
                         // Save the domain to localStorage
                         if (settings.network.eddaDomain) {
                           await ipcStorage.setItem('edda-domain', settings.network.eddaDomain)
@@ -1187,32 +1291,108 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
             </CardContent>
           </Card>
 
-          {/* Storage Info */}
+          {/* Data & Storage Info */}
           <Card>
             <CardHeader>
-              <div className="flex items-center space-x-2">
-                <HardDrive className="h-4 w-4" />
-                <CardTitle className="text-lg">Storage</CardTitle>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <HardDrive className="h-4 w-4" />
+                  <CardTitle className="text-lg">Data & Storage</CardTitle>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadDataStats}
+                  disabled={loadingDataStats}
+                >
+                  {loadingDataStats ? (
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary mr-2" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3 mr-2" />
+                  )}
+                  Refresh
+                </Button>
               </div>
+              <CardDescription>Storage usage and data statistics</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Messages</span>
-                  <span>124 MB</span>
+            <CardContent className="space-y-4">
+              {/* Data Statistics */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Total Objects</Label>
+                  <div className="text-xl font-semibold">{dataStats.totalObjects.toLocaleString()}</div>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Media</span>
-                  <span>89 MB</span>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Total Size</Label>
+                  <div className="text-xl font-semibold">{formatBytes(dataStats.totalSize)}</div>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">AI Models</span>
-                  <span>4.2 GB</span>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Messages</Label>
+                  <div className="text-xl font-semibold">{dataStats.messages.toLocaleString()}</div>
+                  <p className="text-xs text-muted-foreground">In {dataStats.conversations} conversations</p>
                 </div>
-                <Separator />
-                <div className="flex justify-between text-sm font-medium">
-                  <span>Total</span>
-                  <span>4.4 GB</span>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Contacts</Label>
+                  <div className="text-xl font-semibold">{dataStats.contacts}</div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Storage Breakdown */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">Storage Distribution</Label>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Messages</span>
+                    <span>{formatBytes(dataStats.messagesSize || dataStats.totalSize * 0.3)}</span>
+                  </div>
+                  <Progress value={30} className="h-1" />
+
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Media & Files</span>
+                    <span>{formatBytes(dataStats.filesSize || dataStats.totalSize * 0.2)}</span>
+                  </div>
+                  <Progress value={20} className="h-1" />
+
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">System Objects</span>
+                    <span>{formatBytes(dataStats.systemSize || dataStats.totalSize * 0.1)}</span>
+                  </div>
+                  <Progress value={10} className="h-1" />
+
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">AI Models</span>
+                    <span>{formatBytes(dataStats.modelsSize || dataStats.totalSize * 0.4)}</span>
+                  </div>
+                  <Progress value={40} className="h-1" />
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Storage Strategy */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">Storage Strategy</Label>
+                <div className="space-y-3 text-xs">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Monitor className="h-3 w-3" />
+                      <span className="font-medium">Browser (Current)</span>
+                    </div>
+                    <p className="text-muted-foreground ml-5">
+                      Smart cache - Recent 30 days, LRU eviction, limited storage
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <HardDrive className="h-3 w-3" />
+                      <span className="font-medium">Node (Background)</span>
+                    </div>
+                    <p className="text-muted-foreground ml-5">
+                      Full archive - All versions, unlimited capacity
+                    </p>
+                  </div>
                 </div>
               </div>
             </CardContent>

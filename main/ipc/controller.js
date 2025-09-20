@@ -73,6 +73,12 @@ class IPCController {
   }
 
   registerHandlers() {
+    // Debug handler for browser logs
+    this.handle('debug:log', async (event, message) => {
+      console.log('[BROWSER DEBUG]', message)
+      return { success: true }
+    })
+
     // Authentication handlers
     this.handle('auth:login', authHandlers.login)
     this.handle('auth:register', authHandlers.register)
@@ -90,7 +96,29 @@ class IPCController {
     this.handle('chat:createConversation', chatHandlers.createConversation)
     this.handle('chat:getConversations', chatHandlers.getConversations)
     this.handle('chat:getCurrentUser', chatHandlers.getCurrentUser)
+    this.handle('chat:addParticipants', chatHandlers.addParticipants)
     this.handle('chat:clearConversation', chatHandlers.clearConversation)
+    this.handle('chat:uiReady', chatHandlers.uiReady)
+
+    // Test handler to manually trigger message updates
+    this.handle('test:triggerMessageUpdate', async (event, { conversationId }) => {
+      console.log('[TEST] Manually triggering message update for:', conversationId)
+      const testData = {
+        conversationId: conversationId || 'test-conversation',
+        messages: [{
+          id: 'test-msg-' + Date.now(),
+          conversationId: conversationId || 'test-conversation',
+          text: 'Test message triggered at ' + new Date().toISOString(),
+          sender: 'test-sender',
+          timestamp: new Date().toISOString(),
+          status: 'received',
+          isAI: false
+        }]
+      }
+      console.log('[TEST] Sending chat:newMessages event with data:', testData)
+      this.sendUpdate('chat:newMessages', testData)
+      return { success: true, data: testData }
+    })
     
     // IOM handlers
     this.handle('iom:getInstances', iomHandlers.getIOMInstances)
@@ -173,9 +201,9 @@ class IPCController {
     
     // Device handlers
     initializeDeviceHandlers()
-    
-    // Contact handlers - needs nodeOneCore instance
-    // Will be registered separately when nodeOneCore is initialized
+
+    // Contact handlers
+    registerContactHandlers(this.handle.bind(this))
     
     // Note: app:clearData is handled in lama-electron-shadcn.js
     

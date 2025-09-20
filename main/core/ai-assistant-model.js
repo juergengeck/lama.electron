@@ -3,7 +3,8 @@
  * This class handles AI personas, LLM objects, and message processing
  */
 
-import { BrowserWindow } from 'electron'
+import electron from 'electron'
+const { BrowserWindow } = electron
 
 export class AIAssistantModel {
   constructor(nodeOneCore) {

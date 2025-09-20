@@ -310,20 +310,13 @@ class ContactAcceptanceManager extends EventEmitter {
       instanceKeys: { publicSignKey: pendingContact.credential.publicKey }
     }
     
-    // Create profile
-    const profile = await ProfileModel.constructWithNewProfile(
-      pendingContact.credential.subject,
-      this.nodeOneCore.ownerId,
-      'accepted-contact',
-      [endpoint],
-      [pendingContact.credential.publicKey]
-    )
-    
+    // DO NOT create profile - let CHUM sync it from the peer!
+
     // Add to contacts via LeuteModel
     if (this.nodeOneCore.leuteModel) {
-      const { SomeoneModel } = await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')
-      
-      // Create Someone object
+      const { default: SomeoneModel } = await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')
+
+      // Create minimal Someone placeholder
       const someone = await SomeoneModel.constructWithNewSomeone({
         $type$: 'Person',
         ...person

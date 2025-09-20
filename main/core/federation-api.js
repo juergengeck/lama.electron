@@ -12,21 +12,13 @@ class FederationAPI {
   }
 
   /**
-   * Create a profile for a person (following refinio.api ProfileHandler pattern)
+   * DEPRECATED: We don't create profiles - let CHUM sync them from peers
+   * @deprecated
    */
   async createProfile(personId, profileData) {
-    const { storeUnversionedObject } = await import('../../node_modules/@refinio/one.core/lib/storage-unversioned-objects.js')
-    
-    const profile = {
-      $type$: 'Profile',
-      personId: personId,
-      ...profileData
-    }
-    
-    const profileHash = await storeUnversionedObject(profile)
-    this.profiles.set(personId, profileHash)
-    
-    return profileHash
+    console.warn('[FederationAPI] createProfile called but we should not create profiles - let CHUM sync them')
+    // Return null - profiles should come from CHUM sync, not be created locally
+    return null
   }
 
   /**
