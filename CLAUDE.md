@@ -25,6 +25,32 @@ This file provides guidance to Claude Code when working with LAMA Electron.
 - UI components in `/electron-ui/src/components/TopicSummary/`
 - All processing happens in Node.js, UI receives via IPC
 
+### Implementation Details
+**Core Files**:
+- `/main/core/one-ai/` - Package root with models, services, and storage
+- `/main/core/one-ai/models/` - Subject.js, Keyword.js, Summary.js
+- `/main/core/one-ai/services/TopicAnalyzer.js` - Main analysis service
+- `/main/core/one-ai/storage/` - Persistence layer for all objects
+- `/main/ipc/handlers/topic-analysis.js` - IPC handler implementations
+
+**UI Components**:
+- `TopicSummary.tsx` - Main summary display with version history
+- `SubjectList.tsx` - List of identified subjects with merge capability
+- `KeywordCloud.tsx` - Visual keyword display
+- `SummaryHistory.tsx` - Version history browser
+
+**Performance Features**:
+- LRU cache for keyword extraction (100 entry limit)
+- Batch message processing with parallelization
+- Async summary pruning (10 versions, 30-day retention)
+- Cache hit rate tracking and optimization
+
+**Auto-Analysis**:
+- Triggers after 5 messages in conversation
+- Identifies subjects by keyword combinations
+- Generates AI summary referencing all subjects
+- Updates summary when subjects change significantly
+
 ## Single ONE.core Architecture
 
 **CRITICAL**: This Electron app runs ONE ONE.core instance in Node.js ONLY:

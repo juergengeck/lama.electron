@@ -15,9 +15,9 @@ const chatHandlers = {
   async uiReady(event) {
     console.log('[ChatHandler] UI signaled ready for messages')
     // Notify the PeerMessageListener that UI is ready
-    const nodeOneCore = require('../../core/node-one-core.js').default
+    const { default: nodeOneCore } = await import('../../core/node-one-core.js')
     if (nodeOneCore.peerMessageListener) {
-      const { BrowserWindow } = require('electron')
+      const { BrowserWindow } = await import('electron')
       const mainWindow = BrowserWindow.getAllWindows()[0]
       if (mainWindow) {
         nodeOneCore.peerMessageListener.setMainWindow(mainWindow)

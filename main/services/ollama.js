@@ -70,52 +70,47 @@ async function testOllamaModel(modelName) {
 }
 
 /**
- * Chat with Ollama
+ * Chat with Ollama using the /api/chat endpoint
  */
 async function chatWithOllama(modelName, messages, options = {}) {
   const requestId = getRequestId()
   const controller = new AbortController()
-  
+
   // Track this request
   activeRequests.set(requestId, controller)
   console.log(`[Ollama] Starting request ${requestId}`)
-  
+
   try {
     console.log(`[Ollama] Chatting with ${modelName}, ${messages.length} messages`)
-    
-    // Convert messages to Ollama format - preserve system message + recent messages
+
+    // Keep conversation structure for better context
     const systemMessages = messages.filter(msg => msg.role === 'system')
     const nonSystemMessages = messages.filter(msg => msg.role !== 'system')
-    const recentNonSystemMessages = nonSystemMessages.slice(-8) // Last 8 user/assistant messages
-    const recentMessages = [...systemMessages, ...recentNonSystemMessages] // Include all system messages
-    
-    console.log(`[Ollama] Total messages: ${messages.length}, System messages: ${systemMessages.length}, Recent messages: ${recentMessages.length}`)
-    console.log(`[Ollama] System message preview:`, systemMessages[0]?.content?.substring(0, 200) + '...')
-    const prompt = recentMessages.map(msg => {
-      if (msg.role === 'system') return `System: ${msg.content}`
-      if (msg.role === 'assistant') return `Assistant: ${msg.content}`
-      return `User: ${msg.content}`
-    }).join('\n') + '\nAssistant:'
-    
-    console.log(`[Ollama] Sending prompt (${prompt.length} chars)`)
-    console.log(`[Ollama] Prompt preview:`, prompt.substring(0, 500) + '...')
-    
+    const recentNonSystemMessages = nonSystemMessages.slice(-10) // Keep more context
+    const formattedMessages = [...systemMessages, ...recentNonSystemMessages]
+
+    console.log(`[Ollama] Total messages: ${messages.length}, System messages: ${systemMessages.length}, Recent messages: ${formattedMessages.length}`)
+    if (systemMessages.length > 0) {
+      console.log(`[Ollama] System message preview:`, systemMessages[0]?.content?.substring(0, 200) + '...')
+    }
+
     const startTime = Date.now()
     console.log(`[Ollama] ⏱️ Starting API call at ${new Date().toISOString()} with streaming`)
-    
-    const response = await fetch('http://localhost:11434/api/generate', {
+
+    // Use the chat endpoint for proper conversation handling
+    const response = await fetch('http://localhost:11434/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,  // Add abort signal
+      signal: controller.signal,
       body: JSON.stringify({
         model: modelName,
-        prompt: prompt,
-        stream: true,  // Enable streaming for faster response
+        messages: formattedMessages,
+        stream: true,  // Enable streaming
         options: {
-          temperature: options.temperature || 0.1,  // Lower temp for more deterministic tool use
-          num_predict: options.max_tokens || 2048,   // Default token limit
-          top_k: 10,                                // Reduce search space
-          top_p: 0.9                                // Focus on likely tokens
+          temperature: options.temperature || 0.7,
+          num_predict: options.max_tokens || 2048,
+          top_k: 40,
+          top_p: 0.95
         }
       })
     })
@@ -128,31 +123,33 @@ async function chatWithOllama(modelName, messages, options = {}) {
     let fullResponse = ''
     let firstChunkTime = null
     let buffer = ''
-    
+
     // For node-fetch v2, we need to handle the stream differently
     response.body.on('data', (chunk) => {
       if (!firstChunkTime) {
         firstChunkTime = Date.now()
         console.log(`[Ollama] ⏱️ First chunk received in ${firstChunkTime - startTime}ms`)
       }
-      
+
       buffer += chunk.toString()
       const lines = buffer.split('\n')
-      
+
       // Keep the last incomplete line in the buffer
       buffer = lines.pop() || ''
-      
+
       for (const line of lines) {
         if (!line.trim()) continue
-        
+
         try {
           const json = JSON.parse(line)
-          if (json.response) {
-            fullResponse += json.response
-            
+          // Chat endpoint uses 'message.content' instead of 'response'
+          if (json.message && json.message.content) {
+            const content = json.message.content
+            fullResponse += content
+
             // Stream to callback if provided
             if (options.onStream) {
-              options.onStream(json.response, false)
+              options.onStream(content, false)
             }
           }
         } catch (e) {
@@ -160,21 +157,22 @@ async function chatWithOllama(modelName, messages, options = {}) {
         }
       }
     })
-    
+
     // Wait for the stream to finish
     await new Promise((resolve, reject) => {
       response.body.on('end', resolve)
       response.body.on('error', reject)
     })
-    
+
     // Process any remaining buffer
     if (buffer.trim()) {
       try {
         const json = JSON.parse(buffer)
-        if (json.response) {
-          fullResponse += json.response
+        if (json.message && json.message.content) {
+          const content = json.message.content
+          fullResponse += content
           if (options.onStream) {
-            options.onStream(json.response, false)
+            options.onStream(content, false)
           }
         }
       } catch (e) {

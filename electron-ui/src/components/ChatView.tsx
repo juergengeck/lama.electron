@@ -4,8 +4,12 @@ import { Button } from '@/components/ui/button'
 import { MessageView } from './MessageView'
 import { useLamaMessages } from '@/hooks/useLamaMessages'
 import { useLamaAuth, useLamaPeers } from '@/hooks/useLama'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare, Sparkles, ChevronRight } from 'lucide-react'
 import { lamaBridge } from '@/bridge/lama-bridge'
+import { TopicSummary, SubjectList } from './TopicSummary'
+import { topicAnalysisService } from '@/services/topic-analysis-service'
+import { KeywordLine } from './Chat/KeywordLine'
+import { useChatKeywords } from '@/hooks/useChatKeywords'
 
 export function ChatView({
   conversationId = 'default',
@@ -20,6 +24,7 @@ export function ChatView({
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
+  const { keywords } = useChatKeywords(conversationId)
 
   // Debug: log messages received from hook
   console.log('[ChatView] Received from hook - messages:', messages?.length || 0, 'loading:', loading)
@@ -42,6 +47,73 @@ export function ChatView({
   const [isProcessing, setIsProcessing] = useState(false)
   const [isAIProcessing, setIsAIProcessing] = useState(isInitiallyProcessing)
   const [aiStreamingContent, setAiStreamingContent] = useState('')
+  const [showSummary, setShowSummary] = useState(false)
+  const [lastAnalysisMessageCount, setLastAnalysisMessageCount] = useState(0)
+  const [keywordMaxLines, setKeywordMaxLines] = useState(1)
+
+  // Load keyword line settings
+  useEffect(() => {
+    const loadSettings = () => {
+      const stored = localStorage.getItem('keyword-line-max-lines')
+      if (stored) {
+        setKeywordMaxLines(parseInt(stored, 10))
+      }
+    }
+
+    const handleSettingsChange = (event: CustomEvent) => {
+      setKeywordMaxLines(event.detail.maxLines)
+    }
+
+    loadSettings()
+    window.addEventListener('keyword-line-settings-changed', handleSettingsChange as EventListener)
+
+    return () => {
+      window.removeEventListener('keyword-line-settings-changed', handleSettingsChange as EventListener)
+    }
+  }, [])
+
+  // Auto-trigger topic analysis after 5 messages
+  useEffect(() => {
+    const triggerAnalysis = async () => {
+      if (topicAnalysisService.shouldAnalyze(messages.length, lastAnalysisMessageCount)) {
+        console.log('[ChatView] 🤖 Triggering AI topic analysis for', conversationId)
+        console.log('[ChatView] 📊 Message count:', messages.length, 'Last analysis at:', lastAnalysisMessageCount)
+
+        const analysisRequest = {
+          topicId: conversationId,
+          messages: messages.map(m => ({
+            id: m.id,
+            text: m.content,
+            sender: m.sender || 'unknown',
+            timestamp: m.timestamp || Date.now()
+          }))
+        }
+
+        console.log('[ChatView] 📤 Sending analysis request with', analysisRequest.messages.length, 'messages')
+
+        const result = await topicAnalysisService.analyzeMessages(analysisRequest)
+
+        if (result.success) {
+          console.log('[ChatView] ✅ Analysis successful:', {
+            subjects: result.data?.subjects?.length || 0,
+            keywords: result.data?.keywords?.length || 0,
+            summaryId: result.data?.summaryId
+          })
+        } else {
+          console.error('[ChatView] ❌ Analysis failed:', result.error)
+        }
+
+        setLastAnalysisMessageCount(messages.length)
+      } else {
+        console.log('[ChatView] ⏸️ Skipping analysis - not needed yet. Messages:', messages.length, 'Threshold: 5')
+      }
+    }
+
+    if (messages.length >= 5) {
+      console.log('[ChatView] 🎯 Message threshold reached, checking if analysis needed...')
+      triggerAnalysis()
+    }
+  }, [messages.length, conversationId, lastAnalysisMessageCount])
 
   // Check if welcome message is still being generated on mount
   useEffect(() => {
@@ -213,28 +285,82 @@ export function ChatView({
   }
 
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader className="border-b">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <MessageSquare className="h-5 w-5 text-primary" />
-            <CardTitle>{conversationName}</CardTitle>
+    <div className="h-full flex">
+      <Card className="flex-1 flex flex-col">
+        <CardHeader className="border-b">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <MessageSquare className="h-5 w-5 text-primary" />
+              <CardTitle>{conversationName}</CardTitle>
+            </div>
+            {messages.length >= 5 && (
+              <Button
+                onClick={() => setShowSummary(!showSummary)}
+                size="sm"
+                variant={showSummary ? "default" : "outline"}
+                className="h-8"
+              >
+                <Sparkles className="w-4 h-4 mr-1" />
+                AI Summary
+                <ChevronRight className={`w-4 h-4 ml-1 transition-transform ${showSummary ? 'rotate-90' : ''}`} />
+              </Button>
+            )}
           </div>
-          {/* Removed trash button - deletion should be in conversation list context menu */}
+        </CardHeader>
+
+        {/* Keyword Line - as specified in 006-current-keywords-for */}
+        {keywords.length > 0 && (
+          <KeywordLine
+            keywords={keywords}
+            maxLines={keywordMaxLines}
+          />
+        )}
+
+        <CardContent className="flex-1 p-0 min-h-0">
+          <MessageView
+            messages={messages}
+            currentUserId={user?.id}
+            onSendMessage={handleSendMessage}
+            placeholder="Type a message..."
+            showSender={true}
+            loading={loading}
+            isAIProcessing={isAIProcessing}
+            aiStreamingContent={aiStreamingContent}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Summary Panel */}
+      {showSummary && (
+        <div className="w-96 h-full flex flex-col gap-4 p-4 border-l bg-gray-50 overflow-y-auto">
+          <TopicSummary
+            topicId={conversationId}
+            messages={messages}
+            onRefresh={() => {
+              topicAnalysisService.analyzeMessages({
+                topicId: conversationId,
+                messages: messages.map(m => ({
+                  id: m.id,
+                  text: m.content,
+                  sender: m.sender || 'unknown',
+                  timestamp: m.timestamp || Date.now()
+                })),
+                forceReanalysis: true
+              })
+            }}
+          />
+          <SubjectList
+            topicId={conversationId}
+            onMergeSubjects={async (id1, id2) => {
+              await topicAnalysisService.mergeSubjects({
+                topicId: conversationId,
+                subjectId1: id1,
+                subjectId2: id2
+              })
+            }}
+          />
         </div>
-      </CardHeader>
-      <CardContent className="flex-1 p-0 min-h-0">
-        <MessageView
-          messages={messages}
-          currentUserId={user?.id}
-          onSendMessage={handleSendMessage}
-          placeholder="Type a message..."
-          showSender={true}
-          loading={loading}
-          isAIProcessing={isAIProcessing}
-          aiStreamingContent={aiStreamingContent}
-        />
-      </CardContent>
-    </Card>
+      )}
+    </div>
   )
 }

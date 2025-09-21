@@ -18,6 +18,10 @@ import ipcLogger from './main/utils/ipc-logger.js';
 // Set app name
 app.setName('LAMA');
 
+// Allow multiple instances - each with proper cleanup
+// Different instances can use different user data directories for testing
+console.log('[Main] Starting new LAMA instance with PID:', process.pid);
+
 // Handle EPIPE errors gracefully (when renderer disconnects unexpectedly)
 process.on('uncaughtException', (error) => {
   if (error.code === 'EPIPE' || (error.message && error.message.includes('EPIPE'))) {
@@ -45,6 +49,35 @@ process.on('uncaughtException', (error) => {
 // Also handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Main] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Track all child processes for this instance
+const childProcesses = new Set();
+
+// Clean up on process exit
+process.on('exit', () => {
+  console.log(`[Main-${process.pid}] Process exiting, cleaning up child processes...`);
+  // Kill any remaining child processes
+  childProcesses.forEach(child => {
+    try {
+      if (child && !child.killed) {
+        child.kill('SIGTERM');
+      }
+    } catch (e) {
+      // Process might already be gone
+    }
+  });
+});
+
+// Handle termination signals
+process.on('SIGTERM', () => {
+  console.log(`[Main-${process.pid}] Received SIGTERM, closing gracefully...`);
+  app.quit();
+});
+
+process.on('SIGINT', () => {
+  console.log(`[Main-${process.pid}] Received SIGINT, closing gracefully...`);
+  app.quit();
 });
 
 let mainWindow;
@@ -196,12 +229,21 @@ function startViteServer() {
       resolve();
     }).on('error', () => {
       // Start Vite server
-      console.log('Starting Vite dev server...');
+      console.log(`[Main-${process.pid}] Starting Vite dev server...`);
       viteProcess = spawn('npm', ['run', 'dev'], {
         cwd: path.join(__dirname, 'electron-ui'),
         shell: true,
         stdio: 'pipe',
         env: { ...process.env }
+      });
+
+      // Track this child process
+      childProcesses.add(viteProcess);
+
+      // Remove from tracking when it exits
+      viteProcess.on('exit', () => {
+        childProcesses.delete(viteProcess);
+        console.log(`[Main-${process.pid}] Vite process exited`);
       });
 
       viteProcess.stdout.on('data', (data) => {
@@ -271,11 +313,23 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  console.log(`[Main-${process.pid}] All windows closed for this instance`);
+
+  // Clean up this instance's Vite process
   if (viteProcess) {
-    viteProcess.kill();
+    console.log(`[Main-${process.pid}] Killing Vite process...`);
+    viteProcess.kill('SIGTERM');
   }
+
+  // On macOS, keep app in dock but clean up resources
+  // On other platforms, quit completely
   if (process.platform !== 'darwin') {
+    console.log(`[Main-${process.pid}] Non-macOS platform, quitting...`);
     app.quit();
+  } else {
+    console.log(`[Main-${process.pid}] macOS: App stays in dock, resources cleaned`);
+    // Clean up any instance-specific resources here
+    mainWindow = null;
   }
 });
 
@@ -285,11 +339,13 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', async () => {
+app.on('before-quit', async (event) => {
   // Skip shutdown if we're clearing data
   if (global.isClearing) {
     return;
   }
+
+  console.log(`[Main-${process.pid}] App instance is quitting, cleaning up...`);
   
   if (viteProcess) {
     viteProcess.kill();

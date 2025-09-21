@@ -11,9 +11,10 @@ export class AIAssistantModel {
     this.nodeOneCore = nodeOneCore
     this.llmManager = null
     this.llmObjectManager = null
+    this.contextEnrichmentService = null
     this.isInitialized = false
     this.topicModelMap = new Map()
-    
+
     // Cache for AI contacts - modelId -> personId
     this.aiContacts = new Map()
   }
@@ -24,13 +25,13 @@ export class AIAssistantModel {
    */
   async init() {
     console.log('[AIAssistantModel] Pre-warming LLM connections...')
-    
+
     try {
       // Get the LLM manager if available
       const { default: llmManager } = await import('../services/llm-manager.js')
       if (llmManager) {
         this.llmManager = llmManager
-        
+
         // Pre-warm Ollama connection by checking if it's available
         if (llmManager.checkOllama) {
           llmManager.checkOllama().then(available => {
@@ -41,7 +42,7 @@ export class AIAssistantModel {
             // Silently fail - Ollama might not be running
           })
         }
-        
+
         // Pre-warm LM Studio connection
         if (llmManager.checkLMStudio) {
           llmManager.checkLMStudio().then(available => {
@@ -56,6 +57,9 @@ export class AIAssistantModel {
     } catch (error) {
       console.log('[AIAssistantModel] Could not pre-warm connections:', error.message)
     }
+
+    // Now initialize the rest of the model
+    await this.initialize(this.llmManager)
   }
 
   /**
@@ -73,10 +77,35 @@ export class AIAssistantModel {
     const LLMObjectManager = (await import('./llm-object-manager.js')).default
     this.llmObjectManager = new LLMObjectManager(this.nodeOneCore)
     console.log('[AIAssistantModel] Created LLMObjectManager')
-    
+
+    // Initialize context enrichment service if topic analysis model is available
+    try {
+      const { ContextEnrichmentService } = await import('./one-ai/services/ContextEnrichmentService.js')
+      const topicAnalysisModel = this.nodeOneCore.topicAnalysisModel
+
+      if (topicAnalysisModel && this.nodeOneCore.channelManager) {
+        this.contextEnrichmentService = new ContextEnrichmentService(
+          this.nodeOneCore.channelManager,
+          topicAnalysisModel
+        )
+        console.log('[AIAssistantModel] ✅ Context enrichment service initialized')
+      }
+    } catch (error) {
+      console.warn('[AIAssistantModel] Context enrichment not available:', error)
+    }
+
     this.isInitialized = true
     console.log('[AIAssistantModel] ✅ Initialized')
-    
+
+    // Always register the default channel with the default AI model
+    const defaultModel = this.getDefaultModel()
+    if (defaultModel) {
+      this.registerAITopic('default', defaultModel.id)
+      console.log(`[AIAssistantModel] Registered default channel with model: ${defaultModel.id}`)
+    } else {
+      console.warn('[AIAssistantModel] No default model available for default channel')
+    }
+
     // Scan existing conversations for AI participants and register them
     await this.scanExistingConversations()
   }
@@ -166,11 +195,11 @@ export class AIAssistantModel {
   }
 
   /**
-   * Process a message for AI response
+   * Process a message for AI response with context enrichment
    */
   async processMessage(topicId, message, senderId) {
     console.log(`[AIAssistantModel] Processing message for topic ${topicId}: "${message}"`)
-    
+
     try {
       // Get the model ID for this topic
       const modelId = this.topicModelMap.get(topicId)
@@ -178,42 +207,85 @@ export class AIAssistantModel {
         console.log('[AIAssistantModel] No AI model registered for this topic')
         return null
       }
-      
+
       // Get the AI person ID for this model
       const aiPersonId = await this.ensureAIContactForModel(modelId)
       if (!aiPersonId) {
         console.error('[AIAssistantModel] Could not get AI person ID')
         return null
       }
-      
+
       // Check if the message is from the AI itself
       if (senderId === aiPersonId || (senderId && aiPersonId && senderId.toString() === aiPersonId.toString())) {
         console.log('[AIAssistantModel] Message is from AI, skipping response')
         return null
       }
-      
+
       // Get the topic room
       const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom(topicId)
-      
+
       // Get conversation history
       const messages = await topicRoom.retrieveAllMessages()
-      
+
+      // Check if we need to restart the conversation due to context window limits
+      const { needsRestart, restartContext } = await this.checkContextWindowAndPrepareRestart(topicId, messages)
+
       // Build message history with proper role detection
       const history = []
-      
-      // Get last 10 messages for context
-      const recentMessages = messages.slice(-10)
-      for (const msg of recentMessages) {
-        const text = msg.data?.text || msg.text
-        const msgSender = msg.data?.sender || msg.author
-        
-        if (text && text.trim()) {
-          // Check if sender is AI using our isAIPerson method
-          const isAI = this.isAIPerson(msgSender)
-          history.push({
-            role: isAI ? 'assistant' : 'user',
-            content: text
-          })
+
+      if (needsRestart && restartContext) {
+        // Use summary-based restart context
+        history.push({
+          role: 'system',
+          content: restartContext
+        })
+        console.log('[AIAssistantModel] Using summary-based restart context')
+
+        // Only include very recent messages (last 3-5) after restart
+        const veryRecentMessages = messages.slice(-3)
+        for (const msg of veryRecentMessages) {
+          const text = msg.data?.text || msg.text
+          const msgSender = msg.data?.sender || msg.author
+
+          if (text && text.trim()) {
+            const isAI = this.isAIPerson(msgSender)
+            history.push({
+              role: isAI ? 'assistant' : 'user',
+              content: text
+            })
+          }
+        }
+      } else {
+        // Normal context enrichment flow
+        if (this.contextEnrichmentService) {
+          try {
+            const contextHints = await this.contextEnrichmentService.buildEnhancedContext(topicId, messages)
+            if (contextHints) {
+              history.push({
+                role: 'system',
+                content: contextHints
+              })
+              console.log(`[AIAssistantModel] Added context hints: ${contextHints.substring(0, 100)}...`)
+            }
+          } catch (error) {
+            console.warn('[AIAssistantModel] Context enrichment failed:', error)
+          }
+        }
+
+        // Get last 10 messages for context
+        const recentMessages = messages.slice(-10)
+        for (const msg of recentMessages) {
+          const text = msg.data?.text || msg.text
+          const msgSender = msg.data?.sender || msg.author
+
+          if (text && text.trim()) {
+            // Check if sender is AI using our isAIPerson method
+            const isAI = this.isAIPerson(msgSender)
+            history.push({
+              role: isAI ? 'assistant' : 'user',
+              content: text
+            })
+          }
         }
       }
       
@@ -557,16 +629,16 @@ export class AIAssistantModel {
    */
   getDefaultModel() {
     console.log('[AIAssistantModel] 🔍 getDefaultModel called')
-    
+
     if (!this.llmManager) {
       console.warn('[AIAssistantModel] ❌ LLMManager not available')
       return null
     }
-    
+
     // Use the user's selected default model
     const selectedModelId = this.llmManager.defaultModelId
     const models = this.llmManager.getAvailableModels()
-    
+
     if (selectedModelId) {
       const selectedModel = models.find(m => m.id === selectedModelId)
       if (selectedModel) {
@@ -574,14 +646,24 @@ export class AIAssistantModel {
         return selectedModel
       }
     }
-    
+
     // Fallback to first available model
     if (models.length > 0) {
       console.log(`[AIAssistantModel] No default set, using first model: ${models[0].id}`)
       return models[0]
     }
-    
+
     throw new Error('No AI models available')
+  }
+
+  /**
+   * Get model by ID
+   */
+  getModelById(modelId) {
+    if (!this.llmManager || !modelId) return null
+
+    const models = this.llmManager.getAvailableModels()
+    return models.find(m => m.id === modelId) || null
   }
 
   /**
@@ -625,6 +707,168 @@ export class AIAssistantModel {
         name: model?.name || modelId
       }
     })
+  }
+
+  /**
+   * Check if context window is filling up and prepare restart context
+   * @param {string} topicId - The topic/conversation ID
+   * @param {Array} messages - All messages in the conversation
+   * @returns {Object} - { needsRestart: boolean, restartContext: string|null }
+   */
+  async checkContextWindowAndPrepareRestart(topicId, messages) {
+    // Get the model's context window size
+    const modelId = this.topicModelMap.get(topicId)
+    const model = this.getModelById(modelId)
+
+    // Get context window from model definition, default to conservative 4k
+    const contextWindow = model?.contextLength || 4096
+
+    // Reserve 25% for response and system prompts
+    const usableContext = Math.floor(contextWindow * 0.75)
+
+    // Estimate token count (rough: 1 token ≈ 4 chars for English)
+    const estimatedTokens = messages.reduce((total, msg) => {
+      const text = msg.data?.text || msg.text || ''
+      return total + Math.ceil(text.length / 4)
+    }, 0)
+
+    // Add estimated system prompt tokens
+    const systemPromptTokens = 200 // Typical system prompt overhead
+    const totalTokens = estimatedTokens + systemPromptTokens
+
+    if (totalTokens < usableContext) {
+      return { needsRestart: false, restartContext: null }
+    }
+
+    console.log(`[AIAssistantModel] Context window filling (${totalTokens}/${contextWindow} tokens for ${model?.name || modelId}), preparing restart`)
+
+    // Generate or retrieve summary for restart
+    const restartContext = await this.generateConversationSummaryForRestart(topicId, messages)
+
+    if (restartContext) {
+      // Store restart point for potential recovery
+      this.lastRestartPoint = {
+        topicId,
+        messageCount: messages.length,
+        timestamp: Date.now(),
+        modelId,
+        contextWindow
+      }
+    }
+
+    return { needsRestart: true, restartContext }
+  }
+
+  /**
+   * Generate a conversation summary suitable for restarting with continuity
+   * @param {string} topicId - The topic ID
+   * @param {Array} messages - Conversation messages
+   * @returns {string} - Summary context for restart
+   */
+  async generateConversationSummaryForRestart(topicId, messages) {
+    try {
+      // First try to use existing Summary objects from TopicAnalysisModel
+      if (this.nodeOneCore.topicAnalysisModel) {
+        // Get the current summary (already stored as ONE.core object)
+        const currentSummary = await this.nodeOneCore.topicAnalysisModel.getCurrentSummary(topicId)
+
+        if (currentSummary && currentSummary.content) {
+          // Get subjects and keywords for additional context
+          const subjects = await this.nodeOneCore.topicAnalysisModel.getSubjects(topicId)
+          const keywords = await this.nodeOneCore.topicAnalysisModel.getKeywords(topicId)
+
+          // Build comprehensive restart context
+          let restartContext = `[Conversation Continuation]\n\n`
+          restartContext += `Previous Summary:\n${currentSummary.content}\n\n`
+
+          if (subjects && subjects.length > 0) {
+            const activeSubjects = subjects.filter(s => !s.archived).slice(0, 5)
+            if (activeSubjects.length > 0) {
+              restartContext += `Active Themes:\n`
+              activeSubjects.forEach(s => {
+                restartContext += `• ${s.keywordCombination}: ${s.description || 'Ongoing discussion'}\n`
+              })
+              restartContext += '\n'
+            }
+          }
+
+          if (keywords && keywords.length > 0) {
+            const topKeywords = keywords
+              .sort((a, b) => (b.frequency || 0) - (a.frequency || 0))
+              .slice(0, 12)
+              .map(k => k.term)
+            restartContext += `Key Concepts: ${topKeywords.join(', ')}\n\n`
+          }
+
+          restartContext += `Maintain continuity with the established context. The conversation has ${messages.length} prior messages.`
+
+          console.log(`[AIAssistantModel] Using existing Summary object (v${currentSummary.version}) for restart`)
+          return restartContext
+        }
+
+        // If no summary exists yet, trigger analysis to create one
+        console.log('[AIAssistantModel] No summary found, triggering topic analysis...')
+        const analysis = await this.nodeOneCore.topicAnalysisModel.analyzeMessages(topicId, messages.slice(-50))
+
+        if (analysis && analysis.summary) {
+          return this.generateConversationSummaryForRestart(topicId, messages) // Recursive call with new summary
+        }
+      }
+
+      // Fallback: Create basic summary from messages
+      const messageSample = messages.slice(-20) // Last 20 messages
+      const topics = new Set()
+      const participants = new Set()
+
+      for (const msg of messageSample) {
+        const text = msg.data?.text || msg.text || ''
+        const sender = msg.data?.sender || msg.author
+
+        // Extract potential topics (simple keyword extraction)
+        const words = text.toLowerCase().split(/\s+/)
+        words.filter(w => w.length > 5).forEach(w => topics.add(w))
+
+        if (sender && !this.isAIPerson(sender)) {
+          participants.add('User')
+        }
+      }
+
+      const topicList = Array.from(topics).slice(0, 8).join(', ')
+      const messageCount = messages.length
+
+      return `Continuing conversation #${topicId.substring(0, 8)}. Previous ${messageCount} messages discussed: ${topicList}. Maintain context and continuity.`
+
+    } catch (error) {
+      console.error('[AIAssistantModel] Failed to generate restart summary:', error)
+      return `Continuing previous conversation. Maintain context and natural flow.`
+    }
+  }
+
+  /**
+   * Manually trigger conversation restart with summary
+   * Can be called when user explicitly wants to continue with fresh context
+   */
+  async restartConversationWithSummary(topicId) {
+    const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom(topicId)
+    const messages = await topicRoom.retrieveAllMessages()
+
+    const summary = await this.generateConversationSummaryForRestart(topicId, messages)
+
+    if (summary) {
+      console.log(`[AIAssistantModel] Conversation restarted with summary for topic ${topicId}`)
+
+      // Store the summary as metadata for the topic
+      this.topicRestartSummaries = this.topicRestartSummaries || new Map()
+      this.topicRestartSummaries.set(topicId, {
+        summary,
+        timestamp: Date.now(),
+        messageCountAtRestart: messages.length
+      })
+
+      return summary
+    }
+
+    return null
   }
 
 }

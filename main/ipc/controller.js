@@ -18,6 +18,8 @@ import oneCoreHandlers from './handlers/one-core.js';
 import { initializeDeviceHandlers } from './handlers/devices.js';
 import { registerContactHandlers } from './handlers/contacts.js';
 import * as topicHandlers from './handlers/topics.js';
+import topicAnalysisHandlers from './handlers/topic-analysis.js';
+import * as wordCloudSettingsHandlers from './handlers/word-cloud-settings.js';
 
 class IPCController {
   constructor() {
@@ -168,6 +170,19 @@ class IPCController {
     this.handle('subjects:getResonance', subjectHandlers['subjects:getResonance'])
     this.handle('subjects:extract', subjectHandlers['subjects:extract'])
     
+    // Topic Analysis handlers
+    this.handle('topicAnalysis:analyzeMessages', topicAnalysisHandlers.analyzeMessages)
+    this.handle('topicAnalysis:getSubjects', topicAnalysisHandlers.getSubjects)
+    this.handle('topicAnalysis:getSummary', topicAnalysisHandlers.getSummary)
+    this.handle('topicAnalysis:updateSummary', topicAnalysisHandlers.updateSummary)
+    this.handle('topicAnalysis:extractKeywords', topicAnalysisHandlers.extractKeywords)
+    this.handle('topicAnalysis:mergeSubjects', topicAnalysisHandlers.mergeSubjects)
+
+    // Word Cloud Settings handlers
+    this.handle('wordCloudSettings:getSettings', wordCloudSettingsHandlers.getWordCloudSettings)
+    this.handle('wordCloudSettings:updateSettings', wordCloudSettingsHandlers.updateWordCloudSettings)
+    this.handle('wordCloudSettings:resetSettings', wordCloudSettingsHandlers.resetWordCloudSettings)
+
     // ONE.core handlers
     this.handle('onecore:initializeNode', oneCoreHandlers.initializeNode)
     this.handle('onecore:createLocalInvite', oneCoreHandlers.createLocalInvite)

@@ -7,6 +7,8 @@
 
 // Import LAMA recipes from LAMA mobile app structure
 import { LLMRecipe } from './LLM.js'
+import { WordCloudSettingsRecipe } from '../core/one-ai/recipes/WordCloudSettingsRecipe.js'
+import TopicAnalysisRecipes from '../core/one-ai/recipes/ai-recipes.js'
 
 const LLMSettingsRecipe = {
     $type$: 'Recipe',
@@ -72,7 +74,9 @@ const GlobalLLMSettingsRecipe = {
 const LamaRecipes = [
     LLMRecipe,
     LLMSettingsRecipe,
-    GlobalLLMSettingsRecipe
+    GlobalLLMSettingsRecipe,
+    WordCloudSettingsRecipe,
+    ...TopicAnalysisRecipes
 ]
 
 export { LamaRecipes }

@@ -572,6 +572,21 @@ class LLMManager extends EventEmitter {
   getDefaultModel() {
     return this.models.get(this.defaultModelId)
   }
+
+  /**
+   * Get available models for external consumers
+   */
+  getAvailableModels() {
+    return Array.from(this.models.values()).map(model => ({
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      description: model.description,
+      contextLength: model.contextLength || 4096,
+      maxTokens: model.parameters?.maxTokens || 2048,
+      capabilities: model.capabilities || []
+    }))
+  }
   
   /**
    * Set the personId for a model (used by AIAssistantModel)
