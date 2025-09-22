@@ -1,0 +1,358 @@
+/**
+ * Styles for MessageHistory component
+ */
+
+.message-history-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.modal-content {
+  position: relative;
+  background: #2a2a2a;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  max-width: 800px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+.modal-header {
+  padding: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #e0e0e0;
+  flex: 1;
+}
+
+.version-count {
+  background: rgba(33, 150, 243, 0.1);
+  color: #2196F3;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.close-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  color: #999;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.comparison-hint {
+  background: rgba(33, 150, 243, 0.1);
+  border: 1px solid rgba(33, 150, 243, 0.3);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  color: #2196F3;
+  font-size: 13px;
+  text-align: center;
+}
+
+.versions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.version-item {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.version-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.version-item.selected {
+  background: rgba(33, 150, 243, 0.05);
+  border-color: #2196F3;
+}
+
+.version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.version-number {
+  font-weight: 600;
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+.version-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.version-badge.original {
+  background: rgba(76, 175, 80, 0.1);
+  color: #4CAF50;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+}
+
+.version-badge.current {
+  background: rgba(33, 150, 243, 0.1);
+  color: #2196F3;
+  border: 1px solid rgba(33, 150, 243, 0.3);
+}
+
+.version-badge.retracted {
+  background: rgba(244, 67, 54, 0.1);
+  color: #f44336;
+  border: 1px solid rgba(244, 67, 54, 0.3);
+}
+
+.version-timestamp {
+  font-size: 12px;
+  color: #999;
+}
+
+.version-content {
+  margin-bottom: 12px;
+  color: #d0d0d0;
+  line-height: 1.6;
+}
+
+.retracted-content {
+  font-style: italic;
+  color: #999;
+}
+
+.message-text {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.edit-reason {
+  background: rgba(255, 193, 7, 0.05);
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #ffc107;
+}
+
+.reason-label {
+  font-weight: 500;
+  color: #ffeb3b;
+}
+
+.version-hash {
+  margin-top: 8px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  color: #666;
+  cursor: pointer;
+}
+
+.version-hash:hover {
+  color: #999;
+}
+
+/* Version comparison */
+.version-comparison {
+  margin-top: 24px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.version-comparison h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.diff-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.diff-removed {
+  background: rgba(244, 67, 54, 0.05);
+  border-left: 3px solid #f44336;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.diff-added {
+  background: rgba(76, 175, 80, 0.05);
+  border-left: 3px solid #4CAF50;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.diff-label {
+  display: inline-block;
+  font-weight: 500;
+  margin-right: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.diff-text {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.footer-info {
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+}
+
+/* Loading and error states */
+.loading,
+.error {
+  padding: 40px;
+  text-align: center;
+  color: #999;
+}
+
+.error {
+  color: #f44336;
+}
+
+/* Light theme */
+.message-history-modal.light .modal-content {
+  background: #ffffff;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+}
+
+.message-history-modal.light .modal-header {
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+.message-history-modal.light h2 {
+  color: #333;
+}
+
+.message-history-modal.light .close-button {
+  background: rgba(0, 0, 0, 0.05);
+  color: #666;
+}
+
+.message-history-modal.light .close-button:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #000;
+}
+
+.message-history-modal.light .version-item {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.05);
+}
+
+.message-history-modal.light .version-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.message-history-modal.light .version-number {
+  color: #333;
+}
+
+.message-history-modal.light .version-content {
+  color: #444;
+}
+
+.message-history-modal.light .version-timestamp {
+  color: #999;
+}
+
+.message-history-modal.light .modal-footer {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .modal-content {
+    max-height: 90vh;
+    margin: 10px;
+  }
+
+  .modal-header {
+    padding: 16px;
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+}

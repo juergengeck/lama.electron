@@ -43,6 +43,7 @@ export interface LamaAPI {
 export interface Message {
   id: string
   senderId: string
+  senderName?: string
   content: string
   timestamp: Date
   encrypted: boolean
@@ -92,6 +93,7 @@ class LamaBridge implements LamaAPI {
       // AI streaming events
       window.electronAPI.on('message:thinking', createIPCHandler('message:thinking'))
       window.electronAPI.on('message:stream', createIPCHandler('message:stream'))
+      window.electronAPI.on('message:updated', createIPCHandler('message:updated'))
 
       // Contact events
       window.electronAPI.on('contact:added', createIPCHandler('contact:added'))
@@ -213,6 +215,7 @@ class LamaBridge implements LamaAPI {
     return result.messages.map((msg: any) => ({
       id: msg.id || `msg-${Date.now()}-${Math.random()}`,
       senderId: msg.sender || msg.author || 'unknown',
+      senderName: msg.senderName,
       content: msg.text || msg.content || '',
       timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
       encrypted: false,

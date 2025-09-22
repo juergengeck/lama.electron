@@ -20,6 +20,7 @@ import { registerContactHandlers } from './handlers/contacts.js';
 import * as topicHandlers from './handlers/topics.js';
 import topicAnalysisHandlers from './handlers/topic-analysis.js';
 import * as wordCloudSettingsHandlers from './handlers/word-cloud-settings.js';
+import auditHandlers from './handlers/audit.js';
 
 class IPCController {
   constructor() {
@@ -101,6 +102,18 @@ class IPCController {
     this.handle('chat:addParticipants', chatHandlers.addParticipants)
     this.handle('chat:clearConversation', chatHandlers.clearConversation)
     this.handle('chat:uiReady', chatHandlers.uiReady)
+    this.handle('chat:editMessage', chatHandlers.editMessage)
+    this.handle('chat:deleteMessage', chatHandlers.deleteMessage)
+    this.handle('chat:getMessageHistory', chatHandlers.getMessageHistory)
+    this.handle('chat:exportMessageCredential', chatHandlers.exportMessageCredential)
+    this.handle('chat:verifyMessageAssertion', chatHandlers.verifyMessageAssertion)
+
+    // Audit handlers
+    this.handle('audit:generateQR', auditHandlers.generateQR)
+    this.handle('audit:createAttestation', auditHandlers.createAttestation)
+    this.handle('audit:getAttestations', auditHandlers.getAttestations)
+    this.handle('audit:exportTopic', auditHandlers.exportTopic)
+    this.handle('audit:verifyAttestation', auditHandlers.verifyAttestation)
 
     // Test handler to manually trigger message updates
     this.handle('test:triggerMessageUpdate', async (event, { conversationId }) => {

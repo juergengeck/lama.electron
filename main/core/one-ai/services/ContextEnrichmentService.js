@@ -4,7 +4,8 @@
  * Following the principle: "context is easily shared based on context"
  */
 
-import { SHA256Hash } from '@refinio/one.core/lib/util/type/SHA256Hash.js';
+// SHA256Hash would be imported from ONE.core, but the path doesn't exist
+// For now we'll work with string hashes directly
 
 export class ContextEnrichmentService {
   constructor(channelManager, topicAnalysisModel) {

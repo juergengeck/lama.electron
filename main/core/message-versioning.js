@@ -1,0 +1,339 @@
+/**
+ * Message Versioning System for ONE.core
+ *
+ * Implements immutable, versioned messages where:
+ * - Edits create new versions linked to the original
+ * - Deletes create retraction markers
+ * - All versions are preserved in the content-addressed storage
+ * - Messages form a version chain through SHA256 references
+ */
+
+// Note: ONE.core storage functions will be imported dynamically when needed
+
+/**
+ * Message version structure
+ * Each message is immutable and links to its previous version
+ */
+export class VersionedMessage {
+  constructor(data) {
+    this.$type$ = 'VersionedMessage';
+    this.id = data.id; // Original message ID (stays same across versions)
+    this.versionId = data.versionId; // Unique ID for this version
+    this.version = data.version || 1;
+    this.previousVersion = data.previousVersion || null; // SHA256 of previous version
+
+    // Message content
+    this.text = data.text;
+    this.format = data.format || 'markdown';
+    this.subjects = data.subjects || [];
+    this.keywords = data.keywords || [];
+    this.attachments = data.attachments || [];
+
+    // Metadata
+    this.author = data.author;
+    this.timestamp = data.timestamp || new Date().toISOString();
+    this.editedAt = data.editedAt || null;
+    this.editReason = data.editReason || null;
+
+    // Status flags
+    this.isRetracted = data.isRetracted || false;
+    this.retractedAt = data.retractedAt || null;
+    this.retractReason = data.retractReason || null;
+
+    // Trust and verification
+    this.signature = data.signature || null;
+    this.trustLevel = data.trustLevel || 0;
+  }
+
+  /**
+   * Create an edited version of this message
+   */
+  createEditedVersion(newText, editReason = null) {
+    return new VersionedMessage({
+      id: this.id, // Keep original ID
+      versionId: generateVersionId(),
+      version: this.version + 1,
+      previousVersion: this.versionId, // Link to current version
+
+      text: newText,
+      format: this.format,
+      subjects: this.subjects,
+      keywords: this.keywords,
+      attachments: this.attachments,
+
+      author: this.author,
+      timestamp: this.timestamp, // Keep original timestamp
+      editedAt: new Date().toISOString(),
+      editReason,
+
+      isRetracted: false, // Edits clear retraction
+      trustLevel: this.trustLevel
+    });
+  }
+
+  /**
+   * Create a retraction marker for this message
+   */
+  createRetraction(reason = null) {
+    return new VersionedMessage({
+      id: this.id,
+      versionId: generateVersionId(),
+      version: this.version + 1,
+      previousVersion: this.versionId,
+
+      text: '[Message retracted]',
+      format: 'plain',
+      subjects: [],
+      keywords: [],
+      attachments: [], // Attachments not included in retraction
+
+      author: this.author,
+      timestamp: this.timestamp,
+
+      isRetracted: true,
+      retractedAt: new Date().toISOString(),
+      retractReason: reason,
+
+      trustLevel: this.trustLevel
+    });
+  }
+}
+
+/**
+ * Message Version Manager
+ * Handles version chains and retrieval
+ */
+export class MessageVersionManager {
+  constructor(channelManager) {
+    this.channelManager = channelManager;
+    this.versionCache = new Map(); // messageId -> version chain
+    this.latestVersions = new Map(); // messageId -> latest version hash
+  }
+
+  /**
+   * Store a new message or version
+   */
+  async storeMessage(message) {
+    // Store in ONE.core using dynamic import
+    const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+    const result = await storeVersionedObject(message);
+    const hash = result.idHash || result;
+
+    // Update version tracking
+    if (!this.versionCache.has(message.id)) {
+      this.versionCache.set(message.id, []);
+    }
+
+    this.versionCache.get(message.id).push({
+      hash,
+      version: message.version,
+      timestamp: message.editedAt || message.timestamp,
+      isRetracted: message.isRetracted
+    });
+
+    // Update latest version
+    this.latestVersions.set(message.id, hash);
+
+    console.log(`[MessageVersioning] Stored message ${message.id} v${message.version}: ${hash.toString().substring(0, 8)}...`);
+
+    return hash;
+  }
+
+  /**
+   * Get the latest version of a message
+   */
+  async getLatestVersion(messageId) {
+    const latestHash = this.latestVersions.get(messageId);
+    if (!latestHash) {
+      return null;
+    }
+
+    try {
+      const { getObject } = await import('@refinio/one.core/lib/storage.js');
+      const message = await getObject(latestHash);
+      return message;
+    } catch (error) {
+      console.error(`[MessageVersioning] Failed to get message ${messageId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get all versions of a message
+   */
+  async getVersionHistory(messageId) {
+    const versionChain = this.versionCache.get(messageId);
+    if (!versionChain) {
+      return [];
+    }
+
+    const { getObject } = await import('@refinio/one.core/lib/storage.js');
+    const versions = [];
+
+    for (const versionInfo of versionChain) {
+      try {
+        const message = await getObject(versionInfo.hash);
+        versions.push({
+          ...message,
+          hash: versionInfo.hash
+        });
+      } catch (error) {
+        console.warn(`[MessageVersioning] Could not retrieve version ${versionInfo.hash}:`, error);
+      }
+    }
+
+    return versions.sort((a, b) => a.version - b.version);
+  }
+
+  /**
+   * Edit a message (creates new version)
+   */
+  async editMessage(messageId, newText, editReason = null) {
+    const currentMessage = await this.getLatestVersion(messageId);
+    if (!currentMessage) {
+      throw new Error(`Message ${messageId} not found`);
+    }
+
+    if (currentMessage.isRetracted) {
+      throw new Error('Cannot edit a retracted message');
+    }
+
+    // Create edited version
+    const editedMessage = currentMessage.createEditedVersion(newText, editReason);
+
+    // Store new version
+    const hash = await this.storeMessage(editedMessage);
+
+    // Notify listeners
+    this.notifyVersionChange(messageId, editedMessage, 'edited');
+
+    return {
+      hash,
+      message: editedMessage
+    };
+  }
+
+  /**
+   * Retract a message (soft delete)
+   */
+  async retractMessage(messageId, reason = null) {
+    const currentMessage = await this.getLatestVersion(messageId);
+    if (!currentMessage) {
+      throw new Error(`Message ${messageId} not found`);
+    }
+
+    if (currentMessage.isRetracted) {
+      console.warn(`Message ${messageId} is already retracted`);
+      return null;
+    }
+
+    // Create retraction marker
+    const retraction = currentMessage.createRetraction(reason);
+
+    // Store retraction
+    const hash = await this.storeMessage(retraction);
+
+    // Notify listeners
+    this.notifyVersionChange(messageId, retraction, 'retracted');
+
+    return {
+      hash,
+      message: retraction
+    };
+  }
+
+  /**
+   * Build version chain from channel data
+   */
+  async buildVersionChain(channelId) {
+    console.log(`[MessageVersioning] Building version chain for channel ${channelId}`);
+
+    // Get all messages from channel
+    const messages = await this.channelManager.getChannelMessages(channelId);
+
+    // Group by message ID
+    const messageGroups = new Map();
+
+    for (const msg of messages) {
+      if (!messageGroups.has(msg.id)) {
+        messageGroups.set(msg.id, []);
+      }
+      messageGroups.get(msg.id).push(msg);
+    }
+
+    // Build chains
+    for (const [messageId, versions] of messageGroups) {
+      // Sort by version number
+      versions.sort((a, b) => a.version - b.version);
+
+      // Cache the chain
+      this.versionCache.set(messageId, versions.map(v => ({
+        hash: v.hash,
+        version: v.version,
+        timestamp: v.editedAt || v.timestamp,
+        isRetracted: v.isRetracted
+      })));
+
+      // Set latest version
+      const latest = versions[versions.length - 1];
+      this.latestVersions.set(messageId, latest.hash);
+    }
+
+    console.log(`[MessageVersioning] Built ${messageGroups.size} message chains`);
+  }
+
+  /**
+   * Notify listeners of version changes
+   */
+  notifyVersionChange(messageId, newVersion, changeType) {
+    // Emit event for UI updates
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new CustomEvent('message-version-change', {
+        detail: {
+          messageId,
+          newVersion,
+          changeType
+        }
+      }));
+    }
+  }
+
+  /**
+   * Get display version of message (handles retraction)
+   */
+  async getDisplayMessage(messageId) {
+    const message = await this.getLatestVersion(messageId);
+
+    if (!message) {
+      return null;
+    }
+
+    if (message.isRetracted) {
+      // Return sanitized retracted message
+      return {
+        ...message,
+        text: `[Message retracted${message.retractReason ? ': ' + message.retractReason : ''}]`,
+        attachments: [],
+        subjects: [],
+        keywords: []
+      };
+    }
+
+    return message;
+  }
+}
+
+/**
+ * Generate unique version ID
+ */
+function generateVersionId() {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * Export for use in chat handlers
+ */
+export default {
+  VersionedMessage,
+  MessageVersionManager
+};

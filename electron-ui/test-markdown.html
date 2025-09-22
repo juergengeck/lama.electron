@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Markdown Rendering</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-markdown@9/dist/react-markdown.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/remark-gfm@4/dist/remark-gfm.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function TestMarkdown() {
+            const [text] = useState(`
+# Test Markdown
+
+Here's a **table**:
+
+| Path | Core Activities | Career Outcomes |
+|------|-----------------|-----------------|
+| Formal School | Structured coursework | Certified pizzaiolo |
+| Apprenticeship | Shadow experienced baker | Head pizzaiolo |
+| Self-Study | Online tutorials | Home baker |
+
+\`\`\`javascript
+const test = "code block";
+console.log(test);
+\`\`\`
+            `);
+
+            return (
+                <div>
+                    <h2>Raw Text:</h2>
+                    <pre>{text}</pre>
+
+                    <h2>Rendered with ReactMarkdown:</h2>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {text}
+                    </ReactMarkdown>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<TestMarkdown />, document.getElementById('root'));
+    </script>
+</body>
+</html>

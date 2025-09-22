@@ -190,21 +190,21 @@ ${conversationText.substring(0, 3000)}`;
     );
 
     // Get the created subjects for return
-    const subjects = await model.getSubjects(topicId);
-    const keywords = await model.getKeywords(topicId);
+    const createdSubjects = await model.getSubjects(topicId);
+    const createdKeywords = await model.getKeywords(topicId);
 
     console.log('[TopicAnalysis] Analysis complete:', {
       topicId,
-      subjectsCreated: subjects.length,
-      keywordsCreated: keywords.length,
+      subjectsCreated: createdSubjects.length,
+      keywordsCreated: createdKeywords.length,
       summaryCreated: !!summary
     });
 
     return {
       success: true,
       data: {
-        subjects: subjects,
-        keywords: keywords.map(k => k.term),
+        subjects: createdSubjects,
+        keywords: createdKeywords.map(k => k.term),
         summary: summary
       }
     };

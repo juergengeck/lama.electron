@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { MessageSquare, Plus, Trash2, Bot, Loader2, MoreVertical, Edit, Check, CheckCheck, UserPlus, Users } from 'lucide-react'
+import { MessageSquare, Plus, Trash2, Bot, Loader2, MoreVertical, Edit, Check, CheckCheck, UserPlus, Users, ChevronLeft, ChevronRight } from 'lucide-react'
 import { ChatView } from './ChatView'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -41,6 +41,37 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   const [conversationToRename, setConversationToRename] = useState<string | null>(null)
   const [showAddUsersDialog, setShowAddUsersDialog] = useState(false)
   const [conversationToAddUsers, setConversationToAddUsers] = useState<string | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(256)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth)
+
+  // Handle responsive behavior on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      const newWidth = window.innerWidth
+      setWindowWidth(newWidth)
+
+      // Auto-collapse sidebar on small screens
+      if (newWidth < 768 && !isCollapsed) {
+        setIsCollapsed(true)
+      }
+
+      // Adjust sidebar width based on window size
+      if (!isCollapsed) {
+        if (newWidth < 1024) {
+          setSidebarWidth(Math.min(200, newWidth * 0.25))
+        } else if (newWidth < 1440) {
+          setSidebarWidth(Math.min(256, newWidth * 0.2))
+        } else {
+          setSidebarWidth(Math.min(320, newWidth * 0.18))
+        }
+      }
+    }
+
+    handleResize() // Initial call
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [isCollapsed])
 
   // Update selected conversation when prop changes
   useEffect(() => {
@@ -357,23 +388,32 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
 
   return (
     <>
-    <div className="flex h-full">
+    <div className="flex h-full overflow-hidden">
       {/* Sidebar with conversation list */}
-      <div className="w-80 border-r border-border bg-card flex flex-col">
+      <div
+        className="border-r border-border bg-card flex flex-col flex-shrink-0 transition-all duration-300"
+        style={{
+          width: isCollapsed ? 48 : sidebarWidth,
+          minWidth: isCollapsed ? '48px' : `${Math.min(150, windowWidth * 0.15)}px`,
+          maxWidth: isCollapsed ? '48px' : `${Math.min(400, windowWidth * 0.3)}px`
+        }}
+      >
         {/* Header */}
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">Conversations</h2>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
+        <div className={`${isCollapsed ? 'p-1' : 'p-4'} border-b border-border`}>
+          <div className={`flex items-center justify-between ${isCollapsed ? '' : 'mb-3'}`}>
+            {!isCollapsed && <h2 className="text-lg font-semibold">Conversations</h2>}
+            <div className={`flex items-center gap-1 ${isCollapsed ? 'mx-auto' : ''}`}>
+              {!isCollapsed && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => setShowNewChatDialog(true)}>
                   <MessageSquare className="mr-2 h-4 w-4" />
@@ -383,79 +423,115 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                   <Users className="mr-2 h-4 w-4" />
                   New Group Chat
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              <Button
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </Button>
+            </div>
           </div>
           
           {/* Search */}
-          <Input
-            placeholder="Search conversations..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8"
-          />
+          {!isCollapsed && (
+            <Input
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-8"
+            />
+          )}
         </div>
 
-        {/* Conversation list */}
-        <ScrollArea className="flex-1">
-          <div className="p-2 space-y-1">
-            {filteredConversations.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Bot className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p className="text-sm">No matches found</p>
-                <p className="text-xs">Try a different search</p>
-              </div>
-            ) : (
-              filteredConversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  onClick={() => {
-                    console.log('[ChatLayout] 🔴 Conversation clicked, selecting:', conv.id)
-                    setSelectedConversation(conv.id)
-                  }}
-                  className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                    selectedConversation === conv.id
-                      ? 'bg-primary/10 border-2 border-primary/20'
-                      : 'hover:bg-muted border-2 border-transparent'
-                  }`}
-                >
-                  {/* Avatar */}
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    {processingConversations.has(conv.id) ? (
-                      <Loader2 className="w-5 h-5 text-primary animate-spin" />
-                    ) : (
-                      <Bot className="w-5 h-5 text-primary" />
-                    )}
-                  </div>
+        <>
+          {/* Conversation list */}
+          <ScrollArea className="flex-1">
+            <div className={isCollapsed ? "space-y-1" : "p-2 space-y-1"}>
+              {filteredConversations.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {isCollapsed ? (
+                    <Bot className="h-6 w-6 mx-auto opacity-50" />
+                  ) : (
+                    <>
+                      <Bot className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p className="text-sm">No matches found</p>
+                      <p className="text-xs">Try a different search</p>
+                    </>
+                  )}
+                </div>
+              ) : (
+                filteredConversations.map((conv) =>
+                  isCollapsed ? (
+                    // Collapsed: minimal avatar only
+                    <div
+                      key={conv.id}
+                      onClick={() => setSelectedConversation(conv.id)}
+                      className={`w-8 h-8 mx-auto rounded-full cursor-pointer transition-all flex items-center justify-center ${
+                        selectedConversation === conv.id
+                          ? 'bg-primary text-primary-foreground ring-1 ring-primary/50'
+                          : 'bg-primary/10 hover:bg-primary/20'
+                      }`}
+                      title={conv.name}
+                    >
+                      {processingConversations.has(conv.id) ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Bot className="w-4 h-4" />
+                      )}
+                    </div>
+                  ) : (
+                    // Expanded: full conversation card
+                    <div
+                      key={conv.id}
+                      onClick={() => setSelectedConversation(conv.id)}
+                      className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                        selectedConversation === conv.id
+                          ? 'bg-primary/10 border-2 border-primary/20'
+                          : 'hover:bg-muted border-2 border-transparent'
+                      }`}
+                    >
+                      {/* Avatar */}
+                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                        {processingConversations.has(conv.id) ? (
+                          <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                        ) : (
+                          <Bot className="w-5 h-5 text-primary" />
+                        )}
+                      </div>
 
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <h3 className="font-medium text-sm truncate">{conv.name}</h3>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            onClick={(e) => e.stopPropagation()}
-                            size="icon"
-                            variant="ghost"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                          >
-                            <MoreVertical className="h-3 w-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openRenameDialog(conv.id)
-                            }}
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Rename
-                          </DropdownMenuItem>
-                          {/* Show Add User option for all chats */}
-                          {/* For P2P chats, this will create a new group chat */}
-                          {(
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <h3 className="font-medium text-sm truncate">{conv.name}</h3>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              onClick={(e) => e.stopPropagation()}
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                            >
+                              <MoreVertical className="h-3 w-3" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openRenameDialog(conv.id)
+                              }}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Rename
+                            </DropdownMenuItem>
+                            {/* Show Add User option for all chats */}
+                            {/* For P2P chats, this will create a new group chat */}
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -465,49 +541,78 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                               <UserPlus className="mr-2 h-4 w-4" />
                               Add User
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                deleteConversation(conv.id)
+                              }}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+
+                      {conv.lastMessage && (
+                        <p className="text-xs text-muted-foreground mb-1 line-clamp-2">
+                          {conv.lastMessage.length > 50
+                            ? conv.lastMessage.substring(0, 50) + '...'
+                            : conv.lastMessage
+                          }
+                        </p>
+                      )}
+
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>{formatTime(conv.lastMessageTime)}</span>
+                        <div className="flex items-center gap-1">
+                          {conv.lastMessage && (
+                            <CheckCheck className="h-3 w-3 text-primary/70" />
                           )}
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              deleteConversation(conv.id)
-                            }}
-                            className="text-destructive"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                    
-                    {conv.lastMessage && (
-                      <p className="text-xs text-muted-foreground mb-1 line-clamp-2">
-                        {conv.lastMessage.length > 50 
-                          ? conv.lastMessage.substring(0, 50) + '...'
-                          : conv.lastMessage
-                        }
-                      </p>
-                    )}
-                    
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{formatTime(conv.lastMessageTime)}</span>
-                      <div className="flex items-center gap-1">
-                        {conv.lastMessage && (
-                          <CheckCheck className="h-3 w-3 text-primary/70" />
-                        )}
-                        <span className="text-primary">{conv.modelName}</span>
+                          <span className="text-primary">{conv.modelName}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </ScrollArea>
+                  )
+                ))
+              }
+            </div>
+          </ScrollArea>
+
+          {/* Resize handle */}
+          {!isCollapsed && (
+            <div
+              className="w-1 cursor-col-resize hover:bg-primary/20 transition-colors"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                const startX = e.clientX
+                const startWidth = sidebarWidth
+
+                const handleMouseMove = (e: MouseEvent) => {
+                  const diff = e.clientX - startX
+                  const minWidth = Math.min(150, windowWidth * 0.15)
+                  const maxWidth = Math.min(400, windowWidth * 0.3)
+                  const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + diff))
+                  setSidebarWidth(newWidth)
+                }
+
+                const handleMouseUp = () => {
+                  document.removeEventListener('mousemove', handleMouseMove)
+                  document.removeEventListener('mouseup', handleMouseUp)
+                }
+
+                document.addEventListener('mousemove', handleMouseMove)
+                document.addEventListener('mouseup', handleMouseUp)
+              }}
+            />
+          )}
+        </>
       </div>
 
       {/* Main chat area */}
-      <div className="flex-1">
+      <div className="flex-1 min-w-0 overflow-hidden">
         {selectedConversation ? (
           <ChatView
             conversationId={selectedConversation}

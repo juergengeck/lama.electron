@@ -6,7 +6,12 @@
  */
 
 import React, { useState, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import './EnhancedMessageBubble.css';
+import './FormattedMessageContent.css';
+import { MessageContextMenu } from './MessageContextMenu';
+import './MessageContextMenu.css';
 
 // Enhanced message data
 export interface EnhancedMessageData {
@@ -17,10 +22,25 @@ export interface EnhancedMessageData {
   timestamp: Date;
   isOwn: boolean;
   topicName?: string; // The topic/channel this message belongs to
-  
-  // Subject hashtags
+
+  // Version information
+  versionId?: string;
+  version?: number;
+  previousVersion?: string | null;
+  editedAt?: Date | null;
+  editReason?: string | null;
+  isRetracted?: boolean;
+  retractedAt?: Date | null;
+  retractReason?: string | null;
+
+  // Format and markup
+  format?: 'plain' | 'markdown' | 'html' | 'onecore';
+  metadata?: any;
+
+  // Subject hashtags and keywords
   subjects: string[];
-  
+  keywords?: string[];
+
   // Attachments with Subject info
   attachments?: Array<{
     id: string;
@@ -32,10 +52,13 @@ export interface EnhancedMessageData {
     subjects: string[];
     trustLevel: number;
   }>;
-  
+
   // Trust information
   trustLevel: number;
   canDownload?: boolean;
+
+  // Assertion certificate
+  assertionCertificate?: string;
 }
 
 export interface EnhancedMessageBubbleProps {
@@ -354,6 +377,16 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
   theme = 'dark',
   attachmentDescriptors
 }) => {
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleCloseContextMenu = () => {
+    setContextMenu(null);
+  };
   
   const [showFullTimestamp, setShowFullTimestamp] = useState(false);
   
@@ -376,8 +409,12 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
   };
   
   return (
-    <div className={`enhanced-message-bubble ${message.isOwn ? 'own' : 'other'} ${theme}`}>
-      <div className="message-header">
+    <>
+      <div
+        className={`enhanced-message-bubble ${message.isOwn ? 'own' : 'other'} ${theme}`}
+        onContextMenu={handleContextMenu}
+      >
+        <div className="message-header">
         <span className="sender-name">{message.senderName}</span>
         {/* Show topic/channel if not General Chat */}
         {message.topicName && message.topicName !== 'General Chat' && (
@@ -385,9 +422,32 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
             #{message.topicName}
           </span>
         )}
-        <TrustLevelIndicator 
-          trustLevel={message.trustLevel} 
-          compact 
+        {/* Show edited indicator */}
+        {message.version && message.version > 1 && !message.isRetracted && (
+          <span className="edited-indicator" style={{ fontSize: '0.75rem', opacity: 0.6, marginLeft: '0.5rem' }}>
+            (edited)
+          </span>
+        )}
+        {/* Show certified indicator */}
+        {message.assertionCertificate && (
+          <span
+            className="certified-indicator"
+            style={{
+              fontSize: '0.75rem',
+              marginLeft: '0.5rem',
+              color: theme === 'dark' ? '#4CAF50' : '#2E7D32',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '2px'
+            }}
+            title={`Certified: ${message.assertionCertificate.substring(0, 8)}...`}
+          >
+            🔐
+          </span>
+        )}
+        <TrustLevelIndicator
+          trustLevel={message.trustLevel}
+          compact
           theme={theme}
         />
       </div>
@@ -395,15 +455,28 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
       <div className="message-content">
         <div className="flex items-end gap-2">
           <div className="flex-1">
-            {message.text && !message.text.includes('📎 Attachments:') && (
-              <MessageTextWithHashtags
-                text={message.text}
-                onHashtagClick={onHashtagClick}
-                theme={theme}
-              />
+            {message.isRetracted ? (
+              <div className="retracted-message" style={{
+                opacity: 0.6,
+                fontStyle: 'italic',
+                color: theme === 'dark' ? '#999' : '#666'
+              }}>
+                [Message retracted{message.retractReason ? `: ${message.retractReason}` : ''}]
+              </div>
+            ) : message.text ? (
+              <div className="formatted-message-content markdown-content" style={{
+                overflowX: 'auto',
+                maxWidth: '100%'
+              }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {message.text}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <div style={{color: 'red'}}>[No message text]</div>
             )}
             
-            {message.attachments && message.attachments.length > 0 && (
+            {!message.isRetracted && message.attachments && message.attachments.length > 0 && (
               <div className="message-attachments">
                 {message.attachments.map((attachment) => (
                   <AttachmentView
@@ -419,7 +492,7 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
               </div>
             )}
             
-            {message.subjects.length > 0 && (!message.attachments || message.attachments.length === 0) && (
+            {!message.isRetracted && message.subjects.length > 0 && (!message.attachments || message.attachments.length === 0) && (
               <div className="message-subjects">
                 {message.subjects.map((subject, index) => (
                   <SubjectHashtagChip
@@ -434,12 +507,12 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
           </div>
           
           {/* Timestamp and checkmarks in bottom right of bubble */}
-          <div className="flex items-end gap-1 text-xs opacity-60 shrink-0">
+          <div className="flex items-end gap-1 text-xs opacity-60 shrink-0 ml-2 mr-1">
             <span className="text-[10px]">
-              {message.timestamp.toLocaleTimeString('en-US', { 
-                hour: 'numeric', 
+              {message.timestamp.toLocaleTimeString('en-US', {
+                hour: 'numeric',
                 minute: '2-digit',
-                hour12: true 
+                hour12: true
               }).toLowerCase()}
             </span>
             {message.isOwn && (
@@ -448,6 +521,17 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
           </div>
         </div>
       </div>
-    </div>
+      </div>
+
+      {contextMenu && (
+        <MessageContextMenu
+          message={message}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={handleCloseContextMenu}
+          onCopy={(text) => console.log('Copied:', text)}
+        />
+      )}
+    </>
   );
 };

@@ -210,32 +210,35 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
       setLoadingModels(prev => {
         const next = new Set(prev)
         next.delete(modelId)
-        
+
         // If this was the last loading model and we should complete, do so after animation
         if (next.size === 0 && shouldComplete) {
           setTimeout(() => {
             handleComplete()
           }, 500) // Give a bit more time for the UI to update
         }
-        
+
         return next
       })
       setModelLoadProgress(prev => {
         const next = new Map(prev)
-          next.delete(modelId)
-          return next
-        })
-      }, 1500) // Increased from 1000ms to give more time for the loading animation
-      
+        next.delete(modelId)
+        return next
+      })
+    }, 1500) // Increased from 1000ms to give more time for the loading animation
+
+    // Check if we have appModel.llmManager to load the model
+    if (appModel?.llmManager) {
       // Log which model is being set
       if (ollamaModel) {
         console.log(`[ModelOnboarding] Setting Ollama ${ollamaModel.displayName} as model`)
       } else if (modelId === 'openai-gpt-oss-20b') {
         console.log('[ModelOnboarding] Setting OpenAI GPT-OSS-20B as primary model')
       } else {
-        console.log(`[ModelOnboarding] Setting ${modelConfig.name} as model`)
+        const modelConfig = models.find(m => m.id === modelId)
+        console.log(`[ModelOnboarding] Setting ${modelConfig?.name || modelId} as model`)
       }
-      
+
       await appModel.llmManager.loadModel(modelId)
     } else if (shouldComplete) {
       // If no llmManager, still complete if requested

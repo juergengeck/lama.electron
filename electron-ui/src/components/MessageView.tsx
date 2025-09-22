@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Send, Loader2, Copy, Edit, Trash2, MoreVertical, Check, CheckCheck } from 'lucide-react'
 import { type Message, lamaBridge } from '@/bridge/lama-bridge'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+// ReactMarkdown is now handled by FormattedMessageContent component
+import { FormattedMessageContent } from './chat/FormattedMessageContent'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +17,7 @@ import './MessageView.css'
 // Import enhanced components
 import { EnhancedMessageInput, type EnhancedAttachment } from './chat/EnhancedMessageInput'
 import { EnhancedMessageBubble, type EnhancedMessageData } from './chat/EnhancedMessageBubble'
+import { ChatContext } from './chat/ChatContext'
 
 // Import attachment system
 import { attachmentService } from '@/services/attachments/AttachmentService'
@@ -34,10 +35,11 @@ interface MessageViewProps {
   useEnhancedUI?: boolean // Toggle for enhanced UI components
   isAIProcessing?: boolean // Show typing indicator when AI is processing
   aiStreamingContent?: string // Show partial AI response while streaming
+  topicId?: string // Topic ID for context panel
 }
 
-export function MessageView({ 
-  messages, 
+export function MessageView({
+  messages,
   currentUserId = 'user-1',
   onSendMessage,
   placeholder = 'Type a message...',
@@ -46,7 +48,8 @@ export function MessageView({
   participants = [],
   useEnhancedUI = true, // Enable enhanced UI for attachments
   isAIProcessing = false,
-  aiStreamingContent = ''
+  aiStreamingContent = '',
+  topicId
 }: MessageViewProps) {
   console.log('[MessageView] 🎨 Rendering with', messages.length, 'messages')
   if (messages.length > 0) {
@@ -254,7 +257,7 @@ export function MessageView({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-1 p-4 overflow-y-auto" ref={scrollAreaRef} style={{ minHeight: 0 }}>
+      <div className="flex-1 px-4 py-2 overflow-y-auto" ref={scrollAreaRef} style={{ minHeight: 0 }}>
         <div className="space-y-4">
           {messages.length === 0 && !loading && !isAIProcessing && !aiStreamingContent && (
             <div className="text-center py-8 text-muted-foreground">
@@ -268,250 +271,104 @@ export function MessageView({
             const isAIMessage = message.isAI === true
             console.log(`[MessageView] Rendering message - senderId: "${message.senderId}", currentUserId: "${currentUserId}", isCurrentUser: ${isCurrentUser}, isAI: ${isAIMessage}, content: "${message.content.substring(0, 50)}..."`)
             
-            // Convert to enhanced message format for enhanced UI
-            if (useEnhancedUI) {
-              // Extract hashtags from message content
-              const hashtagRegex = /#[\w-]+/g
-              const hashtags = message.content.match(hashtagRegex) || []
-              const subjects = hashtags.map(tag => tag.slice(1)) // Remove # prefix
-              
-              // Parse attachment references from message content
-              let messageAttachmentsList: any[] = []
-              let cleanedText = message.content
-              
-              // Check for attachment references in the format [Attachments: hash1, hash2]
-              const attachmentRegex = /\[Attachments: ([^\]]+)\]/
-              const attachmentMatch = message.content.match(attachmentRegex)
-              
-              if (attachmentMatch) {
-                const attachmentHashes = attachmentMatch[1].split(', ')
-                console.log('[MessageView] Found attachment hashes in message:', attachmentHashes)
-                
-                // Clean the text by removing the attachment reference
-                cleanedText = message.content.replace(attachmentRegex, '').trim()
-                
-                // Look up stored attachment descriptors
-                for (const hash of attachmentHashes) {
-                  const descriptor = attachmentDescriptors.get(hash)
-                  if (descriptor) {
-                    messageAttachmentsList.push({
-                      id: hash,
-                      name: descriptor.name,
-                      type: descriptor.type.startsWith('image/') ? 'image' : 
-                            descriptor.type.startsWith('video/') ? 'video' :
-                            descriptor.type.startsWith('audio/') ? 'audio' : 'document',
-                      url: hash, // Use hash as URL identifier
-                      thumbnail: descriptor.type.startsWith('image/') ? hash : undefined,
-                      size: descriptor.size,
-                      subjects: [],
-                      trustLevel: 3
-                    })
-                    console.log('[MessageView] Added attachment to message:', descriptor.name)
-                  }
-                }
-              }
-              
-              const enhancedMessage: EnhancedMessageData = {
-                id: message.id,
-                text: cleanedText, // Use cleaned text without attachment references
-                senderId: message.senderId,
-                senderName: contactNames[message.senderId] || 'Unknown',
-                timestamp: message.timestamp,
-                isOwn: isCurrentUser,
-                subjects: subjects,
-                trustLevel: 3, // Default colleague level
-                attachments: messageAttachmentsList,
-                topicName: message.topicName // Pass topic name to enhanced bubble
-              }
-              
-              return (
+            // Always use EnhancedMessageBubble for consistent rendering and features
+            // Extract hashtags from message content
+            const hashtagRegex = /#[\w-]+/g
+            const hashtags = message.content.match(hashtagRegex) || []
+            const subjects = hashtags.map(tag => tag.slice(1)) // Remove # prefix
+
+            
+
+            const enhancedMessage: EnhancedMessageData = {
+              id: message.id,
+              text: message.content, // Use cleaned text without attachment references
+              senderId: message.senderId,
+              senderName: message.senderName || contactNames[message.senderId] || 'Unknown',
+              timestamp: message.timestamp,
+              isOwn: isCurrentUser,
+              subjects: subjects,
+              trustLevel: 3, // Default colleague level
+              attachments: message.attachments,
+              topicName: message.topicName, // Pass topic name to enhanced bubble
+              format: message.format || 'markdown' // Use message format if available, otherwise markdown
+            }
+
+            console.log(`[MessageView] Passing to EnhancedMessageBubble:`, {
+              id: enhancedMessage.id,
+              hasText: !!enhancedMessage.text,
+              textLength: enhancedMessage.text?.length,
+              format: enhancedMessage.format
+            })
+
+            return (
+              <EnhancedMessageBubble
+                key={message.id}
+                message={enhancedMessage}
+                onHashtagClick={handleHashtagClick}
+                onAttachmentClick={handleAttachmentClick}
+                onDownloadAttachment={handleDownloadAttachment}
+                theme="dark"
+                attachmentDescriptors={attachmentDescriptors}
+              />
+            )
+          })}
+          
+          {/* AI Typing Indicator or Streaming Content */}
+          {(isAIProcessing || aiStreamingContent) && (
+            <>
+              {aiStreamingContent ? (
+                // Use EnhancedMessageBubble for streaming content to ensure consistent markdown rendering
                 <EnhancedMessageBubble
-                  key={message.id}
-                  message={enhancedMessage}
+                  message={{
+                    id: 'streaming-ai-message',
+                    text: aiStreamingContent,
+                    senderId: 'ai',
+                    senderName: 'AI Assistant',
+                    timestamp: new Date(),
+                    isOwn: false,
+                    subjects: [],
+                    trustLevel: 5,
+                    format: 'markdown' // Ensure markdown format for proper rendering
+                  }}
                   onHashtagClick={handleHashtagClick}
                   onAttachmentClick={handleAttachmentClick}
                   onDownloadAttachment={handleDownloadAttachment}
                   theme="dark"
                   attachmentDescriptors={attachmentDescriptors}
                 />
-              )
-            }
-            
-            return (
-              <div
-                key={message.id}
-                className={`flex gap-2 mb-2 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
-              >
-                {!isCurrentUser && (shouldShowSenderLabels || isAIMessage) && (
+              ) : (
+                // Show typing indicator with proper AI message styling
+                <div className="flex gap-2 mb-2 justify-start">
                   <Avatar className="h-8 w-8 shrink-0">
-                    <AvatarFallback className="text-xs">
-                      {(contactNames[message.senderId] || 'Unknown').substring(0, 2).toUpperCase()}
-                    </AvatarFallback>
+                    <AvatarFallback className="text-xs">AI</AvatarFallback>
                   </Avatar>
-                )}
-                <div className="flex flex-col max-w-[70%]">
-                  {/* Show topic/channel name if available and different from default */}
-                  {message.topicName && message.topicName !== 'General Chat' && (
-                    <div className="text-xs text-muted-foreground mb-1 px-2">
-                      #{message.topicName}
-                    </div>
-                  )}
-                  <div
-                    className={`message-bubble relative group ${
-                      isCurrentUser
-                        ? 'message-bubble-user'
-                        : isAIMessage 
-                          ? 'message-bubble-ai'
-                          : 'message-bubble-other'
-                    }`}
-                  >
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1 pr-1">
-                      <ReactMarkdown 
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          // Style tables to inherit from bubble
-                          table: ({ children }) => (
-                            <div className="overflow-x-auto my-2">
-                              <table className="border-collapse w-full">{children}</table>
-                            </div>
-                          ),
-                          th: ({ children }) => (
-                            <th className="border border-gray-300 dark:border-gray-600 px-3 py-2 text-left font-semibold">{children}</th>
-                          ),
-                          td: ({ children }) => (
-                            <td className="border border-gray-300 dark:border-gray-600 px-3 py-2">{children}</td>
-                          ),
-                          // Code blocks - use subtle overlay based on message type
-                          code: ({ inline, children }) => {
-                            const bgClass = isCurrentUser 
-                              ? 'bg-white/20' 
-                              : 'bg-black/5 dark:bg-white/5'
-                            const borderClass = isCurrentUser
-                              ? 'border-white/20'
-                              : 'border-black/10 dark:border-white/10'
-                            
-                            return inline ? (
-                              <code className={`${bgClass} px-1 rounded`}>{children}</code>
-                            ) : (
-                              <code className={`block ${bgClass} p-2 rounded my-2 overflow-x-auto border ${borderClass}`}>{children}</code>
-                            )
-                          },
-                          // Style links
-                          a: ({ children, href }) => (
-                            <a href={href} className="underline hover:opacity-80" target="_blank" rel="noopener noreferrer">{children}</a>
-                          ),
-                          // Style paragraphs - inherit color from bubble
-                          p: ({ children }) => (
-                            <p className="mb-2">{children}</p>
-                          ),
-                          // Style lists
-                          ul: ({ children }) => (
-                            <ul className="list-disc list-inside mb-2">{children}</ul>
-                          ),
-                          ol: ({ children }) => (
-                            <ol className="list-decimal list-inside mb-2">{children}</ol>
-                          )
-                        }}
-                      >
-                        {message.content}
-                      </ReactMarkdown>
+                  <div className="flex flex-col">
+                    <div className="message-bubble message-bubble-ai">
+                      <div className="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
                       </div>
-                      {/* Status indicators and menu for user messages */}
-                      {isCurrentUser && (
-                        <div className="flex items-end gap-1 text-xs text-white/60 pb-0.5 shrink-0">
-                          {/* Send time */}
-                          <span className="text-[10px]">
-                            {message.timestamp.toLocaleTimeString('en-US', { 
-                              hour: 'numeric', 
-                              minute: '2-digit',
-                              hour12: true 
-                            }).toLowerCase()}
-                          </span>
-                          {/* Message status checkmarks */}
-                          <CheckCheck className="h-3 w-3" />
-                          {/* Three dots menu on hover */}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-4 w-4 p-0 hover:bg-transparent opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">
-                                <MoreVertical className="h-3 w-3" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => navigator.clipboard.writeText(message.content)}>
-                                  <Copy className="mr-2 h-4 w-4" />
-                                  Copy
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  <Edit className="mr-2 h-4 w-4" />
-                                  Edit
-                                </DropdownMenuItem>
-                                <DropdownMenuItem disabled>
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      )}
                     </div>
-                    
-                    {/* Render attachments if present */}
-                    {message.attachments && message.attachments.length > 0 && (
-                      <div className="mt-2 space-y-2">
-                        {message.attachments.map((attachment, index) => {
-                          const descriptor = attachmentDescriptors.get(attachment.hash)
-                          return createAttachmentView(
-                            attachment,
-                            descriptor,
-                            {
-                              key: `${message.id}-attachment-${index}`,
-                              mode: 'inline',
-                              onClick: handleAttachmentClick,
-                              onDownload: handleDownloadAttachment,
-                              className: 'mt-2'
-                            }
-                          )
-                        })}
-                      </div>
-                    )}
-                    
                   </div>
                 </div>
-              </div>
-            )
-          })}
-          
-          {/* AI Typing Indicator or Streaming Content */}
-          {(isAIProcessing || aiStreamingContent) && (
-            <div className="flex gap-2 mb-2 justify-start">
-              <Avatar className="h-8 w-8 shrink-0">
-                <AvatarFallback className="text-xs">AI</AvatarFallback>
-              </Avatar>
-              <div className="flex flex-col max-w-[70%]">
-                <div className="message-bubble message-bubble-ai">
-                  {aiStreamingContent ? (
-                    // Show streaming content if available
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {aiStreamingContent}
-                    </ReactMarkdown>
-                  ) : (
-                    // Show typing indicator
-                    <div className="typing-indicator">
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+              )}
+            </>
           )}
           
           <div ref={messagesEndRef} />
         </div>
       </div>
-      
+
+      {/* Context Panel - Shows summary above message input */}
+      {topicId && (
+        <ChatContext
+          topicId={topicId}
+          messages={messages}
+          messageCount={messages.length}
+        />
+      )}
+
       {/* Message input - Use enhanced or classic based on prop */}
       {useEnhancedUI ? (
         <EnhancedMessageInput

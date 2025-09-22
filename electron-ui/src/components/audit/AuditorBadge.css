@@ -1,0 +1,283 @@
+/**
+ * Auditor Badge Component Styles
+ */
+
+/* Main Badge */
+.auditor-badge {
+  display: inline-flex;
+  flex-direction: column;
+  background: var(--background-secondary, white);
+  border: 1px solid var(--border-primary, #e0e0e0);
+  border-radius: 8px;
+  padding: 12px;
+  transition: all 0.2s ease;
+}
+
+.auditor-badge.clickable {
+  cursor: pointer;
+}
+
+.auditor-badge.clickable:hover {
+  background: var(--background-tertiary, #f5f5f5);
+  border-color: var(--border-secondary, #ccc);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Compact Badge */
+.auditor-badge.compact {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+}
+
+/* Badge Main Content */
+.badge-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trust-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.auditor-badge.compact .trust-icon {
+  font-size: 14px;
+}
+
+.badge-info {
+  flex: 1;
+}
+
+.auditor-name {
+  font-weight: 600;
+  color: var(--text-primary, #333);
+  font-size: 14px;
+}
+
+.auditor-badge.compact .auditor-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.trust-label {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  margin-top: 2px;
+}
+
+.attestation-count {
+  color: var(--text-secondary, #666);
+  margin-left: 4px;
+}
+
+.auditor-badge.compact .attestation-count {
+  padding: 1px 6px;
+  background: var(--background-tertiary, #f0f0f0);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Trust Level Colors */
+.auditor-badge.trust-high {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.auditor-badge.trust-high:hover {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.auditor-badge.trust-verified {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.auditor-badge.trust-verified:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.auditor-badge.trust-known {
+  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.auditor-badge.trust-known:hover {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.auditor-badge.trust-new {
+  border-color: var(--border-primary, #e0e0e0);
+  background: var(--background-secondary, white);
+}
+
+.auditor-badge.trust-unknown {
+  border-color: rgba(251, 146, 60, 0.3);
+  background: rgba(251, 146, 60, 0.05);
+}
+
+.auditor-badge.trust-unknown:hover {
+  background: rgba(251, 146, 60, 0.1);
+}
+
+/* Badge Details */
+.badge-details {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-primary, #e0e0e0);
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.detail-label {
+  color: var(--text-secondary, #666);
+  font-weight: 500;
+}
+
+.detail-value {
+  color: var(--text-primary, #333);
+}
+
+.loading {
+  text-align: center;
+  padding: 8px;
+  color: var(--text-secondary, #666);
+  font-size: 12px;
+}
+
+/* Auditor Group */
+.auditor-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.more-auditors,
+.less-auditors {
+  padding: 4px 10px;
+  background: var(--background-tertiary, #f0f0f0);
+  border: 1px solid var(--border-primary, #e0e0e0);
+  border-radius: 20px;
+  color: var(--text-secondary, #666);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.more-auditors:hover,
+.less-auditors:hover {
+  background: var(--background-secondary, white);
+  color: var(--text-primary, #333);
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+  .auditor-badge {
+    background: var(--background-secondary, #222);
+    border-color: var(--border-primary, #333);
+  }
+
+  .auditor-badge.clickable:hover {
+    background: var(--background-tertiary, #2a2a2a);
+  }
+
+  .auditor-name {
+    color: var(--text-primary, #e0e0e0);
+  }
+
+  .trust-label {
+    color: var(--text-secondary, #999);
+  }
+
+  .auditor-badge.compact .attestation-count {
+    background: var(--background-tertiary, #333);
+  }
+
+  .badge-details {
+    border-top-color: var(--border-primary, #333);
+  }
+
+  .detail-label {
+    color: var(--text-secondary, #999);
+  }
+
+  .detail-value {
+    color: var(--text-primary, #e0e0e0);
+  }
+
+  .more-auditors,
+  .less-auditors {
+    background: var(--background-tertiary, #333);
+    border-color: var(--border-primary, #444);
+    color: var(--text-secondary, #999);
+  }
+
+  .more-auditors:hover,
+  .less-auditors:hover {
+    background: var(--background-secondary, #222);
+    color: var(--text-primary, #e0e0e0);
+  }
+
+  /* Trust colors in dark mode */
+  .auditor-badge.trust-high {
+    border-color: rgba(34, 197, 94, 0.4);
+    background: rgba(34, 197, 94, 0.1);
+  }
+
+  .auditor-badge.trust-verified {
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(59, 130, 246, 0.1);
+  }
+
+  .auditor-badge.trust-known {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .auditor-badge.trust-new {
+    background: var(--background-secondary, #222);
+  }
+
+  .auditor-badge.trust-unknown {
+    border-color: rgba(251, 146, 60, 0.4);
+    background: rgba(251, 146, 60, 0.1);
+  }
+}
+
+/* Mobile Responsive */
+@media (max-width: 640px) {
+  .auditor-badge {
+    padding: 10px;
+  }
+
+  .auditor-badge.compact {
+    padding: 3px 8px;
+    font-size: 12px;
+  }
+
+  .trust-icon {
+    font-size: 18px;
+  }
+
+  .auditor-badge.compact .trust-icon {
+    font-size: 12px;
+  }
+
+  .auditor-group {
+    gap: 6px;
+  }
+}

@@ -7,9 +7,17 @@ import instanceManager from '../../core/instance.js';
 import nodeProvisioning from '../../hybrid/node-provisioning.js';
 import nodeOneCore from '../../core/node-one-core.js';
 import { BrowserWindow } from 'electron';
+import { MessageVersionManager } from '../../core/message-versioning.js';
+import { MessageAssertionManager } from '../../core/message-assertion-certificates.js';
 
 // Topic creation mutex to prevent race conditions
 const topicCreationInProgress = new Map()
+
+// Message version manager instance
+let messageVersionManager = null
+
+// Message assertion manager instance
+let messageAssertionManager = null
 
 const chatHandlers = {
   async uiReady(event) {
@@ -110,16 +118,53 @@ const chatHandlers = {
       // Use sendMessage method (as per one.leute reference implementation)
       await topicRoom.sendMessage(text, undefined, channelOwner)
 
-      // Create message object for UI
+      // Create versioned message object - just for UI display
       const message = {
         id: `msg-${Date.now()}`,
+        versionId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        version: 1,
+        previousVersion: null,
         conversationId,
         text,
         attachments,
         sender: userId,
         timestamp: new Date().toISOString(),
-        status: 'sent'
+        status: 'sent',
+        isRetracted: false,
+        editedAt: null
       }
+
+      // Message versioning disabled for now - needs proper versioned object implementation
+      // The actual message is already stored through TopicRoom.sendMessage()
+      /*
+      if (!messageVersionManager && nodeOneCore.channelManager) {
+        messageVersionManager = new MessageVersionManager(nodeOneCore.channelManager)
+      }
+      if (messageVersionManager) {
+        const messageHash = await messageVersionManager.storeMessage(message)
+
+        // Create assertion certificate for the message
+        if (!messageAssertionManager && nodeOneCore.trustedKeysManager && nodeOneCore.leuteModel) {
+          messageAssertionManager = new MessageAssertionManager(
+            nodeOneCore.trustedKeysManager,
+            nodeOneCore.leuteModel
+          )
+        }
+
+        if (messageAssertionManager) {
+          try {
+            const assertion = await messageAssertionManager.createMessageAssertion(message, messageHash)
+            console.log('[ChatHandler] Created assertion certificate:', assertion.certificateHash?.substring(0, 8))
+
+            // Add certificate reference to message for UI
+            message.assertionCertificate = assertion.certificateHash
+          } catch (error) {
+            console.warn('[ChatHandler] Could not create assertion certificate:', error.message)
+            // Continue without certificate - not critical
+          }
+        }
+      }
+      */
 
       // Don't store in stateManager - TopicModel is the source of truth
 
@@ -282,12 +327,15 @@ const chatHandlers = {
         }
         
         if (topicWasJustCreated || !hasRealMessages) {
-          // Check if AI has already been registered for this topic
+          // Only send welcome if we haven't sent one before
+          // Check both: not registered as AI topic AND no messages exist
           const alreadyRegistered = nodeOneCore.aiAssistantModel.isAITopic(conversationId)
-          if (!alreadyRegistered) {
+          const shouldSendWelcome = !alreadyRegistered && !hasRealMessages
+
+          if (shouldSendWelcome) {
             const welcomeStartTime = Date.now()
             console.log(`[ChatHandler] ⏱️ Default chat is empty, triggering AI welcome message at ${new Date().toISOString()}`)
-            
+
             try {
               // Block and wait for welcome message (handleNewTopic will send thinking indicator)
               await nodeOneCore.aiAssistantModel.handleNewTopic(conversationId, topicRoom)
@@ -296,6 +344,8 @@ const chatHandlers = {
               console.error(`[ChatHandler] Failed to generate welcome message after ${Date.now() - welcomeStartTime}ms:`, error)
               // Continue without welcome message rather than failing the whole operation
             }
+          } else {
+            console.log(`[ChatHandler] Skipping welcome: alreadyRegistered=${alreadyRegistered}, hasRealMessages=${hasRealMessages}`)
           }
         } else {
           console.log('[ChatHandler] Default chat already has messages, skipping welcome')
@@ -405,26 +455,84 @@ const chatHandlers = {
       )
       
       // Transform messages to UI format
-      const formattedMessages = validMessages.map(msg => {
+      const formattedMessages = await Promise.all(validMessages.map(async (msg) => {
         const senderId = msg.data?.sender || msg.data?.author || msg.author || nodeOneCore.ownerId
-        
-        // Check if sender is an AI contact
+
+        // Check if sender is an AI contact and get their name
         let isAI = false
-        if (nodeOneCore.aiAssistantModel?.llmObjectManager) {
-          isAI = nodeOneCore.aiAssistantModel.llmObjectManager.isLLMPerson(senderId)
-          console.log(`[ChatHandler] Message from ${senderId?.toString().substring(0, 8)}... - isAI: ${isAI}`)
+        let senderName = 'Unknown'
+
+        console.log(`[ChatHandler] AI model check - aiAssistantModel: ${!!nodeOneCore.aiAssistantModel}`)
+        if (nodeOneCore.aiAssistantModel) {
+          console.log(`[ChatHandler] Checking if ${senderId?.toString().substring(0, 8)}... is AI`)
+          // Use AIAssistantModel as source of truth
+          isAI = nodeOneCore.aiAssistantModel.isAIPerson(senderId)
+          console.log(`[ChatHandler] Result: isAI = ${isAI}`)
+
+          if (isAI) {
+            // Get the LLM object to find the name
+            const llmObjects = nodeOneCore.aiAssistantModel.llmObjectManager.getAllLLMObjects()
+            const llmObject = llmObjects.find(obj => {
+              try {
+                return obj.personId && senderId && obj.personId.toString() === senderId.toString()
+              } catch (e) {
+                return false
+              }
+            })
+
+            if (llmObject) {
+              senderName = llmObject.modelName || llmObject.modelId || 'AI Assistant'
+              console.log(`[ChatHandler] AI message from ${senderName} (${senderId?.toString().substring(0, 8)}...)`)
+            }
+          }
         }
-        
+
+        // For non-AI senders, try to get their name from profiles
+        if (!isAI && nodeOneCore.leuteModel && senderId) {
+          try {
+            // Check if it's the current user
+            const me = await nodeOneCore.leuteModel.me()
+            if (me.personId && senderId && me.personId.toString() === senderId.toString()) {
+              const profile = await me.mainProfile()
+              senderName = profile?.name || 'You'
+            } else {
+              // Try to get other person's profile
+              const others = await nodeOneCore.leuteModel.others()
+              for (const someone of others) {
+                try {
+                  const personId = await someone.mainIdentity()
+                  if (personId && senderId && personId.toString() === senderId.toString()) {
+                    const profile = await someone.mainProfile()
+                    if (profile) {
+                      // Check PersonName objects
+                      const personName = profile.personDescriptions?.find(d => d.$type$ === 'PersonName')
+                      senderName = personName?.name || profile.name || 'User'
+                      break
+                    }
+                  }
+                } catch (e) {
+                  // Continue to next person
+                }
+              }
+            }
+          } catch (error) {
+            console.log('[ChatHandler] Could not get sender name:', error.message)
+          }
+        }
+
         return {
           id: msg.id || msg.channelEntryHash || `msg-${Date.now()}`,
           conversationId,
           text: msg.data?.text || '',
           sender: senderId,
+          senderName: senderName,
           timestamp: msg.creationTime ? new Date(msg.creationTime).toISOString() : new Date().toISOString(),
           status: 'received',
-          isAI: isAI
+          isAI: isAI,
+          isFromAI: isAI,  // Also set isFromAI for compatibility
+          format: 'markdown'  // All messages support markdown
         }
-      })
+      }))
       
       // Apply pagination
       const paginatedMessages = formattedMessages.slice(offset, offset + limit)
@@ -1217,6 +1325,181 @@ const chatHandlers = {
       }
     } catch (error) {
       console.error('[ChatHandler] Error clearing conversation:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  // Edit message - creates a new version
+  async editMessage(event, { messageId, conversationId, newText, editReason }) {
+    console.log('[ChatHandler] Edit message:', { messageId, conversationId })
+
+    try {
+      // Initialize version manager if needed
+      if (!messageVersionManager && nodeOneCore.channelManager) {
+        messageVersionManager = new MessageVersionManager(nodeOneCore.channelManager)
+      }
+
+      if (!messageVersionManager) {
+        throw new Error('Message version manager not available')
+      }
+
+      // Create edited version
+      const result = await messageVersionManager.editMessage(messageId, newText, editReason)
+
+      // Notify UI about the edited message
+      event.sender.send('chat:messageEdited', {
+        conversationId,
+        messageId,
+        newVersion: result.message
+      })
+
+      return {
+        success: true,
+        data: result.message
+      }
+    } catch (error) {
+      console.error('[ChatHandler] Error editing message:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  // Delete message - creates a retraction marker
+  async deleteMessage(event, { messageId, conversationId, reason }) {
+    console.log('[ChatHandler] Delete message:', { messageId, conversationId })
+
+    try {
+      // Initialize version manager if needed
+      if (!messageVersionManager && nodeOneCore.channelManager) {
+        messageVersionManager = new MessageVersionManager(nodeOneCore.channelManager)
+      }
+
+      if (!messageVersionManager) {
+        throw new Error('Message version manager not available')
+      }
+
+      // Create retraction marker
+      const result = await messageVersionManager.retractMessage(messageId, reason)
+
+      if (result) {
+        // Notify UI about the retracted message
+        event.sender.send('chat:messageRetracted', {
+          conversationId,
+          messageId,
+          retraction: result.message
+        })
+      }
+
+      return {
+        success: true,
+        data: result?.message
+      }
+    } catch (error) {
+      console.error('[ChatHandler] Error deleting message:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  // Get message version history
+  async getMessageHistory(event, { messageId }) {
+    console.log('[ChatHandler] Get message history:', messageId)
+
+    try {
+      // Initialize version manager if needed
+      if (!messageVersionManager && nodeOneCore.channelManager) {
+        messageVersionManager = new MessageVersionManager(nodeOneCore.channelManager)
+      }
+
+      if (!messageVersionManager) {
+        throw new Error('Message version manager not available')
+      }
+
+      // Get all versions
+      const versions = await messageVersionManager.getVersionHistory(messageId)
+
+      return {
+        success: true,
+        data: versions
+      }
+    } catch (error) {
+      console.error('[ChatHandler] Error getting message history:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  // Export message as verifiable credential
+  async exportMessageCredential(event, { messageId }) {
+    console.log('[ChatHandler] Export message as verifiable credential:', messageId)
+
+    try {
+      // Initialize assertion manager if needed
+      if (!messageAssertionManager && nodeOneCore.trustedKeysManager && nodeOneCore.leuteModel) {
+        messageAssertionManager = new MessageAssertionManager(
+          nodeOneCore.trustedKeysManager,
+          nodeOneCore.leuteModel
+        )
+      }
+
+      if (!messageAssertionManager) {
+        throw new Error('Message assertion manager not available')
+      }
+
+      // Export as verifiable credential
+      const credential = await messageAssertionManager.exportAsVerifiableCredential(messageId)
+
+      return {
+        success: true,
+        data: credential
+      }
+    } catch (error) {
+      console.error('[ChatHandler] Error exporting credential:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  // Verify message assertion certificate
+  async verifyMessageAssertion(event, { certificateHash, messageHash }) {
+    console.log('[ChatHandler] Verify message assertion:', certificateHash?.substring(0, 8))
+
+    try {
+      // Initialize assertion manager if needed
+      if (!messageAssertionManager && nodeOneCore.trustedKeysManager && nodeOneCore.leuteModel) {
+        messageAssertionManager = new MessageAssertionManager(
+          nodeOneCore.trustedKeysManager,
+          nodeOneCore.leuteModel
+        )
+      }
+
+      if (!messageAssertionManager) {
+        throw new Error('Message assertion manager not available')
+      }
+
+      // Verify the assertion
+      const verification = await messageAssertionManager.verifyMessageAssertion(
+        certificateHash,
+        messageHash
+      )
+
+      return {
+        success: true,
+        data: verification
+      }
+    } catch (error) {
+      console.error('[ChatHandler] Error verifying assertion:', error)
       return {
         success: false,
         error: error.message

@@ -16,7 +16,7 @@ class AIMessageListener {
     this.unsubscribe = null
     this.debounceTimers = new Map()
     this.topicModelMap = new Map() // Track topic->model mappings like LAMA
-    this.DEBOUNCE_MS = 200
+    this.DEBOUNCE_MS = 800 // Increased delay to ensure user message displays first
   }
   
   /**

@@ -108,6 +108,66 @@ export class AIAssistantModel {
 
     // Scan existing conversations for AI participants and register them
     await this.scanExistingConversations()
+
+    // Load existing AI contacts into cache
+    await this.loadExistingAIContacts()
+  }
+
+  /**
+   * Load existing AI contacts from LeuteModel into cache
+   */
+  async loadExistingAIContacts() {
+    console.log('[AIAssistantModel] Loading existing AI contacts...')
+
+    const leuteModel = this.nodeOneCore.leuteModel
+    if (!leuteModel) {
+      console.log('[AIAssistantModel] LeuteModel not available')
+      return
+    }
+
+    try {
+      const others = await leuteModel.others()
+
+      for (const someone of others) {
+        try {
+          const personId = await someone.mainIdentity()
+          const profile = await someone.mainProfile()
+
+          if (profile) {
+            // Check PersonName objects for AI-like names
+            const personName = profile.personDescriptions?.find(d => d.$type$ === 'PersonName')
+            const name = personName?.name || profile.name || ''
+            const lowerName = name.toLowerCase()
+
+            // Check if this looks like an AI contact
+            if (lowerName.includes('gpt') || lowerName.includes('ollama') ||
+                lowerName.includes('claude') || lowerName.includes('ai') ||
+                lowerName.includes('assistant') || lowerName.includes('llama')) {
+
+              console.log(`[AIAssistantModel] Found existing AI contact: ${name}`)
+
+              // Determine the model ID from the name
+              let modelId = 'ai-assistant'
+              if (lowerName.includes('gpt')) modelId = 'gpt-oss'
+              if (lowerName.includes('ollama')) modelId = 'ollama:llama3.2'
+              if (lowerName.includes('claude')) modelId = 'claude:3-sonnet'
+
+              // Cache the AI contact
+              this.aiContacts.set(modelId, personId)
+              if (this.llmObjectManager) {
+                this.llmObjectManager.cacheAIPersonId(modelId, personId)
+              }
+
+              console.log(`[AIAssistantModel] Cached AI contact ${name} as ${modelId}`)
+            }
+          }
+        } catch (err) {
+          // Skip contacts we can't read
+        }
+      }
+    } catch (error) {
+      console.error('[AIAssistantModel] Failed to load existing AI contacts:', error)
+    }
   }
   
   /**
@@ -320,7 +380,7 @@ export class AIAssistantModel {
       const response = await this.llmManager.chat(history, modelId, {
         onStream: (chunk) => {
           fullResponse += chunk
-          
+
           // Send streaming updates to UI
           for (const window of BrowserWindow.getAllWindows()) {
             window.webContents.send('message:stream', {

@@ -19,34 +19,56 @@ class LLMObjectManager {
    */
   async initialize() {
     if (this.initialized) return;
-    
+
     try {
       console.log('[LLMObjectManager] Loading existing LLM objects from storage...');
-      
-      // Query ONE.core for existing LLM objects using the versioned objects API
-      const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
-      // For now, just initialize empty - objects will be loaded on demand
+
+      // Use the channelManager to iterate over LLM objects if available
+      if (!this.nodeOneCore?.channelManager) {
+        console.log('[LLMObjectManager] ChannelManager not available yet, skipping initialization');
+        this.initialized = true;
+        return;
+      }
+
+      // Collect all LLM objects from storage using the channel manager
       const llmObjects = [];
-      
+      try {
+        // Use the default channel to store/retrieve LLM objects
+        const iterator = this.nodeOneCore.channelManager.objectIteratorWithType('LLM', {
+          channelId: 'default'
+        });
+
+        for await (const llmObj of iterator) {
+          if (llmObj && llmObj.data) {
+            llmObjects.push(llmObj.data);
+          }
+        }
+      } catch (iterError) {
+        console.log('[LLMObjectManager] No LLM objects found in storage:', iterError.message);
+      }
+
       if (llmObjects && llmObjects.length > 0) {
         console.log(`[LLMObjectManager] Found ${llmObjects.length} existing LLM objects`);
-        
+
         // Cache all existing LLM objects
         for (const llm of llmObjects) {
           if (llm.personId && llm.name) {
-            this.llmObjects.set(llm.name, {
-              modelId: llm.name,
+            // Map the name to a proper model ID
+            const modelId = llm.modelType === 'local' ? `ollama:${llm.name}` : llm.name;
+            this.llmObjects.set(modelId, {
+              modelId: modelId,
               modelName: llm.name,
               personId: llm.personId,
               isAI: true
             });
-            console.log(`[LLMObjectManager] Cached LLM: ${llm.name} with person ${llm.personId.toString().substring(0, 8)}...`);
+            const personIdStr = llm.personId ? llm.personId.toString().substring(0, 8) : 'unknown';
+            console.log(`[LLMObjectManager] Cached LLM: ${modelId} with person ${personIdStr}...`);
           }
         }
       } else {
         console.log('[LLMObjectManager] No existing LLM objects found');
       }
-      
+
       this.initialized = true;
       console.log(`[LLMObjectManager] ✅ Initialized with ${this.llmObjects.size} LLM objects`);
     } catch (error) {
@@ -180,16 +202,20 @@ class LLMObjectManager {
   isLLMPerson(personId) {
     if (!personId) return false;
     const personIdStr = personId.toString();
-    
+
     console.log(`[LLMObjectManager] Checking if ${personIdStr.substring(0, 8)}... is LLM, cache has ${this.llmObjects.size} entries`)
-    
+
     const isLLM = Array.from(this.llmObjects.values()).some(
       llm => llm.personId && llm.personId.toString() === personIdStr
     );
-    
-    console.log(`[LLMObjectManager] Result: ${personIdStr.substring(0, 8)}... is AI: ${isLLM}`)
-    
-    return isLLM;
+
+    if (isLLM) {
+      console.log(`[LLMObjectManager] Result: ${personIdStr.substring(0, 8)}... is AI: true (cached)`)
+      return true;
+    }
+
+    console.log(`[LLMObjectManager] Result: ${personIdStr.substring(0, 8)}... is AI: false`)
+    return false;
   }
   
   /**

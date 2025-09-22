@@ -260,7 +260,7 @@ function App() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-hidden p-6">
+      <div className="flex-1 overflow-hidden">
         {renderContent()}
       </div>
 

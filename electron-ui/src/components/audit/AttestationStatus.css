@@ -1,0 +1,223 @@
+/**
+ * Attestation Status Component Styles
+ */
+
+.attestation-status {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Status Indicator */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+.status-indicator:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+
+.status-icon {
+  font-size: 14px;
+}
+
+.status-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Status Classes */
+.status-none .status-indicator {
+  background: var(--background-tertiary, #f0f0f0);
+  color: var(--text-secondary, #666);
+}
+
+.status-partial .status-indicator {
+  background: rgba(255, 193, 7, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.status-full .status-indicator {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.status-pending .status-indicator {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  animation: pulse 2s infinite;
+}
+
+/* Attestation Details */
+.attestation-details {
+  background: var(--background-secondary, white);
+  border: 1px solid var(--border-primary, #e0e0e0);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.auditor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auditor-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--background-primary, #fafafa);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.trust-indicator {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+}
+
+.auditor-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-primary, #333);
+}
+
+.attestation-time {
+  color: var(--text-secondary, #666);
+  font-size: 12px;
+}
+
+/* Warnings and Sync */
+.signature-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(251, 146, 60, 0.1);
+  border: 1px solid rgba(251, 146, 60, 0.3);
+  border-radius: 6px;
+  color: #ea580c;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.missing-count {
+  color: var(--text-secondary, #666);
+  font-size: 12px;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 6px;
+  color: #3b82f6;
+  font-size: 13px;
+  margin-top: 8px;
+  animation: pulse 2s infinite;
+}
+
+/* Error State */
+.status-error {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  color: #dc2626;
+  font-size: 14px;
+}
+
+/* Attestation Badge (Compact) */
+.attestation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.attestation-badge:hover {
+  transform: scale(1.05);
+}
+
+.badge-partial {
+  background: rgba(255, 193, 7, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.badge-full {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+/* Animations */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+  .attestation-details {
+    background: var(--background-secondary, #1a1a1a);
+    border-color: var(--border-primary, #333);
+  }
+
+  .auditor-item {
+    background: var(--background-primary, #222);
+  }
+
+  .status-none .status-indicator {
+    background: var(--background-tertiary, #2a2a2a);
+  }
+
+  .auditor-name {
+    color: var(--text-primary, #e0e0e0);
+  }
+
+  .attestation-time {
+    color: var(--text-secondary, #999);
+  }
+}
+
+/* Mobile Responsive */
+@media (max-width: 640px) {
+  .attestation-details {
+    padding: 10px;
+  }
+
+  .auditor-item {
+    flex-wrap: wrap;
+  }
+
+  .attestation-time {
+    width: 100%;
+    margin-left: 28px;
+  }
+}
