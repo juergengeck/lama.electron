@@ -66,4 +66,3 @@ one.models/
 packages/
 refinio.api/
 refinio.cli/
-vendor/
