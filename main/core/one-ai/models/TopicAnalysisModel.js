@@ -5,17 +5,20 @@
 
 import { Model } from '@refinio/one.models/lib/models/Model.js';
 import { OEvent } from '@refinio/one.models/lib/misc/OEvent.js';
+import TopicAnalysisRoom from './TopicAnalysisRoom.js';
 
 export default class TopicAnalysisModel extends Model {
     channelManager;
+    topicModel;
     disconnect;
 
     // Override base class event
     onUpdated = new OEvent();
 
-    constructor(channelManager) {
+    constructor(channelManager, topicModel) {
         super();
         this.channelManager = channelManager;
+        this.topicModel = topicModel;
     }
 
     async init() {
@@ -89,6 +92,49 @@ export default class TopicAnalysisModel extends Model {
     }
 
     /**
+     * Add or update a keyword for a topic
+     */
+    async addKeyword(topicId, term) {
+        this.state.assertCurrentState('Initialised');
+
+        // Check if keyword already exists
+        const room = new TopicAnalysisRoom(topicId, this.channelManager);
+        const existingKeywords = await room.retrieveAllKeywords();
+        const existing = existingKeywords.find(k => k.term === term.toLowerCase().trim());
+
+        if (existing) {
+            // Update frequency
+            existing.frequency = (existing.frequency || 0) + 1;
+            existing.lastSeen = new Date().toISOString();
+            await this.channelManager.postToChannel(topicId, existing);
+            return existing;
+        }
+
+        // Create new keyword
+        return await this.createKeyword(topicId, term, 'general', 1, 1.0);
+    }
+
+    /**
+     * Unarchive a subject
+     */
+    async unarchiveSubject(topicId, subjectId) {
+        this.state.assertCurrentState('Initialised');
+
+        const room = new TopicAnalysisRoom(topicId, this.channelManager);
+        const subjects = await room.retrieveAllSubjects();
+        const subject = subjects.find(s => s.id === subjectId);
+
+        if (subject) {
+            subject.archived = false;
+            subject.lastSeen = new Date().toISOString();
+            await this.channelManager.postToChannel(topicId, subject);
+            return subject;
+        }
+
+        return null;
+    }
+
+    /**
      * Create a Summary object
      */
     async createSummary(topicId, version, content, subjects, changeReason, previousVersion) {
@@ -119,13 +165,16 @@ export default class TopicAnalysisModel extends Model {
      */
     async getSubjects(topicId, queryOptions = {}) {
         this.state.assertCurrentState('Initialised');
-        // Get subjects from the conversation's channel
-        const subjects = await this.channelManager.getObjectsWithType('Subject', {
-            ...queryOptions,
-            channelId: topicId
+
+        // Use TopicAnalysisRoom to retrieve subjects
+        const analysisRoom = new TopicAnalysisRoom(topicId, this.channelManager);
+        const subjects = await analysisRoom.retrieveAllSubjects();
+
+        console.log('[TopicAnalysisModel] Retrieved subjects:', {
+            topicId,
+            subjectCount: subjects.length
         });
 
-        // All subjects in this channel belong to this topic
         return subjects;
     }
 
@@ -134,11 +183,17 @@ export default class TopicAnalysisModel extends Model {
      */
     async getKeywords(topicId, queryOptions = {}) {
         this.state.assertCurrentState('Initialised');
-        // Get keywords from the conversation's channel
-        return await this.channelManager.getObjectsWithType('Keyword', {
-            ...queryOptions,
-            channelId: topicId
+
+        // Use TopicAnalysisRoom to retrieve keywords
+        const analysisRoom = new TopicAnalysisRoom(topicId, this.channelManager);
+        const keywords = await analysisRoom.retrieveAllKeywords();
+
+        console.log('[TopicAnalysisModel] Retrieved keywords:', {
+            topicId,
+            keywordCount: keywords.length
         });
+
+        return keywords;
     }
 
     /**
@@ -146,13 +201,17 @@ export default class TopicAnalysisModel extends Model {
      */
     async getSummaries(topicId, queryOptions = {}) {
         this.state.assertCurrentState('Initialised');
-        // Get summaries from the conversation's channel
-        const summaries = await this.channelManager.getObjectsWithType('Summary', {
-            ...queryOptions,
-            channelId: topicId
+
+        // Use TopicAnalysisRoom to retrieve summaries
+        const analysisRoom = new TopicAnalysisRoom(topicId, this.channelManager);
+        const summaries = await analysisRoom.retrieveAllSummaries();
+
+        console.log('[TopicAnalysisModel] Retrieved summaries:', {
+            topicId,
+            summaryCount: summaries.length,
+            latestVersion: summaries.length > 0 ? summaries[0].version : null
         });
 
-        // All summaries in this channel belong to this topic
         return summaries;
     }
 
@@ -161,15 +220,19 @@ export default class TopicAnalysisModel extends Model {
      */
     async getCurrentSummary(topicId) {
         this.state.assertCurrentState('Initialised');
-        const summaries = await this.getSummaries(topicId);
 
-        if (summaries.length === 0) {
-            return null;
-        }
+        // Use TopicAnalysisRoom to retrieve the latest summary directly
+        const analysisRoom = new TopicAnalysisRoom(topicId, this.channelManager);
+        const summary = await analysisRoom.retrieveLatestSummary();
 
-        return summaries.reduce((latest, current) =>
-            current.version > latest.version ? current : latest
-        );
+        console.log('[TopicAnalysisModel] Retrieved current summary:', {
+            topicId,
+            found: !!summary,
+            version: summary?.version,
+            contentLength: summary?.content?.length
+        });
+
+        return summary;
     }
 
     /**
@@ -177,10 +240,11 @@ export default class TopicAnalysisModel extends Model {
      */
     async *subjectsIterator(topicId, queryOptions = {}) {
         this.state.assertCurrentState('Initialised');
-        yield* this.channelManager.objectIteratorWithType('Subject', {
-            ...queryOptions,
-            channelId: topicId
-        });
+
+        const subjects = await this.getSubjects(topicId, queryOptions);
+        for (const subject of subjects) {
+            yield subject;
+        }
     }
 
     /**
@@ -188,10 +252,11 @@ export default class TopicAnalysisModel extends Model {
      */
     async *keywordsIterator(topicId, queryOptions = {}) {
         this.state.assertCurrentState('Initialised');
-        yield* this.channelManager.objectIteratorWithType('Keyword', {
-            ...queryOptions,
-            channelId: topicId
-        });
+
+        const keywords = await this.getKeywords(topicId, queryOptions);
+        for (const keyword of keywords) {
+            yield keyword;
+        }
     }
 
     /**

@@ -17,7 +17,6 @@ import './MessageView.css'
 // Import enhanced components
 import { EnhancedMessageInput, type EnhancedAttachment } from './chat/EnhancedMessageInput'
 import { EnhancedMessageBubble, type EnhancedMessageData } from './chat/EnhancedMessageBubble'
-import { ChatContext } from './chat/ChatContext'
 
 // Import attachment system
 import { attachmentService } from '@/services/attachments/AttachmentService'
@@ -165,15 +164,18 @@ export function MessageView({
         
         for (const attachment of attachments) {
           try {
+            // Convert File to ArrayBuffer first
+            const arrayBuffer = await attachment.file.arrayBuffer()
+
             // Store attachment in ONE platform
-            const hash = await attachmentService.storeAttachment(attachment.file, {
-              generateThumbnail: attachment.type === 'image' || attachment.type === 'video',
-              extractSubjects: true,
-              trustLevel: attachment.trustLevel,
-              onProgress: (progress) => {
-                console.log(`[MessageView] Upload progress for ${attachment.file.name}: ${progress}%`)
-              }
+            const result = await attachmentService.storeAttachment(arrayBuffer, {
+              name: attachment.file.name,
+              mimeType: attachment.file.type || 'application/octet-stream',
+              size: attachment.file.size
             })
+
+            // Extract hash from result
+            const hash = result.hash || result.id || result
             
             // Create message attachment reference
             const messageAttachment: MessageAttachment = {
@@ -360,14 +362,6 @@ export function MessageView({
         </div>
       </div>
 
-      {/* Context Panel - Shows summary above message input */}
-      {topicId && (
-        <ChatContext
-          topicId={topicId}
-          messages={messages}
-          messageCount={messages.length}
-        />
-      )}
 
       {/* Message input - Use enhanced or classic based on prop */}
       {useEnhancedUI ? (

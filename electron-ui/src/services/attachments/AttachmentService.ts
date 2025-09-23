@@ -20,11 +20,17 @@ class AttachmentService {
     let base64Data: string
     if (typeof data === 'string') {
       base64Data = data
-    } else if (data instanceof ArrayBuffer) {
-      const bytes = new Uint8Array(data)
-      base64Data = btoa(String.fromCharCode(...bytes))
     } else {
-      base64Data = btoa(String.fromCharCode(...data))
+      // Convert ArrayBuffer or Uint8Array to base64
+      // Use a more efficient method for large buffers
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data
+      let binary = ''
+      const chunkSize = 32768 // Process in chunks to avoid stack overflow
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+        binary += String.fromCharCode.apply(null, Array.from(chunk))
+      }
+      base64Data = btoa(binary)
     }
     
     const result = await window.electronAPI.invoke('attachment:store', {
@@ -105,11 +111,16 @@ class AttachmentService {
       let base64Data: string
       if (typeof att.data === 'string') {
         base64Data = att.data
-      } else if (att.data instanceof ArrayBuffer) {
-        const bytes = new Uint8Array(att.data)
-        base64Data = btoa(String.fromCharCode(...bytes))
       } else {
-        base64Data = btoa(String.fromCharCode(...att.data))
+        // Convert ArrayBuffer or Uint8Array to base64
+        const bytes = att.data instanceof ArrayBuffer ? new Uint8Array(att.data) : att.data
+        let binary = ''
+        const chunkSize = 32768 // Process in chunks to avoid stack overflow
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+          binary += String.fromCharCode.apply(null, Array.from(chunk))
+        }
+        base64Data = btoa(binary)
       }
       
       return {
@@ -166,7 +177,16 @@ class AttachmentService {
   async getDataUrl(hash: string): Promise<string> {
     const { data, metadata } = await this.getAttachment(hash)
     const bytes = new Uint8Array(data)
-    const base64 = btoa(String.fromCharCode(...bytes))
+
+    // Convert to base64 in chunks to avoid stack overflow
+    let binary = ''
+    const chunkSize = 32768
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+      binary += String.fromCharCode.apply(null, Array.from(chunk))
+    }
+    const base64 = btoa(binary)
+
     return `data:${metadata.mimeType};base64,${base64}`
   }
 }

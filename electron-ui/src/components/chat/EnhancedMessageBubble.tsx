@@ -381,6 +381,7 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
+    console.log('[EnhancedMessageBubble] Context menu triggered at:', e.clientX, e.clientY);
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 

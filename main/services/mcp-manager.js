@@ -93,6 +93,7 @@ class MCPManager {
       try {
         const tools = await client.listTools();
         if (tools.tools) {
+          const toolNames = [];
           for (const tool of tools.tools) {
             const toolKey = `${server.name}:${tool.name}`;
             this.tools.set(toolKey, {
@@ -102,7 +103,11 @@ class MCPManager {
               server: server.name,
               fullName: toolKey
             });
-            console.log(`[MCPManager] Registered tool: ${toolKey}`);
+            toolNames.push(toolKey);
+          }
+          // Log all tools at once instead of individually
+          if (toolNames.length > 0) {
+            console.log(`[MCPManager] Registered ${toolNames.length} tools from ${server.name}`);
           }
         }
       } catch (error) {

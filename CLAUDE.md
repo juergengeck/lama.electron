@@ -2,7 +2,59 @@
 
 This file provides guidance to Claude Code when working with LAMA Electron.
 
-## Topic Analysis with AI (NEW)
+## Recent Optimizations (January 2025)
+
+### Performance Improvements
+- **LLM Pre-warming**: Added `preWarmConnection()` in llm-manager.js to reduce cold start from 12+ seconds to <1 second
+- **Contact Caching**: Added 5-second TTL cache in one-core.js handlers to prevent redundant `getContacts` calls
+- **Log Reduction**: Commented out excessive "OBJECT RECEIVED" logging, batched MCP tool registration logs
+- **Race Condition Fix**: Added proper mutex cleanup in `finally` block for topic creation
+
+### AI Response + Analysis Combined
+- **Single LLM Call**: New `chatWithAnalysis()` method in llm-manager.js combines response generation with keyword/subject extraction
+- **Non-blocking**: Uses `setImmediate()` to process analysis in background while streaming response
+- **Structured Output**: LLM returns formatted response with [RESPONSE] and [ANALYSIS] sections
+- **Automatic Processing**: Keywords and subjects are created/updated without blocking user interaction
+
+### Topic ID Determinism
+- **Name-based IDs**: Topics use cleaned conversation names as IDs (e.g., "pizza-discussion" not "topic-1758610172370")
+- **Duplicate Prevention**: System checks for existing topics and appends counter if needed
+- **No Auto-creation**: Topic analysis no longer creates topics when checking for messages
+- **Consistent References**: All topic IDs are deterministic and predictable
+
+## HTML Export with Microdata (NEW)
+
+**Feature**: Export conversations as HTML with comprehensive microdata markup using ONE.core's implode() function.
+
+### Core Concept
+- Uses ONE.core's native `implode()` function to embed referenced objects
+- Generates HTML with microdata attributes for hashes and signatures
+- Creates self-contained HTML files with inline styling
+
+### IPC Handler
+- `export:htmlWithMicrodata` - Export conversation as HTML with embedded microdata
+- Location: `/main/ipc/handlers/export.js`
+- Request: topicId, format, options (includeSignatures, maxMessages, etc.)
+- Response: HTML string and metadata
+
+### Implementation Architecture
+**Services**:
+- `/main/services/html-export/implode-wrapper.js` - ONE.core implode() integration
+- `/main/services/html-export/formatter.js` - Human-readable HTML formatting
+
+**Key Functions**:
+- `implode(hash)` - Recursively embed referenced ONE objects as microdata
+- `escapeForHtml()` - Sanitize user content for safe HTML rendering
+- `calculateHashOfObj()` - Get SHA-256 hash for verification
+
+**Microdata Format**:
+```html
+<div itemscope itemtype="//refin.io/Message" data-hash="[hash]" data-signature="[sig]">
+  <span itemprop="content">[message]</span>
+</div>
+```
+
+## Topic Analysis with AI
 
 **Feature**: AI-powered analysis of conversations to extract subjects, keywords, and generate summaries.
 

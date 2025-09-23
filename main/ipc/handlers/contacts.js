@@ -3,8 +3,9 @@
  */
 
 import { ipcMain } from 'electron'
+import nodeOneCore from '../../core/node-one-core.js'
 
-export function registerContactHandlers(nodeOneCore) {
+export function registerContactHandlers() {
   // Get all contacts with trust status
   ipcMain.handle('contacts:list-with-trust', async () => {
     try {
@@ -12,7 +13,7 @@ export function registerContactHandlers(nodeOneCore) {
         return { success: false, error: 'Leute model not initialized' }
       }
       
-      const contacts = await nodeOneCore.leuteModel.getSomeoneElseList()
+      const contacts = await nodeOneCore.leuteModel.others()
       
       // Enhance with trust information
       const contactsWithTrust = await Promise.all(contacts.map(async (contact) => {
@@ -50,9 +51,60 @@ export function registerContactHandlers(nodeOneCore) {
       if (!nodeOneCore.leuteModel) {
         return { success: false, error: 'Leute model not initialized' }
       }
-      
-      const contacts = await nodeOneCore.leuteModel.getSomeoneElseList()
-      return { success: true, contacts }
+
+      // Get human contacts - these are Someone objects that need to be transformed
+      const someoneObjects = await nodeOneCore.leuteModel.others()
+      const allContacts = []
+
+      // Transform Someone objects to plain serializable objects
+      for (const someone of someoneObjects) {
+        try {
+          const personId = await someone.mainIdentity()
+          if (!personId) continue
+
+          // Get profile to extract display name
+          const profile = await someone.profile()
+          let displayName = 'Unknown Contact'
+
+          if (profile) {
+            // Try to get nickname or name from profile
+            displayName = profile.nickname ||
+                         profile.name ||
+                         `Contact ${personId.substring(0, 8)}`
+          }
+
+          allContacts.push({
+            id: personId,
+            personId: personId,
+            name: displayName,
+            isAI: false,
+            canMessage: true,
+            isConnected: false
+          })
+        } catch (err) {
+          console.error('[contacts:list] Error processing someone:', err)
+        }
+      }
+
+      // Add AI assistant contacts if available
+      if (nodeOneCore.aiAssistantModel) {
+        const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
+
+        // Transform AI contacts to match the contact format
+        for (const aiContact of aiContacts) {
+          allContacts.push({
+            id: aiContact.personId,
+            personId: aiContact.personId,
+            name: aiContact.name,
+            isAI: true,
+            modelId: aiContact.modelId,
+            canMessage: true,
+            isConnected: true // AI is always "connected"
+          })
+        }
+      }
+
+      return { success: true, contacts: allContacts }
     } catch (error) {
       console.error('[IPC] Failed to get contacts:', error)
       return { success: false, error: error.message }

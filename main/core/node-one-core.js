@@ -173,30 +173,23 @@ class NodeOneCore {
     // Ensure storage directories exist
     const fs = await import('fs')
     const path = await import('path')
-    
+
     const oneDbPath = path.join(process.cwd(), 'OneDB')
-    const oneCoreStoragePath = path.join(process.cwd(), 'one-core-storage')
-    
+
     // Create OneDB directory if it doesn't exist
     if (!fs.existsSync(oneDbPath)) {
       fs.mkdirSync(oneDbPath, { recursive: true })
       console.log('[NodeOneCore] Created OneDB directory')
     }
     
-    // Create one-core-storage directory if it doesn't exist
-    if (!fs.existsSync(oneCoreStoragePath)) {
-      fs.mkdirSync(oneCoreStoragePath, { recursive: true })
-      console.log('[NodeOneCore] Created one-core-storage directory')
-    }
-    
     // Load Node.js platform FIRST - before any other ONE.core imports
     console.log('[NodeOneCore] Loading Node.js platform...')
     await import('@refinio/one.core/lib/system/load-nodejs.js')
     console.log('[NodeOneCore] ✅ Node.js platform loaded')
-    
+
     // Now safe to import ONE.core modules
     const { closeInstance } = await import('@refinio/one.core/lib/instance.js')
-    
+
     // Ensure clean slate - close any existing instance singleton
     try {
       closeInstance()
@@ -277,12 +270,18 @@ class NodeOneCore {
     
     try {
       // Check if already registered
+      console.log('[NodeOneCore] Checking if instance is registered...')
+      console.log('[NodeOneCore] Current OneDB path:', oneDbPath)
+      console.log('[NodeOneCore] Checking with credentials:', { email, instanceName })
+
       const isRegistered = await this.oneAuth.isRegistered()
-      
+      console.log('[NodeOneCore] isRegistered() returned:', isRegistered)
+
       if (isRegistered) {
         console.log('[NodeOneCore] Instance already registered, logging in...')
         await this.oneAuth.login()
       } else {
+        console.log('[NodeOneCore] Instance not found as registered, calling register()')
         console.log('[NodeOneCore] Registering new instance with email:', email)
         await this.oneAuth.register({
           email: email,
@@ -478,12 +477,13 @@ class NodeOneCore {
       
       // TRACE: Log ALL objects received via CHUM to debug
       objectEvents.onNewVersion(async (obj) => {
-        console.log('[NodeOneCore] 📨 OBJECT RECEIVED:', {
-          type: obj.$type$,
-          text: obj.text?.substring?.(0, 30),
-          author: obj.author?.substring?.(0, 8),
-          sender: obj.sender?.substring?.(0, 8)
-        })
+        // Commented out excessive logging - was creating 30+ logs during init
+        // console.log('[NodeOneCore] 📨 OBJECT RECEIVED:', {
+        //   type: obj.$type$,
+        //   text: obj.text?.substring?.(0, 30),
+        //   author: obj.author?.substring?.(0, 8),
+        //   sender: obj.sender?.substring?.(0, 8)
+        // })
 
         if (obj.$type$ === 'ChannelInfo') {
           console.log('[NodeOneCore] 📨 NODE: Received ChannelInfo via CHUM!', {
@@ -889,9 +889,43 @@ class NodeOneCore {
     await this.channelManager.createChannel('contacts')
     console.log('[NodeOneCore] ✅ Contacts channel created')
     
-    // Create default channel for conversations
-    await this.channelManager.createChannel('default')
-    console.log('[NodeOneCore] ✅ Default channel created')
+    // Only create Hi and LAMA channels on first initialization
+    try {
+      const existingChannels = await this.channelManager.channels()
+      const hasHiChannel = existingChannels.some(ch => ch.id === 'hi')
+      const hasLamaChannel = existingChannels.some(ch => ch.id === 'lama')
+
+      // Only create Hi channel if it doesn't exist (first time setup)
+      if (!hasHiChannel) {
+        await this.channelManager.createChannel('hi')
+        console.log('[NodeOneCore] ✅ Hi introductory channel created (first time setup)')
+      } else {
+        console.log('[NodeOneCore] Hi channel already exists')
+      }
+
+      // Only create LAMA channel if it doesn't exist (first time setup)
+      if (!hasLamaChannel) {
+        await this.channelManager.createChannel('lama')
+        console.log('[NodeOneCore] ✅ LAMA channel created (first time setup)')
+      } else {
+        console.log('[NodeOneCore] LAMA channel already exists')
+      }
+    } catch (err) {
+      // If we can't check, assume first time and create them
+      console.log('[NodeOneCore] Could not check existing channels, creating defaults')
+      try {
+        await this.channelManager.createChannel('hi')
+        console.log('[NodeOneCore] ✅ Hi introductory channel created')
+      } catch (e) {
+        console.log('[NodeOneCore] Hi channel might already exist')
+      }
+      try {
+        await this.channelManager.createChannel('lama')
+        console.log('[NodeOneCore] ✅ LAMA channel created')
+      } catch (e) {
+        console.log('[NodeOneCore] LAMA channel might already exist')
+      }
+    }
     
     // Initialize ConnectionsModel with commserver for external connections
     // ConnectionsModel will be imported later when needed
@@ -1250,8 +1284,8 @@ class NodeOneCore {
       }, 30000)
     }
 
-    // AI contacts will be set up later after LLMManager is initialized
-    // This is called from setupAIContactsWhenReady()
+    // Set up AI contacts now that everything is initialized
+    await this.setupAIContactsWhenReady()
 
     console.log('[NodeOneCore] All models initialized successfully')
   }
@@ -1461,14 +1495,59 @@ class NodeOneCore {
     try {
       // Get available AI models from LLM manager
       const { default: llmManager } = await import('../services/llm-manager.js')
-      const models = llmManager.getAvailableModels()
+      const allModels = llmManager.getAvailableModels()
+
+      // Only set up the first model (gpt-oss) initially
+      const initialModel = allModels.find(m => m.id === 'ollama:gpt-oss') || allModels[0]
+
+      if (!initialModel) {
+        console.log('[NodeOneCore] No AI models available')
+        return []
+      }
+
+      console.log(`[NodeOneCore] Setting up initial AI model: ${initialModel.name}`)
+
+      // Create ONE AI identity for the LAMA chat
+      // The Hi chat will use this same AI but with a different context
+
+      // Create the -private version for LAMA
+      const lamaModel = {
+        ...initialModel,
+        id: initialModel.id + ':lama',
+        name: initialModel.name.replace('-private', '') + '-private' // Ensure -private suffix
+      }
+
+      // Create the AI contact and store with full metadata
+      const aiContacts = []
+      const { storeIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+      const { createDefaultKeys, hasDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
+
+      // Create LAMA contact person
+      const lamaPersonData = {
+        $type$: 'Person',
+        email: `${lamaModel.id.replace(/[^a-zA-Z0-9]/g, '_')}@ai.local`,
+        name: lamaModel.name
+      }
+      const lamaResult = await storeIdObject(lamaPersonData)
+      const lamaPersonId = typeof lamaResult === 'object' && lamaResult.idHash ? lamaResult.idHash : lamaResult
+
+      // Ensure keys exist
+      if (!(await hasDefaultKeys(lamaPersonId))) {
+        await createDefaultKeys(lamaPersonId)
+      }
+
+      // Store LAMA contact with full metadata
+      const lamaContactInfo = {
+        modelId: lamaModel.id,
+        personId: lamaPersonId,
+        name: lamaModel.name,
+        isPrivate: true,
+        chatId: 'lama'
+      }
+      this.aiAssistantModel.aiContacts.set(lamaModel.id, lamaContactInfo)
+      aiContacts.push(lamaContactInfo)
       
-      console.log(`[NodeOneCore] Found ${models.length} AI models to create contacts for`)
-      
-      // Use the AI Assistant Model to create contacts
-      const aiContacts = await this.aiAssistantModel.setupAIContacts(models)
-      
-      console.log(`[NodeOneCore] ✅ Created ${aiContacts.length} AI contacts`)
+      console.log(`[NodeOneCore] ✅ Created AI contact: ${lamaContactInfo.name}`)
       
       // Store for reference
       this.aiPersonIds = aiContacts

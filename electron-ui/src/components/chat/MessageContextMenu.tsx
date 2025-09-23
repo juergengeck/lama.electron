@@ -29,7 +29,8 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
   onReply,
   onEdit,
   onDelete,
-  onCopy
+  onCopy,
+  onShowHistory
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [exportSubMenu, setExportSubMenu] = useState(false);
@@ -59,19 +60,48 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
   }, [onClose]);
 
   // Export functions
-  const exportAsMarkdown = () => {
+  const exportAsMarkdown = async () => {
+    console.log('[MessageContextMenu] exportAsMarkdown called');
     const markdown = generateMarkdownExport(message);
-    downloadFile(markdown, `message-${message.id}.md`, 'text/markdown');
+    console.log('[MessageContextMenu] Generated markdown:', markdown);
+
+    // Use IPC for file export
+    const result = await window.electronAPI.invoke('export:message', {
+      format: 'markdown',
+      content: markdown,
+      metadata: { messageId: message.id }
+    });
+
+    if (result.success) {
+      console.log('[MessageContextMenu] File exported successfully:', result.filePath);
+    } else if (result.canceled) {
+      console.log('[MessageContextMenu] Export canceled by user');
+    } else {
+      console.error('[MessageContextMenu] Export failed:', result.error);
+    }
+
     onClose();
   };
 
-  const exportAsHTML = () => {
+  const exportAsHTML = async () => {
     const html = generateHTMLExport(message);
-    downloadFile(html, `message-${message.id}.html`, 'text/html');
+
+    const result = await window.electronAPI.invoke('export:message', {
+      format: 'html',
+      content: html,
+      metadata: { messageId: message.id }
+    });
+
+    if (result.success) {
+      console.log('[MessageContextMenu] HTML exported successfully');
+    } else if (!result.canceled) {
+      console.error('[MessageContextMenu] HTML export failed:', result.error);
+    }
+
     onClose();
   };
 
-  const exportAsJSON = () => {
+  const exportAsJSON = async () => {
     const json = exportMessageWithMarkup(message.text, {
       subjects: message.subjects,
       keywords: extractKeywords(message.text),
@@ -80,13 +110,37 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
       sender: message.senderName,
       trustLevel: message.trustLevel
     });
-    downloadFile(json, `message-${message.id}.json`, 'application/json');
+
+    const result = await window.electronAPI.invoke('export:message', {
+      format: 'json',
+      content: json,
+      metadata: { messageId: message.id }
+    });
+
+    if (result.success) {
+      console.log('[MessageContextMenu] JSON exported successfully');
+    } else if (!result.canceled) {
+      console.error('[MessageContextMenu] JSON export failed:', result.error);
+    }
+
     onClose();
   };
 
-  const exportAsOneCoreMarkup = () => {
+  const exportAsOneCoreMarkup = async () => {
     const markup = generateOneCoreMarkup(message);
-    downloadFile(markup, `message-${message.id}.onecore`, 'text/plain');
+
+    const result = await window.electronAPI.invoke('export:message', {
+      format: 'onecore',
+      content: markup,
+      metadata: { messageId: message.id }
+    });
+
+    if (result.success) {
+      console.log('[MessageContextMenu] ONE.core markup exported successfully');
+    } else if (!result.canceled) {
+      console.error('[MessageContextMenu] ONE.core export failed:', result.error);
+    }
+
     onClose();
   };
 
@@ -162,32 +216,54 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
         {/* Export submenu */}
         <li
           className="has-submenu"
-          onMouseEnter={() => setExportSubMenu(true)}
-          onMouseLeave={() => setExportSubMenu(false)}
+          onMouseEnter={() => {
+            console.log('[MessageContextMenu] Mouse entered Export Message');
+            setExportSubMenu(true);
+          }}
+          onMouseLeave={(e) => {
+            // Check if we're moving to a child element (the submenu)
+            const relatedTarget = e.relatedTarget as HTMLElement;
+            if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
+              setExportSubMenu(false);
+            }
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('[MessageContextMenu] Export Message parent clicked');
+            setExportSubMenu(!exportSubMenu); // Toggle on click as well
+          }}
         >
           <span className="menu-icon">💾</span>
           Export Message
           <span className="submenu-arrow">▶</span>
 
           {exportSubMenu && (
-            <ul className="context-submenu">
-              <li onClick={exportAsMarkdown}>
+            <ul className="context-submenu" onClick={(e) => {
+              console.log('[MessageContextMenu] Submenu UL clicked');
+              e.stopPropagation();
+            }}>
+              <li onClick={(e) => {
+                e.stopPropagation();
+                console.log('[MessageContextMenu] Markdown export clicked!');
+                exportAsMarkdown().catch(err => console.error('[MessageContextMenu] Export error:', err));
+              }}>
                 <span className="menu-icon">📝</span>
                 Markdown (.md)
               </li>
-              <li onClick={exportAsHTML}>
+              <li onClick={(e) => { e.stopPropagation(); exportAsHTML(); }}>
                 <span className="menu-icon">🌐</span>
                 HTML with Markup
               </li>
-              <li onClick={exportAsJSON}>
+              <li onClick={(e) => { e.stopPropagation(); exportAsJSON(); }}>
                 <span className="menu-icon">📄</span>
                 JSON with Metadata
               </li>
-              <li onClick={exportAsOneCoreMarkup}>
+              <li onClick={(e) => { e.stopPropagation(); exportAsOneCoreMarkup(); }}>
                 <span className="menu-icon">🔗</span>
                 ONE.core Format
               </li>
-              <li onClick={exportAsVerifiableCredential}>
+              <li onClick={(e) => { e.stopPropagation(); exportAsVerifiableCredential(); }}>
                 <span className="menu-icon">🔐</span>
                 Verifiable Credential
               </li>
@@ -460,14 +536,4 @@ function convertMarkdownToHTML(markdown: string): string {
     .replace(/$/, '</p>');
 }
 
-function downloadFile(content: string, filename: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
+// Download function removed - now using IPC for file exports

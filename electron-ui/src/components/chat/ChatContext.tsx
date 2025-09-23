@@ -22,17 +22,77 @@ export const ChatContext: React.FC<ChatContextProps> = ({
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
-  const hasEnoughMessages = messageCount >= 5
+
+  // Format summary content with better structure
+  const formatSummaryContent = (content: string) => {
+    if (!content) return null
+
+    // Split content into sections based on common patterns
+    const lines = content.split('\n').filter(line => line.trim())
+
+    return lines.map((line, idx) => {
+      // Handle bullet points
+      if (line.trim().startsWith('-') || line.trim().startsWith('•') || line.trim().startsWith('*')) {
+        return (
+          <li key={idx} className="ml-4 list-disc list-inside">
+            {line.replace(/^[-•*]\s*/, '')}
+          </li>
+        )
+      }
+
+      // Handle numbered lists
+      const numberedMatch = line.match(/^(\d+\.)\s+(.*)/)
+      if (numberedMatch) {
+        return (
+          <li key={idx} className="ml-4 list-decimal list-inside">
+            {numberedMatch[2]}
+          </li>
+        )
+      }
+
+      // Handle section headers (text followed by colon)
+      if (line.includes(':') && line.indexOf(':') < 50) {
+        const [header, ...rest] = line.split(':')
+        if (rest.length > 0) {
+          return (
+            <div key={idx} className="mt-1">
+              <span className="font-semibold">{header}:</span>
+              <span className="ml-1">{rest.join(':')}</span>
+            </div>
+          )
+        }
+      }
+
+      // Handle bold text
+      const formattedLine = line
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.*?)__/g, '<strong>$1</strong>')
+
+      // Regular paragraph
+      return (
+        <p
+          key={idx}
+          className="text-sm"
+          dangerouslySetInnerHTML={{ __html: formattedLine }}
+        />
+      )
+    })
+  }
+
+  // Check if this is an AI conversation (has AI participant)
+  const hasAIParticipant = messages.some(m => m.isAI) ||
+                           topicId === 'default' ||
+                           topicId === 'ai-chat'
 
   // Load summary when component mounts or topicId changes
   useEffect(() => {
-    if (hasEnoughMessages) {
+    if (hasAIParticipant) {
       loadSummary()
     }
-  }, [topicId, hasEnoughMessages])
+  }, [topicId, hasAIParticipant])
 
   const loadSummary = async () => {
-    if (!hasEnoughMessages) return
+    if (!hasAIParticipant) return
 
     setLoading(true)
     try {
@@ -52,8 +112,10 @@ export const ChatContext: React.FC<ChatContextProps> = ({
   }
 
   const handleAnalyze = async () => {
+    console.log('[ChatContext] Generate Summary button clicked!')
     setAnalyzing(true)
     try {
+      console.log('[ChatContext] Calling analyzeMessages with:', { topicId, messageCount: messages.length })
       const response = await window.electronAPI.invoke('topicAnalysis:analyzeMessages', {
         topicId,
         messages: messages.map(m => ({
@@ -65,8 +127,13 @@ export const ChatContext: React.FC<ChatContextProps> = ({
         forceReanalysis: true
       })
 
+      console.log('[ChatContext] analyzeMessages response:', response)
+
       if (response.success) {
+        console.log('[ChatContext] Analysis successful, loading summary...')
         await loadSummary()
+      } else {
+        console.error('[ChatContext] Analysis failed:', response.error)
       }
     } catch (err) {
       console.error('[ChatContext] Error analyzing:', err)
@@ -75,35 +142,13 @@ export const ChatContext: React.FC<ChatContextProps> = ({
     }
   }
 
-  // Don't render anything if not enough messages
-  if (!hasEnoughMessages) return null
+  // Don't render anything if no AI participant
+  if (!hasAIParticipant) return null
 
   return (
-    <div className={`border-t bg-muted/30 ${className}`}>
-      {/* Toggle Bar */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors"
-      >
-        <div className="flex items-center gap-2 text-sm">
-          <Sparkles className="w-4 h-4 text-primary" />
-          <span className="font-medium">Context & Summary</span>
-          {summary && !expanded && (
-            <span className="text-muted-foreground truncate max-w-[300px]">
-              • {summary.content.substring(0, 50)}...
-            </span>
-          )}
-        </div>
-        {expanded ? (
-          <ChevronDown className="w-4 h-4 text-muted-foreground" />
-        ) : (
-          <ChevronUp className="w-4 h-4 text-muted-foreground" />
-        )}
-      </button>
-
-      {/* Expanded Content */}
-      {expanded && (
-        <div className="px-4 pb-4 pt-0 space-y-4">
+    <div className={`${className}`}>
+      {/* Content Panel */}
+      <div className="px-4 py-4 space-y-4">
           {loading ? (
             <div className="flex items-center justify-center py-4">
               <Loader2 className="w-5 h-5 animate-spin text-primary" />
@@ -112,14 +157,18 @@ export const ChatContext: React.FC<ChatContextProps> = ({
             <>
               {/* Summary Content */}
               <div className="bg-background rounded-lg p-3">
-                <div className="flex items-start justify-between mb-2">
-                  <h4 className="font-medium text-sm">AI Summary</h4>
+                <div className="flex items-start justify-between mb-3">
+                  <h4 className="font-medium text-sm flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-primary" />
+                    AI Summary
+                  </h4>
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-6 w-6 p-0"
                     onClick={handleAnalyze}
                     disabled={analyzing}
+                    title="Regenerate summary"
                   >
                     {analyzing ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
@@ -128,17 +177,30 @@ export const ChatContext: React.FC<ChatContextProps> = ({
                     )}
                   </Button>
                 </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {summary.content}
-                </p>
+
+                {/* Formatted summary content */}
+                <div className="text-sm text-foreground/90 leading-relaxed space-y-2">
+                  {formatSummaryContent(summary.content)}
+                </div>
 
                 {/* Version and Update Info */}
-                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                  <span>v{summary.version}</span>
-                  {summary.updatedAt && (
+                <div className="flex items-center gap-2 mt-3 pt-2 border-t text-xs text-muted-foreground/70">
+                  <span className="font-mono">v{summary.version}</span>
+                  {summary.generatedAt ? (
+                    <>
+                      <span>•</span>
+                      <span>{new Date(summary.generatedAt).toLocaleDateString()}</span>
+                    </>
+                  ) : summary.updatedAt && (
                     <>
                       <span>•</span>
                       <span>{new Date(summary.updatedAt).toLocaleDateString()}</span>
+                    </>
+                  )}
+                  {summary.changeReason && (
+                    <>
+                      <span>•</span>
+                      <span className="italic">{summary.changeReason}</span>
                     </>
                   )}
                 </div>
@@ -194,8 +256,7 @@ export const ChatContext: React.FC<ChatContextProps> = ({
               </Button>
             </div>
           )}
-        </div>
-      )}
+      </div>
     </div>
   )
 }

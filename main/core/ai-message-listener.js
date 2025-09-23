@@ -206,8 +206,8 @@ class AIMessageListener {
    * This is where AI intelligence comes in - for now simple rules
    */
   shouldAIRespond(channelId, message) {
-    // Always respond in default channel
-    if (channelId === 'default') return true
+    // Always respond in lama channel
+    if (channelId === 'lama') return true
     
     // Could add more logic here:
     // - Check if message mentions AI

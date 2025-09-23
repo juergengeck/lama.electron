@@ -21,6 +21,7 @@ import * as topicHandlers from './handlers/topics.js';
 import topicAnalysisHandlers from './handlers/topic-analysis.js';
 import * as wordCloudSettingsHandlers from './handlers/word-cloud-settings.js';
 import auditHandlers from './handlers/audit.js';
+import exportHandlers from './handlers/export.js';
 
 class IPCController {
   constructor() {
@@ -190,11 +191,19 @@ class IPCController {
     this.handle('topicAnalysis:updateSummary', topicAnalysisHandlers.updateSummary)
     this.handle('topicAnalysis:extractKeywords', topicAnalysisHandlers.extractKeywords)
     this.handle('topicAnalysis:mergeSubjects', topicAnalysisHandlers.mergeSubjects)
+    this.handle('topicAnalysis:extractRealtimeKeywords', topicAnalysisHandlers.extractRealtimeKeywords)
+    this.handle('topicAnalysis:extractConversationKeywords', topicAnalysisHandlers.extractConversationKeywords)
 
     // Word Cloud Settings handlers
     this.handle('wordCloudSettings:getSettings', wordCloudSettingsHandlers.getWordCloudSettings)
     this.handle('wordCloudSettings:updateSettings', wordCloudSettingsHandlers.updateWordCloudSettings)
     this.handle('wordCloudSettings:resetSettings', wordCloudSettingsHandlers.resetWordCloudSettings)
+
+    // Export handlers
+    this.handle('export:file', exportHandlers.exportFile)
+    this.handle('export:fileAuto', exportHandlers.exportFileAuto)
+    this.handle('export:message', exportHandlers.exportMessage)
+    this.handle('export:htmlWithMicrodata', exportHandlers.exportHtmlWithMicrodata)
 
     // ONE.core handlers
     this.handle('onecore:initializeNode', oneCoreHandlers.initializeNode)
@@ -231,7 +240,7 @@ class IPCController {
     initializeDeviceHandlers()
 
     // Contact handlers
-    registerContactHandlers(this.handle.bind(this))
+    registerContactHandlers()
     
     // Note: app:clearData is handled in lama-electron-shadcn.js
     

@@ -5,9 +5,11 @@
 
 import nodeOneCoreInstance from '../../core/node-one-core.js';
 import TopicAnalysisModel from '../../core/one-ai/models/TopicAnalysisModel.js';
+import RealTimeKeywordExtractor from '../../core/one-ai/services/RealTimeKeywordExtractor.js';
 
-// Singleton instance
+// Singleton instances
 let topicAnalysisModel = null;
+let keywordExtractor = null;
 
 /**
  * Initialize model instance
@@ -34,9 +36,14 @@ async function initializeModel() {
     throw new Error('ChannelManager not available');
   }
 
+  const topicModel = nodeOneCoreInstance.topicModel;
+  if (!topicModel) {
+    throw new Error('TopicModel not available');
+  }
+
   // Create new model if doesn't exist
   if (!topicAnalysisModel) {
-    topicAnalysisModel = new TopicAnalysisModel(channelManager);
+    topicAnalysisModel = new TopicAnalysisModel(channelManager, topicModel);
   }
 
   // Initialize only if uninitialised
@@ -58,9 +65,27 @@ export async function analyzeMessages(event, { topicId, messages, forceReanalysi
 
     // If no messages provided, retrieve from conversation
     if (!messages || messages.length === 0) {
-      const chatHandlers = await import('./chat.js');
-      const messagesResponse = await chatHandlers.getMessages(event, { conversationId: topicId });
-      messages = messagesResponse.data || [];
+      // Check if topic exists first to avoid auto-creation
+      try {
+        const topicRoom = await nodeOneCoreInstance.topicModel.enterTopicRoom(topicId);
+        // Retrieve messages directly without auto-creating topic
+        const messagesIterable = await topicRoom.retrieveAllMessages();
+        messages = [];
+        for await (const msg of messagesIterable) {
+          messages.push(msg);
+        }
+        await topicRoom.leave();
+      } catch (error) {
+        console.log('[TopicAnalysis] Topic does not exist, skipping analysis:', topicId);
+        return {
+          success: true,
+          data: {
+            subjects: [],
+            keywords: [],
+            summary: null
+          }
+        };
+      }
     }
 
     if (messages.length === 0) {
@@ -74,8 +99,8 @@ export async function analyzeMessages(event, { topicId, messages, forceReanalysi
       };
     }
 
-    // Get LLM manager
-    const llmManager = nodeOneCoreInstance?.llmManager;
+    // Get LLM manager singleton
+    const { default: llmManager } = await import('../../services/llm-manager.js');
     if (!llmManager) {
       throw new Error('LLM Manager not available');
     }
@@ -97,21 +122,18 @@ ${conversationText.substring(0, 3000)}
 
 Return format: ["keyword1", "keyword2", ...]`;
 
-    const keywordResponse = await llmManager.sendMessage({
-      model: 'ollama:gpt-oss', // Use configured model
-      messages: [{
-        role: 'user',
-        content: keywordPrompt
-      }]
-    });
+    const keywordResponse = await llmManager.chat([{
+      role: 'user',
+      content: keywordPrompt
+    }], 'ollama:gpt-oss'); // Use configured model
 
     let keywords = [];
     try {
-      keywords = JSON.parse(keywordResponse.content);
+      keywords = JSON.parse(keywordResponse);
     } catch (e) {
       console.warn('[TopicAnalysis] Failed to parse keyword JSON, using fallback');
       // Fallback: extract from text
-      keywords = keywordResponse.content.match(/"([^"]+)"/g)?.map(k => k.replace(/"/g, '')) || [];
+      keywords = keywordResponse.match(/"([^"]+)"/g)?.map(k => k.replace(/"/g, '')) || [];
     }
 
     // Store keywords in ONE.core
@@ -132,17 +154,14 @@ Return ONLY a JSON array with this format:
 Conversation:
 ${conversationText.substring(0, 3000)}`;
 
-    const subjectResponse = await llmManager.sendMessage({
-      model: 'ollama:gpt-oss',
-      messages: [{
-        role: 'user',
-        content: subjectPrompt
-      }]
-    });
+    const subjectResponse = await llmManager.chat([{
+      role: 'user',
+      content: subjectPrompt
+    }], 'ollama:gpt-oss');
 
     let subjects = [];
     try {
-      subjects = JSON.parse(subjectResponse.content);
+      subjects = JSON.parse(subjectResponse);
     } catch (e) {
       console.warn('[TopicAnalysis] Failed to parse subject JSON, creating default subject');
       subjects = [{
@@ -171,19 +190,16 @@ Keep it under 150 words.
 Conversation:
 ${conversationText.substring(0, 3000)}`;
 
-    const summaryResponse = await llmManager.sendMessage({
-      model: 'ollama:gpt-oss',
-      messages: [{
-        role: 'user',
-        content: summaryPrompt
-      }]
-    });
+    const summaryResponse = await llmManager.chat([{
+      role: 'user',
+      content: summaryPrompt
+    }], 'ollama:gpt-oss');
 
     // Create summary
     const summary = await model.createSummary(
       topicId,
       1,
-      summaryResponse.content,
+      summaryResponse,
       [],
       'AI-generated analysis',
       null
@@ -395,7 +411,7 @@ export async function updateSummary(event, { topicId, content, changeReason, aut
 
     // If autoGenerate is true, use LLM to create a new summary
     if (autoGenerate && !content) {
-      const llmManager = nodeOneCoreInstance?.llmManager;
+      const { default: llmManager } = await import('../../services/llm-manager.js');
       if (llmManager) {
         // Get recent messages for context
         const chatHandlers = await import('./chat.js');
@@ -418,15 +434,12 @@ Keep it under 150 words.
 Recent conversation:
 ${conversationText.substring(0, 3000)}`;
 
-          const summaryResponse = await llmManager.sendMessage({
-            model: 'ollama:gpt-oss',
-            messages: [{
-              role: 'user',
-              content: summaryPrompt
-            }]
-          });
+          const summaryResponse = await llmManager.chat([{
+            role: 'user',
+            content: summaryPrompt
+          }], 'ollama:gpt-oss');
 
-          summaryContent = summaryResponse.content;
+          summaryContent = summaryResponse;
           changeReason = changeReason || 'AI-generated update based on new messages';
         }
       }
@@ -467,7 +480,7 @@ export async function extractKeywords(event, { text, limit = 10 }) {
 
   try {
     const model = await initializeModel();
-    const llmManager = nodeOneCoreInstance?.llmManager;
+    const { default: llmManager } = await import('../../services/llm-manager.js');
 
     if (!llmManager) {
       // Fallback to simple extraction
@@ -505,20 +518,17 @@ ${text.substring(0, 2000)}
 
 Return format: ["keyword1", "keyword2", ...]`;
 
-    const response = await llmManager.sendMessage({
-      model: 'ollama:gpt-oss',
-      messages: [{
-        role: 'user',
-        content: keywordPrompt
-      }]
-    });
+    const response = await llmManager.chat([{
+      role: 'user',
+      content: keywordPrompt
+    }], 'ollama:gpt-oss');
 
     let extractedKeywords = [];
     try {
-      extractedKeywords = JSON.parse(response.content);
+      extractedKeywords = JSON.parse(response);
     } catch (e) {
       // Fallback: extract from response
-      extractedKeywords = response.content.match(/"([^"]+)"/g)?.map(k => k.replace(/"/g, '')) || [];
+      extractedKeywords = response.match(/"([^"]+)"/g)?.map(k => k.replace(/"/g, '')) || [];
     }
 
     const keywords = extractedKeywords.slice(0, limit).map((term, index) => ({
@@ -572,6 +582,209 @@ export async function mergeSubjects(event, { topicId, subjectId1, subjectId2 }) 
   }
 }
 
+/**
+ * Extract single-word keywords for real-time display using LLM
+ * Returns array of single words only (no phrases)
+ */
+export async function extractRealtimeKeywords(event, { text, existingKeywords = [], maxKeywords = 15 }) {
+  console.log('[TopicAnalysis] Extracting realtime keywords with LLM');
+
+  try {
+    // Get LLM manager
+    const { default: llmManager } = await import('../../services/llm-manager.js');
+
+    if (!llmManager) {
+      console.error('[TopicAnalysis] LLM Manager not available - cannot extract keywords');
+      return {
+        success: false,
+        error: 'LLM not available for keyword extraction',
+        data: {
+          keywords: existingKeywords // Keep existing keywords if LLM unavailable
+        }
+      };
+    }
+
+    // Use LLM for intelligent keyword extraction
+    const prompt = `Extract the most important single-word keywords from this text.
+Focus on: specific topics, domain-specific terms, meaningful nouns, key concepts.
+Avoid: common words, verbs, adjectives, pronouns, prepositions.
+Return ONLY single words that capture the essence of the content.
+${existingKeywords.length > 0 ? `Current keywords: ${existingKeywords.join(', ')}` : ''}
+
+Text: "${text}"
+
+Return exactly ${maxKeywords} single-word keywords as a JSON array.
+Example: ["pizza", "delivery", "restaurant", "italian"]`;
+
+    const response = await llmManager.chat([{
+      role: 'user',
+      content: prompt
+    }], 'ollama:gpt-oss');
+
+    let keywords = [];
+    try {
+      // Try to parse as JSON
+      const jsonMatch = response.match(/\[.*\]/s);
+      if (jsonMatch) {
+        keywords = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      // Fallback: extract words from response
+      keywords = response.match(/\b\w{4,}\b/g) || [];
+    }
+
+    // Ensure single words only
+    keywords = keywords
+      .filter(k => typeof k === 'string' && !k.includes(' ') && k.length >= 4)
+      .slice(0, maxKeywords);
+
+    // Merge with existing keywords intelligently
+    const mergedSet = new Set([...keywords, ...existingKeywords]);
+    const finalKeywords = Array.from(mergedSet).slice(0, maxKeywords);
+
+    return {
+      success: true,
+      data: {
+        keywords: finalKeywords
+      }
+    };
+  } catch (error) {
+    console.error('[TopicAnalysis] Error extracting realtime keywords:', error);
+    return {
+      success: false,
+      error: error.message,
+      data: {
+        keywords: existingKeywords
+      }
+    };
+  }
+}
+
+/**
+ * Extract keywords from all messages in a conversation using LLM
+ * Returns single words only for real-time display
+ */
+export async function extractConversationKeywords(event, { topicId, messages = [], maxKeywords = 15 }) {
+  console.log('[TopicAnalysis] Extracting conversation keywords with LLM for topic:', topicId);
+
+  try {
+    // Get LLM manager
+    const { default: llmManager } = await import('../../services/llm-manager.js');
+
+    if (!llmManager) {
+      console.error('[TopicAnalysis] LLM Manager not available');
+      return {
+        success: false,
+        error: 'LLM not available for keyword extraction',
+        data: {
+          keywords: []
+        }
+      };
+    }
+
+    // If no messages provided, get them from conversation
+    if (!messages || messages.length === 0) {
+      const chatHandlers = await import('./chat.js');
+      const messagesResponse = await chatHandlers.getMessages(event, { conversationId: topicId });
+      messages = messagesResponse.data || [];
+    }
+
+    if (messages.length === 0) {
+      return {
+        success: true,
+        data: {
+          keywords: []
+        }
+      };
+    }
+
+    // Prepare conversation text for LLM
+    const conversationText = messages
+      .slice(-20) // Last 20 messages for context
+      .map(m => m.content || m.text || '')
+      .join('\n');
+
+    // Don't try to extract keywords from empty content
+    if (!conversationText.trim()) {
+      return {
+        success: true,
+        data: {
+          keywords: []
+        }
+      };
+    }
+
+    // Use LLM to extract meaningful keywords
+    const prompt = `Analyze this conversation and extract the most important single-word keywords.
+
+IMPORTANT: Even short messages can contain critical information. Focus on CONTEXT and MEANING, not length.
+For example: "deploy production" -> ["deploy", "production"]
+"bitcoin crashed" -> ["bitcoin", "crashed"]
+
+Extract keywords for:
+- Technical terms, commands, or operations mentioned
+- Product names, systems, or services discussed
+- Important events, actions, or states
+- Domain-specific vocabulary
+- Critical concepts regardless of message length
+
+Skip keywords only if the conversation is PURELY social pleasantries with zero informational content.
+Examples to skip: "Hi, how are you?" "Good thanks, you?" "Great!"
+
+Conversation:
+"${conversationText.substring(0, 2000)}"
+
+Return up to ${maxKeywords} single-word keywords as a JSON array.
+Keywords should be lowercase and capture the essence of what's being discussed.
+If truly no meaningful content exists (only pure greetings), return [].
+Example: ["blockchain", "ethereum", "smartcontract", "defi", "wallet"]`;
+
+    const response = await llmManager.chat([{
+      role: 'user',
+      content: prompt
+    }], 'ollama:gpt-oss');
+
+    let keywords = [];
+    try {
+      // Parse LLM response as JSON
+      const jsonMatch = response.match(/\[.*\]/s);
+      if (jsonMatch) {
+        keywords = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      console.warn('[TopicAnalysis] Failed to parse LLM response as JSON, extracting keywords from text');
+      // Fallback: extract meaningful words from response
+      keywords = response
+        .toLowerCase()
+        .match(/\b[a-z]{4,}\b/g) || [];
+    }
+
+    // Ensure we have single words only, no phrases
+    keywords = keywords
+      .filter(k => typeof k === 'string' && !k.includes(' ') && k.length >= 4)
+      .map(k => k.toLowerCase())
+      .slice(0, maxKeywords);
+
+    console.log('[TopicAnalysis] LLM extracted keywords:', keywords);
+
+    return {
+      success: true,
+      data: {
+        keywords: keywords
+      }
+    };
+  } catch (error) {
+    console.error('[TopicAnalysis] Error extracting conversation keywords:', error);
+    return {
+      success: false,
+      error: error.message,
+      data: {
+        keywords: []
+      }
+    };
+  }
+}
+
 // Export all handlers
 export default {
   analyzeMessages,
@@ -580,5 +793,7 @@ export default {
   updateSummary,
   extractKeywords,
   mergeSubjects,
-  getConversationRestartContext
+  getConversationRestartContext,
+  extractRealtimeKeywords,
+  extractConversationKeywords
 };

@@ -1,6 +1,9 @@
 {
   "name": "lama",
   "version": "1.0.0",
+  "description": "LAMA - Local AI Messaging Assistant",
+  "author": "LAMA Team",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "lama-electron-shadcn.js",
@@ -13,12 +16,19 @@
     "install:all": "npm install && npm install --prefix electron-ui",
     "generate-icons": "node assets/generate-icons-from-svg.js",
     "update-vendor": "node scripts/update-vendor-packages.js",
-    "postinstall": "cd electron-ui && npm install"
+    "postinstall": "cd electron-ui && npm install",
+    "dist": "npm run build:ui && electron-builder",
+    "dist:win": "npm run build:ui && electron-builder --win",
+    "dist:win-portable": "npm run build:ui && electron-builder --win portable",
+    "dist:mac": "npm run build:ui && electron-builder --mac",
+    "dist:linux": "npm run build:ui && electron-builder --linux",
+    "dist:all": "npm run build:ui && electron-builder --win nsis portable --mac --linux"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "canvas": "^3.2.0",
     "electron": "^32.3.3",
+    "electron-builder": "^26.0.12",
     "sharp": "^0.34.3",
     "typescript": "^5.7.2"
   },

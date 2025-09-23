@@ -8,6 +8,17 @@ import stateManager from '../../state/manager.js';
 import chumSettings from '../../services/chum-settings.js';
 import credentialsManager from '../../services/credentials-manager.js';
 
+// Cache for contacts to prevent redundant calls during initialization
+let contactsCache = null
+let contactsCacheTime = 0
+const CONTACTS_CACHE_TTL = 5000 // 5 seconds
+
+// Function to invalidate cache when contacts change
+export function invalidateContactsCache() {
+  contactsCache = null
+  contactsCacheTime = 0
+}
+
 const oneCoreHandlers = {
   /**
    * Initialize Node.js ONE.core instance
@@ -259,10 +270,17 @@ const oneCoreHandlers = {
    * This acts as our "CHUM sync" via IPC instead of WebSocket
    */
   async getContacts(event) {
+    // Check cache first
+    const now = Date.now()
+    if (contactsCache && (now - contactsCacheTime) < CONTACTS_CACHE_TTL) {
+      console.log('[OneCoreHandler] Returning cached contacts')
+      return contactsCache
+    }
+
     console.log('\n' + '='.repeat(60))
     console.log('[OneCoreHandler] 📋 GETTING CONTACTS - START')
     console.log('='.repeat(60))
-    
+
     try {
       if (!nodeOneCore.initialized || !nodeOneCore.leuteModel) {
         return {
@@ -526,11 +544,16 @@ const oneCoreHandlers = {
       })
       
       console.log('='.repeat(60) + '\n')
-      
-      return {
+
+      // Save to cache
+      const result = {
         success: true,
         contacts
       }
+      contactsCache = result
+      contactsCacheTime = Date.now()
+
+      return result
     } catch (error) {
       console.error('[OneCoreHandler] Failed to get contacts:', error)
       return {

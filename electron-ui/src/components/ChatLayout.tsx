@@ -315,27 +315,79 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         throw new Error('Electron API not available')
       }
 
+      // Generate conversation ID and name
+      const conversationName = chatName || `Group Chat ${conversations.length + 1}`
+      // Use conversation name as deterministic topic ID
+      const cleanName = conversationName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+      const tempConversationId = cleanName
+
+      // Add conversation to UI immediately with loading state
+      const optimisticConversation: Conversation = {
+        id: tempConversationId,
+        name: conversationName,
+        type: 'group',
+        participants: selectedUserIds,
+        lastMessage: '',
+        lastMessageTime: new Date(),
+        isGroup: true
+      }
+
+      // Add to conversations list and mark as processing
+      setConversations(prev => [...prev, optimisticConversation])
+      setProcessingConversations(prev => {
+        const next = new Set(prev)
+        next.add(tempConversationId)
+        return next
+      })
+      setSelectedConversation(tempConversationId)
+
       // Create group conversation through IPC handler
       const result = await window.electronAPI.invoke('chat:createConversation', {
         type: 'group',
         participants: selectedUserIds,
-        name: chatName || `Group Chat ${conversations.length + 1}`
+        name: conversationName
       })
 
       if (!result.success || !result.data) {
+        // Remove optimistic conversation on failure
+        setConversations(prev => prev.filter(c => c.id !== tempConversationId))
+        setProcessingConversations(prev => {
+          const next = new Set(prev)
+          next.delete(tempConversationId)
+          return next
+        })
         throw new Error(result.error || 'Failed to create group conversation')
       }
 
-      // Reload conversations from Node.js to get fresh data
-      await reloadConversations()
-      setSelectedConversation(result.data.id)
+      // Update conversation with real ID if different
+      if (result.data.id !== tempConversationId) {
+        setConversations(prev => prev.map(c =>
+          c.id === tempConversationId
+            ? { ...c, id: result.data.id }
+            : c
+        ))
+        setProcessingConversations(prev => {
+          const next = new Set(prev)
+          next.delete(tempConversationId)
+          next.add(result.data.id)
+          return next
+        })
+        setSelectedConversation(result.data.id)
+      }
 
-      // Mark as processing since welcome message may be generated
-      setProcessingConversations(prev => {
-        const next = new Set(prev)
-        next.add(result.data.id)
-        return next
-      })
+      // Reload conversations from Node.js to get fresh data after a delay
+      setTimeout(async () => {
+        await reloadConversations()
+        // Remove processing state
+        setProcessingConversations(prev => {
+          const next = new Set(prev)
+          next.delete(result.data.id)
+          return next
+        })
+      }, 1000)
     } catch (error: any) {
       console.error('[ChatLayout] Error creating group conversation:', error)
       const errorMessage = error?.message || 'Failed to create group conversation'

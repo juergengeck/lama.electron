@@ -48,6 +48,36 @@ class LLMManager extends EventEmitter {
     this.getToolDescriptions = this.getToolDescriptions.bind(this)
   }
 
+  /**
+   * Pre-warm the LLM connection to reduce cold start delays
+   */
+  async preWarmConnection() {
+    console.log('[LLMManager] Pre-warming LLM connection...')
+    try {
+      // Send a minimal ping to Ollama to establish connection
+      const response = await fetch('http://localhost:11434/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-oss',
+          prompt: 'Hi',
+          stream: false,
+          options: {
+            num_predict: 1 // Generate minimal response
+          }
+        })
+      })
+
+      if (response.ok) {
+        console.log('[LLMManager] ✅ LLM connection pre-warmed successfully')
+      } else {
+        console.log('[LLMManager] Pre-warm response not OK:', response.status)
+      }
+    } catch (err) {
+      console.log('[LLMManager] Pre-warm connection error:', err.message)
+    }
+  }
+
   async init() {
     if (this.isInitialized) {
       console.log('[LLMManager] Already initialized')
@@ -70,9 +100,14 @@ class LLMManager extends EventEmitter {
       
       // Initialize MCP servers
       await this.initializeMCP()
-      
+
       this.isInitialized = true
       console.log('[LLMManager] Initialized successfully with MCP support')
+
+      // Pre-warm LLM connection in background (don't await)
+      this.preWarmConnection().catch(err => {
+        console.log('[LLMManager] Pre-warm failed (non-critical):', err.message)
+      })
       
       // Immediate verification after initialization
       console.log('[LLMManager] POST-INIT VERIFICATION:')
@@ -138,7 +173,7 @@ class LLMManager extends EventEmitter {
     // Register Ollama models
     this.models.set('ollama:gpt-oss', {
       id: 'ollama:gpt-oss',
-      name: 'gpt-oss',
+      name: 'gpt-oss-private',
       provider: 'ollama',
       description: 'Local GPT model via Ollama',
       capabilities: ['chat', 'completion'],
@@ -154,15 +189,15 @@ class LLMManager extends EventEmitter {
     const claudeModels = [
       {
         id: 'claude:claude-3-5-sonnet',
-        name: 'Claude 3.5 Sonnet',
+        name: 'Claude 3.5 Sonnet-private',
         provider: 'anthropic',
         description: 'Advanced reasoning and analysis',
         contextLength: 200000,
         maxTokens: 8192
       },
       {
-        id: 'claude:claude-3-5-haiku', 
-        name: 'Claude 3.5 Haiku',
+        id: 'claude:claude-3-5-haiku',
+        name: 'Claude 3.5 Haiku-private',
         provider: 'anthropic',
         description: 'Fast and efficient',
         contextLength: 200000,
@@ -195,9 +230,14 @@ class LLMManager extends EventEmitter {
       const tools = mcpManager.getAvailableTools()
       this.mcpTools.clear()
       
+      const registeredTools = []
       for (const tool of tools) {
         this.mcpTools.set(tool.fullName || tool.name, tool)
-        console.log(`[LLMManager] Registered MCP tool: ${tool.fullName || tool.name}`)
+        registeredTools.push(tool.fullName || tool.name)
+      }
+      // Log all tools at once instead of individually
+      if (registeredTools.length > 0) {
+        console.log(`[LLMManager] Registered ${registeredTools.length} MCP tools`)
       }
       
       console.log(`[LLMManager] MCP initialized with ${this.mcpTools.size} tools`)
@@ -333,7 +373,7 @@ class LLMManager extends EventEmitter {
     } else {
       enhanced.unshift({
         role: 'system',
-        content: 'You are a helpful AI assistant integrated into LAMA with access to filesystem tools.' + toolDescriptions
+        content: 'You are LAMA, a private AI assistant with access to all of the owner\'s conversations and filesystem tools. You can help with any topic across all chats.' + toolDescriptions
       })
       console.log(`[LLMManager] Added new system message with tools`)
     }
@@ -488,6 +528,134 @@ class LLMManager extends EventEmitter {
     )
   }
   
+  /**
+   * Chat with response and topic analysis in a single LLM call
+   * Returns response immediately and processes analysis in background
+   */
+  async chatWithAnalysis(messages, modelId = null, options = {}) {
+    const startTime = Date.now()
+
+    try {
+      const model = modelId ? this.models.get(modelId) : this.models.get(this.defaultModelId)
+      if (!model) {
+        throw new Error('No model available')
+      }
+
+      console.log(`[LLMManager] Chat with analysis using ${model.id}`)
+
+      // Build enhanced prompt that requests both response and analysis
+      const conversationContext = messages.slice(-10).map(m =>
+        `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
+      ).join('\n')
+
+      const lastUserMessage = messages[messages.length - 1]?.content || ''
+
+      const analysisPrompt = `You are LAMA, a private AI assistant with access to all owner's conversations. Respond to the user naturally, then provide analysis.
+
+Recent conversation:
+${conversationContext}
+
+Provide your response in this exact format:
+[RESPONSE]
+Your natural response to the user here
+[/RESPONSE]
+
+[ANALYSIS]
+keywords: keyword1, keyword2, keyword3 (max 10 most relevant keywords)
+subject: subject-name | description of what this subject is about
+new_subject: yes/no (whether this is a new subject not previously discussed)
+[/ANALYSIS]
+
+IMPORTANT:
+- Your response should be natural and helpful
+- Focus on keywords that capture the essence of the conversation
+- Even short messages can contain critical information
+- Identify the current subject being discussed`
+
+      // Replace the last message with our enhanced prompt
+      const enhancedMessages = [
+        ...messages.slice(0, -1),
+        { role: 'user', content: analysisPrompt }
+      ]
+
+      // Track what we've streamed to avoid duplicates
+      let streamedLength = 0
+      let fullResponse = ''
+
+      // Get response with streaming if requested
+      const response = await this.chat(enhancedMessages, modelId, {
+        ...options,
+        onStream: options.onStream ? (chunk) => {
+          fullResponse += chunk
+
+          // Extract just the response part for streaming
+          const responseMatch = fullResponse.match(/\[RESPONSE\]([\s\S]*?)(?:\[\/RESPONSE\]|$)/)
+          if (responseMatch) {
+            const responseText = responseMatch[1].trim()
+            // Only stream new content
+            if (responseText.length > streamedLength) {
+              const newContent = responseText.substring(streamedLength)
+              streamedLength = responseText.length
+              // Only stream if we haven't hit the end marker
+              if (!fullResponse.includes('[/RESPONSE]') || !newContent.includes('[')) {
+                options.onStream(newContent)
+              }
+            }
+          }
+        } : undefined
+      })
+
+      // Parse response and analysis
+      const responseMatch = response.match(/\[RESPONSE\]([\s\S]*?)\[\/RESPONSE\]/)
+      const analysisMatch = response.match(/\[ANALYSIS\]([\s\S]*?)\[\/ANALYSIS\]/)
+
+      let userResponse = response // Fallback to full response if parsing fails
+      let analysis = null
+
+      if (responseMatch) {
+        userResponse = responseMatch[1].trim()
+      }
+
+      if (analysisMatch) {
+        const analysisText = analysisMatch[1].trim()
+        const keywordsLine = analysisText.match(/keywords:\s*(.+)/)
+        const subjectLine = analysisText.match(/subject:\s*(.+)/)
+        const newSubjectLine = analysisText.match(/new_subject:\s*(.+)/)
+
+        analysis = {
+          keywords: keywordsLine ? keywordsLine[1].split(',').map(k => k.trim()).filter(k => k) : [],
+          subject: null
+        }
+
+        if (subjectLine) {
+          const [name, ...descParts] = subjectLine[1].split('|')
+          analysis.subject = {
+            name: name.trim(),
+            description: descParts.join('|').trim(),
+            isNew: newSubjectLine ? newSubjectLine[1].trim().toLowerCase() === 'yes' : false
+          }
+        }
+      }
+
+      console.log(`[LLMManager] Chat with analysis completed in ${Date.now() - startTime}ms`)
+      if (analysis) {
+        console.log(`[LLMManager] Extracted ${analysis.keywords.length} keywords, subject: ${analysis.subject?.name || 'none'}`)
+      }
+
+      return {
+        response: userResponse,
+        analysis
+      }
+    } catch (error) {
+      console.error('[LLMManager] Chat with analysis error:', error)
+      // Fallback to regular chat if analysis fails
+      return {
+        response: await this.chat(messages, modelId, options),
+        analysis: null
+      }
+    }
+  }
+
   async chatWithLMStudio(model, messages) {
     const lmstudio = await import('./lmstudio.js')
     
@@ -547,7 +715,7 @@ class LLMManager extends EventEmitter {
     this.modelSettings.set(this.defaultModelId, {
       temperature: 0.7,
       maxTokens: 2048,
-      systemPrompt: 'You are a helpful AI assistant.'
+      systemPrompt: 'You are LAMA, a private AI assistant with access to all of the owner\'s conversations.'
     })
   }
 

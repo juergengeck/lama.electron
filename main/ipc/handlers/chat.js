@@ -13,6 +13,9 @@ import { MessageAssertionManager } from '../../core/message-assertion-certificat
 // Topic creation mutex to prevent race conditions
 const topicCreationInProgress = new Map()
 
+// Welcome message mutex to prevent duplicate welcome messages
+const welcomeMessageInProgress = new Map()
+
 // Message version manager instance
 let messageVersionManager = null
 
@@ -111,12 +114,35 @@ const chatHandlers = {
       // For P2P: channelOwner should be null (shared channel)
       // For group: channelOwner should be undefined (use my main identity)
       console.log('[ChatHandler] DEBUG: About to send message to topicRoom')
+      console.log('[ChatHandler] Attachments:', attachments?.length || 0)
 
       const isP2P = conversationId.includes('<->')
       const channelOwner = isP2P ? null : undefined
 
-      // Use sendMessage method (as per one.leute reference implementation)
-      await topicRoom.sendMessage(text, undefined, channelOwner)
+      // Check if we have attachments
+      if (attachments && attachments.length > 0) {
+        console.log('[ChatHandler] Sending message with attachments')
+
+        // Extract hashes from attachment objects
+        // Attachments should have a hash property from the AttachmentService
+        const attachmentHashes = attachments.map(att => {
+          if (typeof att === 'string') return att
+          return att.hash || att.id
+        }).filter(Boolean)
+
+        console.log('[ChatHandler] Attachment hashes:', attachmentHashes)
+
+        // Use sendMessageWithAttachmentAsHash method
+        await topicRoom.sendMessageWithAttachmentAsHash(
+          text || '', // Ensure text is not undefined
+          attachmentHashes,
+          undefined, // author - undefined means use my main identity
+          channelOwner
+        )
+      } else {
+        // Use regular sendMessage method (as per one.leute reference implementation)
+        await topicRoom.sendMessage(text, undefined, channelOwner)
+      }
 
       // Create versioned message object - just for UI display
       const message = {
@@ -274,11 +300,14 @@ const chatHandlers = {
           
           // Store the promise so other requests can wait
           topicCreationInProgress.set(conversationId, creationPromise)
-          
-          const created = await creationPromise
-          
-          // Clean up the mutex
-          topicCreationInProgress.delete(conversationId)
+
+          let created
+          try {
+            created = await creationPromise
+          } finally {
+            // Always clean up the mutex, even on error
+            topicCreationInProgress.delete(conversationId)
+          }
           
           if (!created) {
             return {
@@ -296,8 +325,66 @@ const chatHandlers = {
         }
       }
       
-      // Check if default chat needs welcome message - check every time for empty default chat
-      if (conversationId === 'default' && nodeOneCore.aiAssistantModel) {
+      // Check if this is the Hi introductory chat and was just created
+      if (conversationId === 'hi' && topicWasJustCreated) {
+        if (nodeOneCore.aiAssistantModel) {
+          console.log('[ChatHandler] Sending welcome message for Hi chat')
+
+          // Use the default AI assistant for the welcome message
+          const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
+          const defaultAI = aiContacts[0] // Use the first/default AI
+
+          if (defaultAI) {
+            const aiPersonId = defaultAI.personId
+            const aiName = defaultAI.name?.replace('-private', '') || 'your AI assistant'
+
+            const introMessage = `Welcome to LAMA! 👋
+
+I'm ${aiName}, your AI assistant running entirely on your device.
+
+🔒 **Privacy First**: All conversations stay on your device. Your AI assistant can access conversation history to provide better context-aware help.
+
+💡 **How to Use**:
+• Start chatting with me right here - just type your message below
+• Click the + button to create new chats or group conversations
+• Add friends as contacts to start P2P conversations
+• Configure additional AI models in Settings → AI Models
+
+📝 **Quick Start**:
+Type anything to begin - ask questions, have discussions, or request help with tasks. I'm here to assist!`
+
+            // Send the message from the AI assistant
+            await topicRoom.sendMessage(introMessage, aiPersonId)
+            console.log(`[ChatHandler] Hi chat welcome message sent from ${aiName}`)
+
+            // Note: We don't register 'hi' as an AI topic
+            // This is just a one-time welcome message, not an ongoing AI conversation
+          } else {
+            // No AI setup yet - create a simple welcome message from the system
+            console.log('[ChatHandler] No AI contacts available - creating simple welcome message')
+
+            const systemMessage = `Welcome to LAMA! 👋
+
+LAMA is your private AI assistant that runs entirely on your device.
+
+To get started:
+1. Add an AI model in Settings → AI Models
+2. Once configured, switch to the LAMA chat to begin
+
+This Hi chat is just an introduction. Feel free to delete it once you're familiar with LAMA.`
+
+            // Send message from the current user (owner)
+            await topicRoom.sendMessage(systemMessage, nodeOneCore.ownerId)
+            console.log('[ChatHandler] Hi chat system welcome message sent')
+          }
+        }
+      }
+
+      // Check if chat needs welcome message - for lama conversation or AI conversations
+      const isAITopic = nodeOneCore.aiAssistantModel?.isAITopic(conversationId)
+      const isDefaultConversation = conversationId === 'lama'
+
+      if (nodeOneCore.aiAssistantModel && (isAITopic || isDefaultConversation)) {
         let hasRealMessages = false
         
         // If we JUST created the topic, skip the message check - it's guaranteed to be empty
@@ -307,7 +394,7 @@ const chatHandlers = {
           hasRealMessages = false
         } else {
           const existingMessages = await topicRoom.retrieveAllMessages()
-          console.log(`[ChatHandler] Found ${existingMessages.length} existing messages in default chat`)
+          console.log(`[ChatHandler] Found ${existingMessages.length} existing messages in AI chat ${conversationId}`)
           
           // Log the actual message to understand what it is
           if (existingMessages.length > 0) {
@@ -327,28 +414,48 @@ const chatHandlers = {
         }
         
         if (topicWasJustCreated || !hasRealMessages) {
-          // Only send welcome if we haven't sent one before
-          // Check both: not registered as AI topic AND no messages exist
-          const alreadyRegistered = nodeOneCore.aiAssistantModel.isAITopic(conversationId)
-          const shouldSendWelcome = !alreadyRegistered && !hasRealMessages
+          // Send welcome message if this is an empty AI conversation
+          const shouldSendWelcome = !hasRealMessages
 
           if (shouldSendWelcome) {
-            const welcomeStartTime = Date.now()
-            console.log(`[ChatHandler] ⏱️ Default chat is empty, triggering AI welcome message at ${new Date().toISOString()}`)
+            // Check if welcome message is already being generated
+            if (welcomeMessageInProgress.has(conversationId)) {
+              console.log(`[ChatHandler] Welcome message already in progress for ${conversationId}, skipping duplicate`)
+            } else {
+              // Mark as in progress
+              const welcomePromise = (async () => {
+                const welcomeStartTime = Date.now()
+                console.log(`[ChatHandler] ⏱️ AI chat ${conversationId} is empty, triggering welcome message at ${new Date().toISOString()}`)
 
-            try {
-              // Block and wait for welcome message (handleNewTopic will send thinking indicator)
-              await nodeOneCore.aiAssistantModel.handleNewTopic(conversationId, topicRoom)
-              console.log(`[ChatHandler] ⏱️ Welcome message completed in ${Date.now() - welcomeStartTime}ms`)
-            } catch (error) {
-              console.error(`[ChatHandler] Failed to generate welcome message after ${Date.now() - welcomeStartTime}ms:`, error)
-              // Continue without welcome message rather than failing the whole operation
+                try {
+                  // Register this as an AI topic if not already registered
+                  if (!nodeOneCore.aiAssistantModel.isAITopic(conversationId)) {
+                    const defaultModel = nodeOneCore.aiAssistantModel.getDefaultModel()
+                    if (defaultModel) {
+                      nodeOneCore.aiAssistantModel.registerAITopic(conversationId, defaultModel.id)
+                    }
+                  }
+
+                  // Block and wait for welcome message (handleNewTopic will send thinking indicator)
+                  await nodeOneCore.aiAssistantModel.handleNewTopic(conversationId, topicRoom)
+                  console.log(`[ChatHandler] ⏱️ Welcome message completed in ${Date.now() - welcomeStartTime}ms`)
+                } catch (error) {
+                  console.error(`[ChatHandler] Failed to generate welcome message after ${Date.now() - welcomeStartTime}ms:`, error)
+                  // Continue without welcome message rather than failing the whole operation
+                } finally {
+                  // Clear the mutex
+                  welcomeMessageInProgress.delete(conversationId)
+                }
+              })()
+
+              welcomeMessageInProgress.set(conversationId, welcomePromise)
+              await welcomePromise
             }
           } else {
-            console.log(`[ChatHandler] Skipping welcome: alreadyRegistered=${alreadyRegistered}, hasRealMessages=${hasRealMessages}`)
+            console.log(`[ChatHandler] Skipping welcome: hasRealMessages=${hasRealMessages}`)
           }
         } else {
-          console.log('[ChatHandler] Default chat already has messages, skipping welcome')
+          console.log('[ChatHandler] AI chat already has messages, skipping welcome')
         }
       }
       
@@ -524,6 +631,7 @@ const chatHandlers = {
           id: msg.id || msg.channelEntryHash || `msg-${Date.now()}`,
           conversationId,
           text: msg.data?.text || '',
+          attachments: msg.data?.attachments || [], // Include attachments from the message
           sender: senderId,
           senderName: senderName,
           timestamp: msg.creationTime ? new Date(msg.creationTime).toISOString() : new Date().toISOString(),
@@ -591,7 +699,32 @@ const chatHandlers = {
         const sortedIds = [userId, participants[0]].sort()
         topicId = `${sortedIds[0]}<->${sortedIds[1]}`
       } else {
-        topicId = `topic-${Date.now()}`
+        // Use conversation name as deterministic topic ID
+        // Clean the name to make a valid ID
+        let baseName = name || `group-${Date.now()}`
+        const cleanName = baseName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+
+        // Check if a topic with this ID already exists
+        let finalTopicId = cleanName
+        let counter = 1
+        while (true) {
+          try {
+            // Try to enter the topic room to check if it exists
+            const testRoom = await nodeOneCore.topicModel.enterTopicRoom(finalTopicId)
+            await testRoom.leave()
+            // Topic exists, add a counter to make it unique
+            finalTopicId = `${cleanName}-${counter}`
+            counter++
+            console.log(`[ChatHandler] Topic ID '${cleanName}' already exists, trying '${finalTopicId}'`)
+          } catch (error) {
+            // Topic doesn't exist, we can use this ID
+            break
+          }
+        }
+        topicId = finalTopicId
       }
       
       const conversation = {
@@ -880,8 +1013,8 @@ const chatHandlers = {
                 const otherPersonId = parts.find(id => id !== nodeOneCore.ownerId) || parts[1]
                 const displayName = otherPersonId.substring(0, 8) + '...'
                 name = `Chat with ${displayName}`
-              } else if (channel.id === 'default') {
-                name = 'General Chat'
+              } else if (channel.id === 'lama') {
+                name = 'LAMA'
               } else if (channel.id === 'EveryoneTopic') {
                 name = 'Everyone'
               } else if (channel.id === 'GlueOneTopic') {
@@ -908,8 +1041,8 @@ const chatHandlers = {
             if (channel.id.includes('<->')) {
               conversationType = 'direct'
               isGroupChat = false
-            } else if (channel.id === 'default') {
-              conversationType = 'direct' // Default is treated as direct AI chat
+            } else if (channel.id === 'lama') {
+              conversationType = 'direct' // LAMA is treated as direct AI chat
               isGroupChat = false
             } else if (channel.id.startsWith('topic-')) {
               conversationType = 'group'
@@ -932,17 +1065,8 @@ const chatHandlers = {
           }))
       }
       
-      // Ensure default conversation exists
-      if (!conversations.find(c => c.id === 'default')) {
-        conversations.unshift({
-          id: 'default',
-          name: 'General Chat',
-          createdAt: new Date().toISOString(),
-          lastMessage: null,
-          lastMessageAt: null,
-          unreadCount: 0
-        })
-      }
+      // Note: We do NOT automatically recreate Hi or LAMA chats if deleted
+      // They are only created during initial setup in node-one-core.js
       
       // Add AI participant info to each conversation
       if (nodeOneCore.aiAssistantModel) {
@@ -1145,10 +1269,10 @@ const chatHandlers = {
         throw new Error('No valid participant IDs provided')
       }
 
-      // Check if this is a P2P conversation or default chat - if so, create a new group chat
-      if (conversationId.includes('<->') || conversationId === 'default') {
+      // Check if this is a P2P conversation or lama chat - if so, create a new group chat
+      if (conversationId.includes('<->') || conversationId === 'lama') {
         const isP2P = conversationId.includes('<->')
-        const isDefault = conversationId === 'default'
+        const isDefault = conversationId === 'lama'
 
         console.log(`[ChatHandler] ${isP2P ? 'P2P' : 'Default'} conversation detected - creating new group chat`)
 
@@ -1191,8 +1315,30 @@ const chatHandlers = {
         // Remove duplicates
         const uniqueParticipants = [...new Set(allParticipants)]
 
-        // Create new group topic ID
-        const newGroupId = `topic-${Date.now()}`
+        // Create new group topic ID based on group name
+        let baseGroupName = groupName || `group-${Date.now()}`
+        const cleanGroupName = baseGroupName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+
+        // Check if a topic with this ID already exists
+        let newGroupId = cleanGroupName
+        let counter = 1
+        while (true) {
+          try {
+            // Try to enter the topic room to check if it exists
+            const testRoom = await nodeOneCore.topicModel.enterTopicRoom(newGroupId)
+            await testRoom.leave()
+            // Topic exists, add a counter to make it unique
+            newGroupId = `${cleanGroupName}-${counter}`
+            counter++
+            console.log(`[ChatHandler] Group topic ID '${cleanGroupName}' already exists, trying '${newGroupId}'`)
+          } catch (error) {
+            // Topic doesn't exist, we can use this ID
+            break
+          }
+        }
 
         console.log('[ChatHandler] Creating group chat with participants:', uniqueParticipants.map(id => id.substring(0, 8)).join(', '))
 
@@ -1306,9 +1452,9 @@ const chatHandlers = {
       // we'll need to create a new channel or mark this as cleared
       console.log('[ChatHandler] Clearing messages for conversation:', conversationId)
       
-      // If this is the default chat and we have AI, trigger welcome message
-      if (conversationId === 'default' && nodeOneCore.aiAssistantModel) {
-        console.log('[ChatHandler] Triggering welcome message for cleared default chat')
+      // If this is the lama chat and we have AI, trigger welcome message
+      if (conversationId === 'lama' && nodeOneCore.aiAssistantModel) {
+        console.log('[ChatHandler] Triggering welcome message for cleared lama chat')
         
         try {
           // handleNewTopic will send the thinking indicator

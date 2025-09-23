@@ -1,0 +1,199 @@
+openapi: 3.0.0
+info:
+  title: HTML Export with Microdata IPC Contract
+  version: 1.0.0
+  description: IPC handler contract for exporting conversations as HTML with microdata markup
+
+paths:
+  /export:htmlWithMicrodata:
+    post:
+      summary: Export conversation as HTML with embedded microdata
+      description: |
+        Generates a self-contained HTML file with comprehensive microdata markup
+        including cryptographic hashes and signatures for message verification.
+      operationId: exportHtmlWithMicrodata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportHTMLRequest'
+      responses:
+        '200':
+          description: Successfully exported conversation to HTML
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportHTMLResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Topic not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error during export
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ExportHTMLRequest:
+      type: object
+      required:
+        - topicId
+        - format
+      properties:
+        topicId:
+          type: string
+          description: Unique identifier of the conversation/topic to export
+          example: "abc123def456"
+        format:
+          type: string
+          enum: ['html-microdata']
+          description: Export format (for future extensibility)
+        options:
+          $ref: '#/components/schemas/ExportOptions'
+
+    ExportOptions:
+      type: object
+      properties:
+        includeSignatures:
+          type: boolean
+          default: true
+          description: Include cryptographic signatures in microdata
+        includeAttachments:
+          type: boolean
+          default: true
+          description: Embed file attachments as base64 in HTML
+        maxMessages:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 10000
+          description: Maximum number of messages to export
+        dateRange:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+              description: Start date for message filtering
+            end:
+              type: string
+              format: date-time
+              description: End date for message filtering
+        styleTheme:
+          type: string
+          enum: ['light', 'dark', 'auto']
+          default: 'light'
+          description: Visual theme for the exported HTML
+
+    ExportHTMLResponse:
+      type: object
+      required:
+        - html
+        - metadata
+      properties:
+        html:
+          type: string
+          description: Complete HTML document with embedded microdata
+        metadata:
+          $ref: '#/components/schemas/ExportMetadata'
+
+    ExportMetadata:
+      type: object
+      required:
+        - messageCount
+        - exportDate
+        - topicId
+        - fileSize
+      properties:
+        messageCount:
+          type: integer
+          description: Number of messages included in export
+        exportDate:
+          type: string
+          format: date-time
+          description: When the export was generated
+        topicId:
+          type: string
+          description: The topic ID that was exported
+        fileSize:
+          type: integer
+          description: Size of the HTML content in bytes
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantInfo'
+        dateRange:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+
+    ParticipantInfo:
+      type: object
+      required:
+        - email
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        personHash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error context
+
+# IPC Handler Implementation Notes:
+#
+# Location: /main/ipc/handlers/export.js
+#
+# Dependencies:
+# - ONE.core implode() function
+# - TopicRoom for message retrieval
+# - HTML formatting service
+#
+# Process Flow:
+# 1. Validate request parameters
+# 2. Retrieve messages from TopicRoom
+# 3. Run implode() on each message
+# 4. Format as HTML with microdata
+# 5. Add styling and metadata
+# 6. Return complete HTML document
+#
+# Error Handling:
+# - Invalid topic: Return 404
+# - Export too large: Return 400 with size error
+# - Implode failure: Return 500 with details
+# - Timeout (30s): Return 500 with timeout error

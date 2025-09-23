@@ -201,17 +201,17 @@ export async function setupBrowserNodeChannelAccess(nodeOwnerId, browserPersonId
     
     console.log(`[ChannelAccess] ✅ Processed ${channelInfos.length} channels`)
     
-    // Specifically ensure "default" channel has proper access
-    const defaultChannelInfos = await channelManager.getMatchingChannelInfos({
-      channelId: 'default'
+    // Specifically ensure "lama" channel has proper access
+    const lamaChannelInfos = await channelManager.getMatchingChannelInfos({
+      channelId: 'lama'
     })
-    
-    if (defaultChannelInfos.length > 0) {
-      console.log('[ChannelAccess] Found default channel, ensuring access...')
-      for (const channelInfo of defaultChannelInfos) {
-        await grantChannelAccessToPerson('default', channelInfo.owner, browserPersonId)
+
+    if (lamaChannelInfos.length > 0) {
+      console.log('[ChannelAccess] Found lama channel, ensuring access...')
+      for (const channelInfo of lamaChannelInfos) {
+        await grantChannelAccessToPerson('lama', channelInfo.owner, browserPersonId)
       }
-      console.log('[ChannelAccess] ✅ Default channel access configured')
+      console.log('[ChannelAccess] ✅ LAMA channel access configured')
     }
     
     // Note: Topic-specific channels are created by TopicGroupManager for each participant

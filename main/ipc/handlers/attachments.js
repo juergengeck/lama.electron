@@ -11,11 +11,11 @@ const attachmentHandlers = {
    */
   async storeAttachment(event, { data, metadata }) {
     console.log('[AttachmentHandler] Store attachment:', metadata.name)
-    
+
     try {
       // TODO: Proper IoM setup instead of auth check
       // For now, allow attachment storage without auth
-      
+
       // Convert base64 or array to Buffer
       let buffer
       if (typeof data === 'string') {
@@ -28,9 +28,13 @@ const attachmentHandlers = {
         // Already a buffer or arraybuffer
         buffer = Buffer.from(data)
       }
-      
-      // Store in ONE.core
-      const result = await attachmentService.storeAttachment(buffer, metadata)
+
+      // Store in ONE.core - pass mimeType as type for consistency
+      const result = await attachmentService.storeAttachment(buffer, {
+        name: metadata.name,
+        type: metadata.mimeType || metadata.type,
+        size: metadata.size
+      })
       
       return {
         success: true,

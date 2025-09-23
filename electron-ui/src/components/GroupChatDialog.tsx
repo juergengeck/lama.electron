@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { User, Search, Loader2, Users } from 'lucide-react'
+import { User, Search, Loader2, Users, Bot } from 'lucide-react'
 
 interface Contact {
   id: string
@@ -13,6 +13,8 @@ interface Contact {
   personId?: string
   isConnected?: boolean
   canMessage?: boolean
+  isAI?: boolean
+  modelId?: string
 }
 
 interface GroupChatDialogProps {
@@ -60,7 +62,9 @@ export function GroupChatDialog({
         name: contact.name || `Contact ${contact.id.substring(0, 8)}...`,
         personId: contact.personId,
         isConnected: contact.isConnected || false,
-        canMessage: contact.canMessage !== false // Default to true if not specified
+        canMessage: contact.canMessage !== false, // Default to true if not specified
+        isAI: contact.isAI || false,
+        modelId: contact.modelId
       }))
 
       setContacts(contactList)
@@ -155,10 +159,9 @@ export function GroupChatDialog({
               ) : (
                 <div className="p-2 space-y-1">
                   {filteredContacts.map((contact) => (
-                    <div
+                    <label
                       key={contact.id}
                       className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted cursor-pointer"
-                      onClick={() => handleUserToggle(contact.id)}
                     >
                       <Checkbox
                         checked={selectedUserIds.includes(contact.id)}
@@ -167,24 +170,30 @@ export function GroupChatDialog({
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center space-x-2">
-                          <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          {contact.isAI ? (
+                            <Bot className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                          ) : (
+                            <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          )}
                           <span className="text-sm font-medium truncate">{contact.name}</span>
                         </div>
 
-                        <div className="flex items-center space-x-2 mt-1">
-                          {contact.isConnected && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
-                              Connected
-                            </span>
-                          )}
-                          {!contact.canMessage && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">
-                              Limited
-                            </span>
-                          )}
-                        </div>
+                        {!contact.isAI && (
+                          <div className="flex items-center space-x-2 mt-1">
+                            {contact.isConnected && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
+                                Connected
+                              </span>
+                            )}
+                            {!contact.canMessage && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">
+                                Limited
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
+                    </label>
                   ))}
                 </div>
               )}

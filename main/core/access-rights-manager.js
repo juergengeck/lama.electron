@@ -19,7 +19,7 @@ class NodeAccessRightsManager {
       if (channelInfoIdHash && this.groupConfig.federation) {
         // CRITICAL: Check channel type before granting access
         const isP2PChannel = channelId.includes('<->')
-        const isPrivateChannel = channelId === 'default' || channelId === 'contacts'
+        const isPrivateChannel = channelId === 'contacts' // Note: 'lama' and 'hi' are user-visible channels
 
         // Skip automatic access for P2P and private channels
         if (isP2PChannel || isPrivateChannel) {
@@ -158,10 +158,10 @@ class NodeAccessRightsManager {
         // Apply access rights to channels selectively
         await Promise.all(
           channels.map(async channel => {
-            // CRITICAL: Don't share "default" or other private channels with everyone!
+            // CRITICAL: Don't share "lama" or other private channels with everyone!
             // Only share P2P channels (format: id1<->id2) and specific shared channels
             const isP2PChannel = channel.id.includes('<->')
-            const isPrivateChannel = channel.id === 'default' || channel.id === 'contacts'
+            const isPrivateChannel = channel.id === 'contacts' // Note: 'lama' and 'hi' are user-visible channels
 
             if (isPrivateChannel) {
               console.log(`[NodeAccessRights] Skipping private channel: ${channel.id}`)

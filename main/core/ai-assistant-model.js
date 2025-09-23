@@ -97,20 +97,66 @@ export class AIAssistantModel {
     this.isInitialized = true
     console.log('[AIAssistantModel] ✅ Initialized')
 
-    // Always register the default channel with the default AI model
-    const defaultModel = this.getDefaultModel()
-    if (defaultModel) {
-      this.registerAITopic('default', defaultModel.id)
-      console.log(`[AIAssistantModel] Registered default channel with model: ${defaultModel.id}`)
-    } else {
-      console.warn('[AIAssistantModel] No default model available for default channel')
-    }
-
     // Scan existing conversations for AI participants and register them
     await this.scanExistingConversations()
 
     // Load existing AI contacts into cache
     await this.loadExistingAIContacts()
+  }
+
+  /**
+   * Ensure lama channel has a welcome message if it's empty
+   */
+  async ensureDefaultChannelWelcomeMessage() {
+    try {
+      console.log('[AIAssistantModel] Checking if lama channel needs welcome message...')
+
+      if (!this.nodeOneCore.topicModel) {
+        console.log('[AIAssistantModel] TopicModel not ready for welcome message')
+        return
+      }
+
+      if (!this.nodeOneCore.channelManager) {
+        console.log('[AIAssistantModel] ChannelManager not ready for welcome message')
+        return
+      }
+
+      // First ensure the lama channel exists
+      try {
+        // Create the lama channel if it doesn't exist
+        const channelExists = await this.nodeOneCore.channelManager.hasChannel('lama')
+        if (!channelExists) {
+          console.log('[AIAssistantModel] Creating lama channel...')
+          await this.nodeOneCore.channelManager.createChannel('lama', this.nodeOneCore.ownerId)
+        }
+
+        // Also ensure the topic exists
+        const topic = await this.nodeOneCore.topicModel.topics.queryById('lama')
+        if (!topic) {
+          console.log('[AIAssistantModel] Creating lama topic...')
+          await this.nodeOneCore.topicModel.createTopic('lama', 'LAMA')
+        }
+      } catch (createError) {
+        console.log('[AIAssistantModel] Channel/topic might already exist:', createError.message)
+      }
+
+      // Enter the lama topic room
+      const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
+
+      // Check if there are any messages
+      const messages = await topicRoom.retrieveAllMessages()
+
+      if (messages.length === 0) {
+        console.log('[AIAssistantModel] LAMA channel is empty, sending welcome message...')
+
+        // Send welcome message using handleNewTopic
+        await this.handleNewTopic('lama', topicRoom)
+      } else {
+        console.log(`[AIAssistantModel] LAMA channel already has ${messages.length} messages`)
+      }
+    } catch (error) {
+      console.error('[AIAssistantModel] Error ensuring lama channel welcome message:', error)
+    }
   }
 
   /**
@@ -376,8 +422,8 @@ export class AIAssistantModel {
         })
       }
       
-      // Get AI response with streaming support
-      const response = await this.llmManager.chat(history, modelId, {
+      // Get AI response with analysis in a single call
+      const result = await this.llmManager.chatWithAnalysis(history, modelId, {
         onStream: (chunk) => {
           fullResponse += chunk
 
@@ -394,12 +440,14 @@ export class AIAssistantModel {
           }
         }
       })
+
+      const response = result.response
       
       if (response) {
         // Send the response to the topic
         await topicRoom.sendMessage(response, aiPersonId)
         console.log(`[AIAssistantModel] Sent AI response to topic ${topicId}`)
-        
+
         // Notify UI about the complete message
         for (const window of BrowserWindow.getAllWindows()) {
           window.webContents.send('message:updated', {
@@ -415,7 +463,52 @@ export class AIAssistantModel {
             }
           })
         }
-        
+
+        // Process analysis in background (non-blocking)
+        if (result.analysis) {
+          setImmediate(async () => {
+            try {
+              console.log('[AIAssistantModel] Processing analysis in background...')
+
+              // Update keywords if extracted
+              if (result.analysis.keywords?.length > 0 && this.nodeOneCore.topicAnalysisModel) {
+                for (const keyword of result.analysis.keywords) {
+                  await this.nodeOneCore.topicAnalysisModel.addKeyword(topicId, keyword)
+                }
+                console.log(`[AIAssistantModel] Added ${result.analysis.keywords.length} keywords`)
+              }
+
+              // Update or create subject if identified
+              if (result.analysis.subject && this.nodeOneCore.topicAnalysisModel) {
+                const { name, description, isNew } = result.analysis.subject
+                if (isNew) {
+                  // Create subject with keyword combination as the name
+                  const keywords = name.split(/[\s-]+/).filter(k => k)
+                  await this.nodeOneCore.topicAnalysisModel.createSubject(
+                    topicId,
+                    keywords,
+                    name,
+                    description,
+                    0.8 // confidence score
+                  )
+                  console.log(`[AIAssistantModel] Created new subject: ${name}`)
+                } else {
+                  // Update existing subject or mark as active
+                  const subjects = await this.nodeOneCore.topicAnalysisModel.getSubjects(topicId)
+                  const existing = subjects.find(s => s.keywordCombination === name)
+                  if (existing && existing.archived) {
+                    await this.nodeOneCore.topicAnalysisModel.unarchiveSubject(topicId, existing.id)
+                    console.log(`[AIAssistantModel] Reactivated subject: ${name}`)
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('[AIAssistantModel] Error processing analysis:', error)
+              // Don't throw - this is background processing
+            }
+          })
+        }
+
         return response
       }
       
@@ -645,7 +738,7 @@ export class AIAssistantModel {
       
       // Generate welcome message from LLM
       const messages = [
-        { role: 'system', content: `You are a helpful AI assistant starting a new conversation. Generate a brief, friendly welcome message. Be warm and approachable. Keep it under 2 sentences.` },
+        { role: 'system', content: `You are LAMA, a private AI assistant with access to all owner's conversations. Generate a brief, friendly welcome message. Be warm and approachable. Keep it under 2 sentences.` },
         { role: 'user', content: `Generate a welcome message for a new chat conversation.` }
       ]
       
@@ -758,12 +851,17 @@ export class AIAssistantModel {
    * This is AI-specific tracking, not general contact management
    */
   getAllContacts() {
-    return Array.from(this.aiContacts.entries()).map(([modelId, personId]) => {
+    return Array.from(this.aiContacts.entries()).map(([modelId, contactInfo]) => {
+      // If we stored the full contact info, return it
+      if (typeof contactInfo === 'object' && contactInfo.personId) {
+        return contactInfo
+      }
+      // Legacy: if we only stored personId
       const models = this.llmManager?.getAvailableModels() || []
       const model = models.find(m => m.id === modelId)
       return {
         modelId,
-        personId,
+        personId: contactInfo,
         name: model?.name || modelId
       }
     })

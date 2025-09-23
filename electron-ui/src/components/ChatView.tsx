@@ -8,9 +8,10 @@ import { lamaBridge } from '@/bridge/lama-bridge'
 import { topicAnalysisService } from '@/services/topic-analysis-service'
 import { useChatKeywords } from '@/hooks/useChatKeywords'
 import { ChatHeader } from './chat/ChatHeader'
+import { ChatContext } from './chat/ChatContext'
 
 export const ChatView = memo(function ChatView({
-  conversationId = 'default',
+  conversationId = 'lama',
   onProcessingChange,
   onMessageUpdate,
   isInitiallyProcessing = false
@@ -22,7 +23,7 @@ export const ChatView = memo(function ChatView({
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
-  const { keywords } = useChatKeywords(conversationId)
+  const { keywords } = useChatKeywords(conversationId, messages)
 
   // Debug: log messages received from hook
   console.log('[ChatView] Received from hook - messages:', messages?.length || 0, 'loading:', loading)
@@ -46,6 +47,12 @@ export const ChatView = memo(function ChatView({
   const [isAIProcessing, setIsAIProcessing] = useState(isInitiallyProcessing)
   const [aiStreamingContent, setAiStreamingContent] = useState('')
   const [lastAnalysisMessageCount, setLastAnalysisMessageCount] = useState(0)
+  const [showSummary, setShowSummary] = useState(false)
+
+  // Check if this is an AI conversation
+  const hasAIParticipant = messages.some(m => m.isAI) ||
+                           conversationId === 'lama' ||
+                           conversationId === 'ai-chat'
 
 
   // Auto-trigger topic analysis after 5 messages
@@ -147,9 +154,15 @@ export const ChatView = memo(function ChatView({
     // Get the conversation/contact name
     const loadConversationDetails = async () => {
       try {
+        // Check if this is the Hi introductory chat
+        if (conversationId === 'hi') {
+          setConversationName('Hi')
+          return
+        }
+
         // Check if this is an AI conversation
-        if (conversationId === 'default' || conversationId === 'ai-chat') {
-          // For the default conversation, check if it's with the AI
+        if (conversationId === 'lama' || conversationId === 'ai-chat') {
+          // For the lama conversation, check if it's with the AI
           // based on message content
           if (messages.length > 0) {
             const aiMessage = messages.find(m => 
@@ -174,8 +187,8 @@ export const ChatView = memo(function ChatView({
             }
           }
           
-          // No messages yet, but it's the default conversation
-          setConversationName('Chat')
+          // No messages yet, but it's the lama conversation
+          setConversationName('LAMA')
           return
         }
         
@@ -205,7 +218,7 @@ export const ChatView = memo(function ChatView({
     onProcessingChange?.(true)
 
     // Check if this is an AI conversation to show processing indicator
-    const isAIConversation = conversationId === 'default' ||
+    const isAIConversation = conversationId === 'lama' ||
                              conversationId === 'ai-chat' ||
                              messages.some(m => m.isAI)
 
@@ -266,6 +279,9 @@ export const ChatView = memo(function ChatView({
         conversationName={conversationName}
         keywords={keywords}
         messageCount={messages.length}
+        hasAI={hasAIParticipant}
+        showSummary={showSummary}
+        onToggleSummary={() => setShowSummary(!showSummary)}
         onKeywordClick={(keyword) => {
           console.log('[ChatView] Keyword clicked:', keyword)
           // TODO: Implement keyword search/filtering
@@ -273,7 +289,20 @@ export const ChatView = memo(function ChatView({
         }}
       />
 
-      <CardContent className="flex-1 p-0 min-h-0">
+      <CardContent className="flex-1 p-0 min-h-0 flex flex-col">
+        {/* AI Summary Panel - Shows at top when visible */}
+        {showSummary && hasAIParticipant && (
+          <div className="border-b bg-muted/30">
+            <ChatContext
+              topicId={conversationId}
+              messages={messages}
+              messageCount={messages.length}
+              className="border-0"
+            />
+          </div>
+        )}
+
+        {/* Messages */}
         <MessageView
           messages={messages}
           currentUserId={user?.id}

@@ -33,9 +33,9 @@ class LLMObjectManager {
       // Collect all LLM objects from storage using the channel manager
       const llmObjects = [];
       try {
-        // Use the default channel to store/retrieve LLM objects
+        // Use the lama channel to store/retrieve LLM objects
         const iterator = this.nodeOneCore.channelManager.objectIteratorWithType('LLM', {
-          channelId: 'default'
+          channelId: 'lama'
         });
 
         for await (const llmObj of iterator) {
