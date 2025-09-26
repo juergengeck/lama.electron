@@ -515,11 +515,12 @@ class RealNodeInstance {
 The central orchestrator that coordinates all AI functionality:
 - **LLM Management**: Integrates with LLMManager for model operations
 - **AI Identity**: Creates AI contacts as full ONE.core Person objects
-- **Message Listening**: Monitors CHUM events for AI conversations  
+- **Message Listening**: Monitors CHUM events for AI conversations
 - **Topic Management**: Associates AI models with conversation topics
 - **Tool Interface**: Unified access to AI tools (MCP and custom)
 - **Response Generation**: Handles conversation context and history
 - **Federation Support**: AI objects sync across browser/node instances
+- **Initialization Order**: CRITICAL - Must load AI contacts before scanning topics to properly identify AI participants
 
 #### LLMManager (`/main/services/llm-manager.js`)
 Handles actual LLM operations and provider integration:
@@ -615,6 +616,28 @@ AI components participate in the federated architecture:
 4. **Browser Discovery**: Finds AI contacts via CHUM sync
 5. **Message Routing**: AIMessageListener handles AI responses
 
+### AI Initialization Flow
+
+**CRITICAL**: The initialization order is essential for proper AI topic registration:
+
+```javascript
+// CORRECT ORDER in ai-assistant-model.js
+async initialize() {
+  // 1. FIRST: Load existing AI contacts into cache
+  // This populates llmObjectManager with AI person IDs
+  await this.loadExistingAIContacts()
+
+  // 2. SECOND: Scan existing conversations for AI participants
+  // This can now properly identify AI participants using isLLMPerson()
+  await this.scanExistingConversations()
+}
+```
+
+**Why this order matters**:
+- `scanExistingConversations()` checks each participant using `llmObjectManager.isLLMPerson()`
+- `isLLMPerson()` needs AI contacts loaded in cache to identify them
+- Wrong order = AI topics not registered = AIMessageListener skips them
+
 ### AI Message Listener
 
 Monitors CHUM events for AI-relevant messages:
@@ -623,7 +646,7 @@ class AIMessageListener {
   registerAITopic(topicId, modelId) {
     // Associates topics with AI models
   }
-  
+
   handleMessage(event) {
     if (this.isAITopic(event.topicId)) {
       // Trigger AI response generation

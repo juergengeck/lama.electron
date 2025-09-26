@@ -12,8 +12,10 @@ export class AIAssistantModel {
     this.llmManager = null
     this.llmObjectManager = null
     this.contextEnrichmentService = null
+    this.aiSettingsManager = null
     this.isInitialized = false
     this.topicModelMap = new Map()
+    this.defaultModelId = null // AI assistant owns this
 
     // Cache for AI contacts - modelId -> personId
     this.aiContacts = new Map()
@@ -67,12 +69,26 @@ export class AIAssistantModel {
    */
   async initialize(llmManager) {
     console.log('[AIAssistantModel] Initializing...')
-    
+
     // Only set llmManager if we don't already have it from init()
     if (!this.llmManager) {
       this.llmManager = llmManager
     }
-    
+
+    // Import and create AISettingsManager
+    const { AISettingsManager } = await import('./ai-settings-manager.js')
+    this.aiSettingsManager = new AISettingsManager(this.nodeOneCore)
+
+    // Get saved default model ID directly
+    this.defaultModelId = await this.aiSettingsManager.getDefaultModelId()
+    if (this.defaultModelId) {
+      console.log('[AIAssistantModel] Restored default model from storage:', this.defaultModelId)
+      // Register private variant for LAMA conversations
+      if (this.llmManager) {
+        this.llmManager.registerPrivateVariantForModel(this.defaultModelId)
+      }
+    }
+
     // Import and create LLMObjectManager
     const LLMObjectManager = (await import('./llm-object-manager.js')).default
     this.llmObjectManager = new LLMObjectManager(this.nodeOneCore)
@@ -97,19 +113,22 @@ export class AIAssistantModel {
     this.isInitialized = true
     console.log('[AIAssistantModel] ✅ Initialized')
 
-    // Scan existing conversations for AI participants and register them
+    // Load existing AI contacts into cache first (needed for scanning)
+    await this.loadExistingAIContacts()
+
+    // Now scan existing conversations for AI participants and register them
     await this.scanExistingConversations()
 
-    // Load existing AI contacts into cache
-    await this.loadExistingAIContacts()
+    // Don't create LAMA topic here - it will be created when default model is set
+    // This prevents duplicate creation and ensures proper participant setup
   }
 
   /**
-   * Ensure lama channel has a welcome message if it's empty
+   * Create LAMA topic and send welcome message
    */
-  async ensureDefaultChannelWelcomeMessage() {
+  async createLamaTopicWithWelcome() {
     try {
-      console.log('[AIAssistantModel] Checking if lama channel needs welcome message...')
+      console.log('[AIAssistantModel] 🚀🚀🚀 createLamaTopicWithWelcome() called!')
 
       if (!this.nodeOneCore.topicModel) {
         console.log('[AIAssistantModel] TopicModel not ready for welcome message')
@@ -121,46 +140,52 @@ export class AIAssistantModel {
         return
       }
 
-      // First ensure the lama channel exists
-      try {
-        // Create the lama channel if it doesn't exist
-        const channelExists = await this.nodeOneCore.channelManager.hasChannel('lama')
-        if (!channelExists) {
-          console.log('[AIAssistantModel] Creating lama channel...')
-          await this.nodeOneCore.channelManager.createChannel('lama', this.nodeOneCore.ownerId)
+      // Check if LAMA topic already exists
+      const existingTopic = await this.nodeOneCore.topicModel.topics.queryById('lama')
+      let topicRoom
+
+      if (!existingTopic) {
+        // Create LAMA topic if it doesn't exist
+        console.log('[AIAssistantModel] Creating LAMA topic...')
+        if (!this.nodeOneCore.topicGroupManager) {
+          throw new Error('TopicGroupManager not initialized - cannot create LAMA topic')
         }
 
-        // Also ensure the topic exists
-        const topic = await this.nodeOneCore.topicModel.topics.queryById('lama')
-        if (!topic) {
-          console.log('[AIAssistantModel] Creating lama topic...')
-          await this.nodeOneCore.topicModel.createTopic('lama', 'LAMA')
-        }
-      } catch (createError) {
-        console.log('[AIAssistantModel] Channel/topic might already exist:', createError.message)
+        await this.nodeOneCore.topicGroupManager.createGroupTopic('LAMA', 'lama', [])
+
+        // Create the channel
+        console.log('[AIAssistantModel] Creating LAMA channel...')
+        await this.nodeOneCore.channelManager.createChannel('lama', this.nodeOneCore.ownerId)
+      } else {
+        console.log('[AIAssistantModel] LAMA topic already exists, checking for messages...')
       }
 
-      // Enter the lama topic room
-      const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
+      // Enter topic room
+      topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
 
       // Check if there are any messages
       const messages = await topicRoom.retrieveAllMessages()
+      console.log(`[AIAssistantModel] LAMA has ${messages.length} existing messages`)
 
-      if (messages.length === 0) {
-        console.log('[AIAssistantModel] LAMA channel is empty, sending welcome message...')
+      // Send welcome message if empty or very first message is not from AI
+      const needsWelcome = messages.length === 0 ||
+                          (messages.length > 0 && !messages[0].sender)
 
-        // Send welcome message using handleNewTopic
+      if (needsWelcome) {
+        console.log('[AIAssistantModel] LAMA needs welcome message, sending...')
         await this.handleNewTopic('lama', topicRoom)
       } else {
-        console.log(`[AIAssistantModel] LAMA channel already has ${messages.length} messages`)
+        console.log(`[AIAssistantModel] LAMA already has ${messages.length} messages, skipping welcome`)
       }
     } catch (error) {
-      console.error('[AIAssistantModel] Error ensuring lama channel welcome message:', error)
+      console.error('[AIAssistantModel] Error setting up LAMA with welcome:', error)
     }
   }
 
   /**
    * Load existing AI contacts from LeuteModel into cache
+   * IMPORTANT: This must be called before scanExistingConversations()
+   * so that isLLMPerson() can identify AI participants in topics
    */
   async loadExistingAIContacts() {
     console.log('[AIAssistantModel] Loading existing AI contacts...')
@@ -192,11 +217,8 @@ export class AIAssistantModel {
 
               console.log(`[AIAssistantModel] Found existing AI contact: ${name}`)
 
-              // Determine the model ID from the name
-              let modelId = 'ai-assistant'
-              if (lowerName.includes('gpt')) modelId = 'gpt-oss'
-              if (lowerName.includes('ollama')) modelId = 'ollama:llama3.2'
-              if (lowerName.includes('claude')) modelId = 'claude:3-sonnet'
+              // Use the actual name as the model ID instead of guessing
+              let modelId = name
 
               // Cache the AI contact
               this.aiContacts.set(modelId, personId)
@@ -218,6 +240,8 @@ export class AIAssistantModel {
   
   /**
    * Scan existing conversations for AI participants and register them as AI topics
+   * NOTE: Requires loadExistingAIContacts() to be called first so that
+   * llmObjectManager.isLLMPerson() can identify AI participants
    */
   async scanExistingConversations() {
     console.log('[AIAssistantModel] Scanning existing conversations for AI participants...')
@@ -290,7 +314,12 @@ export class AIAssistantModel {
    * Check if a topic is an AI topic
    */
   isAITopic(topicId) {
-    return this.topicModelMap.has(topicId)
+    const isAI = this.topicModelMap.has(topicId)
+    console.log(`[AIAssistantModel] 🔍 DEBUG isAITopic("${topicId}") = ${isAI}`)
+    if (isAI) {
+      console.log(`[AIAssistantModel] 🔍 DEBUG topicModelMap keys: [${Array.from(this.topicModelMap.keys()).join(', ')}]`)
+    }
+    return isAI
   }
 
   /**
@@ -502,6 +531,16 @@ export class AIAssistantModel {
                   }
                 }
               }
+
+              // Process summary update if provided
+              if (result.analysis.summaryUpdate && this.nodeOneCore.topicAnalysisModel) {
+                await this.nodeOneCore.topicAnalysisModel.updateSummary(
+                  topicId,
+                  result.analysis.summaryUpdate,
+                  0.8 // confidence score
+                )
+                console.log(`[AIAssistantModel] Updated summary: ${result.analysis.summaryUpdate.substring(0, 50)}...`)
+              }
             } catch (error) {
               console.error('[AIAssistantModel] Error processing analysis:', error)
               // Don't throw - this is background processing
@@ -623,11 +662,19 @@ export class AIAssistantModel {
         console.log(`[AIAssistantModel] Added to contacts: ${result.idHash.toString().substring(0, 8)}...`)
       }
       
-      // AI-SPECIFIC: Cache the person ID and register with LLMObjectManager
+      // AI-SPECIFIC: Cache the person ID and create proper LLM object via AI assistant
       this.aiContacts.set(modelId, personIdHash)
-      
+
       if (this.llmObjectManager) {
-        this.llmObjectManager.cacheAIPersonId(modelId, personIdHash)
+        // AI assistant should create its own LLM objects for AI persons
+        try {
+          await this.createLLMObjectForAI(modelId, displayName, personIdHash)
+          console.log(`[AIAssistantModel] Created LLM object as source of truth for ${displayName}`)
+        } catch (error) {
+          console.warn(`[AIAssistantModel] Could not create LLM object, falling back to cache:`, error.message)
+          // Fallback to cache-only approach
+          this.llmObjectManager.cacheAIPersonId(modelId, personIdHash)
+        }
         console.log(`[AIAssistantModel] Registered AI person with LLMObjectManager`)
       }
       
@@ -638,6 +685,74 @@ export class AIAssistantModel {
       console.error('[AIAssistantModel] Failed to create AI contact:', error)
       return null
     }
+  }
+
+  /**
+   * Create LLM object for AI person - AI assistant manages its own LLM objects
+   */
+  async createLLMObjectForAI(modelId, displayName, personIdHash) {
+    console.log(`[AIAssistantModel] Creating LLM object for AI: ${displayName}`)
+
+    try {
+      // Use storeVersionedObject to create LLM object with AI-specific properties
+      const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+      const { ensureIdHash } = await import('@refinio/one.core/lib/util/type-checks.js')
+
+      const personIdHashEnsured = ensureIdHash(personIdHash)
+      const now = Date.now()
+      const nowISOString = new Date().toISOString()
+
+      const llmObject = {
+        $type$: 'LLM',
+        name: displayName, // This is the ID field according to recipe (isId: true)
+        filename: `${displayName.replace(/[\s:]/g, '-').toLowerCase()}.gguf`, // Required field
+        modelType: modelId.startsWith('ollama:') ? 'local' : 'remote', // Required field
+        active: true, // Required field
+        deleted: false, // Required field
+        created: now, // Required field (timestamp)
+        modified: now, // Required field (timestamp)
+        createdAt: nowISOString, // Required field (ISO string)
+        lastUsed: nowISOString, // Required field (ISO string)
+        // AI-specific fields
+        personId: personIdHashEnsured,
+        provider: this.getProviderFromModelId(modelId),
+        capabilities: ['chat', 'inference'], // Must match regexp: chat or inference
+        maxTokens: 4096,
+        temperature: 0.7,
+        contextSize: 4096,
+        batchSize: 512,
+        threads: 4,
+        // personId field already marks this as an AI's LLM object
+      }
+
+      // Store the LLM object
+      const storedObject = await storeVersionedObject(llmObject)
+      console.log(`[AIAssistantModel] Stored AI LLM object with hash: ${storedObject.hash}`)
+
+      // Cache in LLMObjectManager
+      this.llmObjectManager.llmObjects.set(modelId, {
+        ...llmObject,
+        modelId: modelId,
+        hash: storedObject.hash,
+        idHash: storedObject.idHash
+        // personId field marks this as AI's LLM
+      })
+
+      return storedObject
+    } catch (error) {
+      console.error(`[AIAssistantModel] Failed to create LLM object for AI ${displayName}:`, error)
+      throw error
+    }
+  }
+
+  /**
+   * Get provider from model ID (helper for LLM object creation)
+   */
+  getProviderFromModelId(modelId) {
+    if (modelId.startsWith('ollama:')) return 'ollama'
+    if (modelId.startsWith('claude:')) return 'claude'
+    if (modelId.startsWith('gpt:')) return 'openai'
+    return 'unknown'
   }
 
   /**
@@ -698,32 +813,53 @@ export class AIAssistantModel {
 
   /**
    * Handle a new topic creation by sending a welcome message
+   * Also can be called for existing topics that need a welcome message
    */
   async handleNewTopic(channelId, topicRoom) {
     const startTime = Date.now()
     console.log(`[AIAssistantModel] 🎯 Handling new topic: ${channelId} at ${new Date().toISOString()}`)
-    
+
     try {
       // Get the default AI model
       const modelStartTime = Date.now()
       const model = this.getDefaultModel()
-      if (!model) {
-        throw new Error('No AI model available')
+      if (!model || !this.defaultModelId) {
+        console.log('[AIAssistantModel] No default AI model set, skipping welcome message')
+        return
       }
+
+      // For LAMA topic, use private model variant
+      let effectiveModel = model
+      if (channelId === 'lama') {
+        const privateModelId = model.id + '-private'
+
+        // Get the private model from LLM Manager (should have been registered when user selected model)
+        const { default: llmManager } = await import('../services/llm-manager.js')
+        const privateModel = llmManager.getModel(privateModelId)
+
+        if (privateModel) {
+          effectiveModel = privateModel
+          console.log(`[AIAssistantModel] Using private model for LAMA: ${effectiveModel.id}`)
+        } else {
+          console.warn(`[AIAssistantModel] Private model ${privateModelId} not found, using base model`)
+          effectiveModel = model
+        }
+      }
+
       console.log(`[AIAssistantModel] ⏱️ Model selection took ${Date.now() - modelStartTime}ms`)
-      
+
       // Register this as an AI topic
-      this.registerAITopic(channelId, model.id || model.name)
-      
+      this.registerAITopic(channelId, effectiveModel.id || effectiveModel.name)
+
       // Get or create the AI person ID for this model
       const personStartTime = Date.now()
-      const aiPersonId = await this.getOrCreatePersonIdForModel(model)
+      const aiPersonId = await this.getOrCreatePersonIdForModel(effectiveModel)
       if (!aiPersonId) {
         console.error('[AIAssistantModel] Could not get AI person ID')
         return
       }
       console.log(`[AIAssistantModel] ⏱️ AI person creation took ${Date.now() - personStartTime}ms`)
-      
+
       // Send thinking indicator to UI
       const { BrowserWindow } = await import('electron')
       const messageId = `ai-${Date.now()}`
@@ -735,18 +871,53 @@ export class AIAssistantModel {
           isAI: true
         })
       }
-      
-      // Generate welcome message from LLM
-      const messages = [
-        { role: 'system', content: `You are LAMA, a private AI assistant with access to all owner's conversations. Generate a brief, friendly welcome message. Be warm and approachable. Keep it under 2 sentences.` },
-        { role: 'user', content: `Generate a welcome message for a new chat conversation.` }
-      ]
-      
-      const llmStartTime = Date.now()
-      console.log(`[AIAssistantModel] 📡 Requesting welcome message from ${model.id} at ${new Date().toISOString()}`)
-      const response = await this.llmManager.chat(messages, model.id)
-      const welcomeMessage = response
-      console.log(`[AIAssistantModel] ⏱️ LLM response took ${Date.now() - llmStartTime}ms`)
+
+      // Generate welcome message based on channel type
+      let welcomeMessage
+
+      console.log(`[AIAssistantModel] Determining welcome message for channelId: "${channelId}" (type: ${typeof channelId})`)
+
+      if (channelId === 'hi') {
+        // Static welcome for Hi chat - concise intro message
+        console.log(`[AIAssistantModel] Using static Hi welcome message`)
+        welcomeMessage = `Hi! I'm LAMA, your local AI assistant.
+
+I run entirely on your device - no cloud, just private, fast AI help.
+
+What can I do for you today?`
+      } else if (channelId === 'lama') {
+        console.log(`[AIAssistantModel] Using LLM-generated LAMA welcome message`)
+        // LLM-generated welcome for LAMA
+        const messages = [
+          { role: 'system', content: `You are a helpful AI assistant. Generate a brief, friendly welcome message.` },
+          { role: 'user', content: `Generate a welcome message for a new chat conversation. Be warm and approachable. Keep it under 2 sentences.` }
+        ]
+
+        const llmStartTime = Date.now()
+        console.log(`[AIAssistantModel] 📡 Requesting welcome message from ${effectiveModel.id} at ${new Date().toISOString()}`)
+        const response = await this.llmManager.chat(messages, effectiveModel.id)
+
+        // Debug: Log what we actually got back
+        console.log(`[AIAssistantModel] 🐛 Raw LLM response type: ${typeof response}`)
+        console.log(`[AIAssistantModel] 🐛 Raw LLM response: "${response}"`)
+
+        welcomeMessage = response
+        console.log(`[AIAssistantModel] ⏱️ LLM response took ${Date.now() - llmStartTime}ms`)
+      } else {
+        console.log(`[AIAssistantModel] Using LLM-generated welcome for other chat: "${channelId}"`)
+        // For any other chats, use LLM-generated welcome
+        const messages = [
+          { role: 'system', content: `You are a helpful AI assistant. Generate a brief, friendly welcome message.` },
+          { role: 'user', content: `Generate a welcome message for a new chat conversation. Be warm and approachable. Keep it under 2 sentences.` }
+        ]
+
+        const llmStartTime = Date.now()
+        console.log(`[AIAssistantModel] 📡 Requesting welcome message from ${effectiveModel.id} at ${new Date().toISOString()}`)
+        const response = await this.llmManager.chat(messages, effectiveModel.id)
+        welcomeMessage = response
+        console.log(`[AIAssistantModel] ⏱️ LLM response took ${Date.now() - llmStartTime}ms`)
+      }
+
       console.log(`[AIAssistantModel] Generated welcome: "${welcomeMessage}"`)
       
       // Send the welcome message to the topic
@@ -783,30 +954,26 @@ export class AIAssistantModel {
   getDefaultModel() {
     console.log('[AIAssistantModel] 🔍 getDefaultModel called')
 
-    if (!this.llmManager) {
-      console.warn('[AIAssistantModel] ❌ LLMManager not available')
+    if (!this.defaultModelId) {
+      console.log('[AIAssistantModel] No default model selected')
       return null
     }
 
-    // Use the user's selected default model
-    const selectedModelId = this.llmManager.defaultModelId
+    if (!this.llmManager) {
+      console.warn('[AIAssistantModel] LLMManager not available')
+      return null
+    }
+
     const models = this.llmManager.getAvailableModels()
+    const selectedModel = models.find(m => m.id === this.defaultModelId)
 
-    if (selectedModelId) {
-      const selectedModel = models.find(m => m.id === selectedModelId)
-      if (selectedModel) {
-        console.log(`[AIAssistantModel] Using user's selected model: ${selectedModelId}`)
-        return selectedModel
-      }
+    if (selectedModel) {
+      console.log(`[AIAssistantModel] Using default model: ${this.defaultModelId}`)
+      return selectedModel
     }
 
-    // Fallback to first available model
-    if (models.length > 0) {
-      console.log(`[AIAssistantModel] No default set, using first model: ${models[0].id}`)
-      return models[0]
-    }
-
-    throw new Error('No AI models available')
+    console.warn(`[AIAssistantModel] Default model ${this.defaultModelId} not found in available models`)
+    return null
   }
 
   /**
@@ -817,6 +984,26 @@ export class AIAssistantModel {
 
     const models = this.llmManager.getAvailableModels()
     return models.find(m => m.id === modelId) || null
+  }
+
+  /**
+   * Set the default model and persist the selection
+   */
+  async setDefaultModel(modelId) {
+    console.log('[AIAssistantModel] Setting default model:', modelId)
+
+    // Update local state
+    this.defaultModelId = modelId
+
+    // Persist to settings
+    await this.aiSettingsManager.setDefaultModelId(modelId)
+
+    // Register private variant for LAMA conversations
+    if (this.llmManager) {
+      this.llmManager.registerPrivateVariantForModel(modelId)
+    }
+
+    console.log('[AIAssistantModel] Default model set and persisted')
   }
 
   /**

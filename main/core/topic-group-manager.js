@@ -341,7 +341,7 @@ class TopicGroupManager {
   }
 
   /**
-   * Create a P2P topic with a single shared channel (null owner)
+   * Create a P2P topic following one.leute reference patterns exactly
    * @param {string} topicName - Display name for the topic
    * @param {string} topicId - Topic ID in format: personId1<->personId2
    * @param {Array<string>} participantIds - Array of exactly 2 person IDs
@@ -350,26 +350,25 @@ class TopicGroupManager {
     console.log(`[TopicGroupManager] Creating P2P topic: ${topicName} (${topicId})`)
     console.log(`[TopicGroupManager] P2P participants:`, participantIds.map(p => p.substring(0, 8)).join(', '))
 
-    // Create the topic using TopicModel
+    if (participantIds.length !== 2) {
+      throw new Error(`P2P topic requires exactly 2 participants, got ${participantIds.length}`)
+    }
+
     if (!this.nodeOneCore.topicModel) {
       throw new Error('TopicModel not initialized')
     }
 
-    // Use createOneToOneTopic for P2P conversations (matches one.leute reference)
-    // This properly creates a topic with undefined/null owner
+    // Use createOneToOneTopic - this creates deterministic topic with proper access
     const [from, to] = participantIds
-    const topic = await this.nodeOneCore.topicModel.createOneToOneTopic(
-      from,
-      to
-      // No third parameter = undefined owner (both participants can write)
-    )
+    const topic = await this.nodeOneCore.topicModel.createOneToOneTopic(from, to)
 
-    console.log(`[TopicGroupManager] Created P2P topic ${topicId} with null-owner channel`)
+    console.log(`[TopicGroupManager] ✅ P2P topic created: ${topic.id}`)
+    console.log(`[TopicGroupManager] ✅ Channel: ${topic.channel?.substring(0, 16)}...`)
 
-    // Note: createOneToOneTopic automatically handles access control through:
-    // addTopicToRegistry -> applyAccessRightsIfOneToOneChat -> addPersonsToTopic
-    // This grants both channel and Topic object access to both participants
-    console.log(`[TopicGroupManager] Access automatically granted to P2P participants via TopicModel`)
+    // Verify the topic ID matches our expected format
+    if (topic.id !== topicId) {
+      console.warn(`[TopicGroupManager] ⚠️  Topic ID mismatch: expected ${topicId}, got ${topic.id}`)
+    }
 
     return topic
   }
@@ -383,16 +382,18 @@ class TopicGroupManager {
    * @param {boolean} autoAddChumConnections - Whether to automatically add all CHUM connections (default: false)
    */
   async createGroupTopic(topicName, topicId, participantIds = [], autoAddChumConnections = false) {
-    console.log(`[TopicGroupManager] Creating topic: ${topicName} (${topicId})`);
-    console.log(`[TopicGroupManager] Initial participants: ${participantIds.length} persons`);
+    console.log(`[TopicGroupManager] 🔍 DEBUG Creating topic: "${topicName}" with ID: "${topicId}"`);
+    console.log(`[TopicGroupManager] 🔍 DEBUG Initial participants: ${participantIds.length} persons`);
+    console.log(`[TopicGroupManager] 🔍 DEBUG topicId type: ${typeof topicId}, length: ${topicId?.length}`);
 
-    // Check if this is a P2P conversation (topicId contains <->)
+    // P2P conversations MUST use createOneToOneTopic directly - no groups
     const isP2P = topicId.includes('<->');
     console.log(`[TopicGroupManager] Is P2P conversation: ${isP2P}`);
 
-    // Handle P2P differently - no groups, single shared channel
     if (isP2P) {
-      return await this.createP2PTopic(topicName, topicId, participantIds);
+      // P2P conversations should NEVER reach this method
+      // They should go directly through TopicModel.createOneToOneTopic
+      throw new Error(`P2P conversation ${topicId} should use TopicModel.createOneToOneTopic, not createGroupTopic`);
     }
 
     // Always include the node owner
@@ -447,11 +448,14 @@ class TopicGroupManager {
 
     // Create the topic
     // Each participant always owns their own channel
+    console.log(`[TopicGroupManager] 🔍 DEBUG Calling topicModel.createGroupTopic("${topicName}", "${topicId}", owner)`);
     const topic = await this.nodeOneCore.topicModel.createGroupTopic(
       topicName,
       topicId,
       this.nodeOneCore.ownerId
     );
+    console.log(`[TopicGroupManager] 🔍 DEBUG Created topic with ID: "${topic.id}", name: "${topic.name}"`);
+    console.log(`[TopicGroupManager] 🔍 DEBUG Topic channel hash: ${topic.channel.substring(0, 16)}...`);
 
     console.log(`[TopicGroupManager] Created topic ${topicId}:`, {
       topicId: topic.id,

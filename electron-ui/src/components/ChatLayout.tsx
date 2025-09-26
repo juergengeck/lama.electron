@@ -89,6 +89,13 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
           throw new Error('Electron API not available')
         }
 
+        // First ensure default AI chats exist when chat view is accessed
+        console.log('[ChatLayout] Ensuring default AI chats exist...')
+        const ensureResult = await window.electronAPI.invoke('ai:ensureDefaultChats')
+        if (ensureResult.success) {
+          console.log('[ChatLayout] Default chats ensured:', ensureResult.topics)
+        }
+
         const result = await window.electronAPI.invoke('chat:getConversations')
         if (!result.success) {
           throw new Error(result.error || 'Failed to get conversations')
@@ -103,23 +110,25 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
           name: conv.name || 'Unnamed Chat',
           lastMessage: conv.lastMessage?.text || '',
           lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
-          modelName: conv.modelName || 'GPT-OSS'
+          modelName: conv.modelName
         }))
 
         setConversations(uiConversations)
         console.log('[ChatLayout] 🔴 UI conversations set:', uiConversations.map(c => ({ id: c.id, name: c.name })))
-        
+
         if (selectedConversationId) {
           setSelectedConversation(selectedConversationId)
         } else if (uiConversations.length > 0 && !selectedConversation) {
-          setSelectedConversation(uiConversations[0].id)
+          // Prefer 'hi' conversation if it exists, otherwise use the first one
+          const hiConversation = uiConversations.find(c => c.id === 'hi')
+          setSelectedConversation(hiConversation ? hiConversation.id : uiConversations[0].id)
         }
       } catch (error) {
         console.error('Failed to load conversations:', error)
         setConversations([])
       }
     }
-    
+
     loadConversations()
   }, [])
 
@@ -156,13 +165,21 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       setSelectedConversation(data.newConversationId)
     }
 
+    const handleDefaultModelChanged = async () => {
+      console.log('[ChatLayout] Default AI model changed, reloading conversations...')
+      // Reload conversations to get updated model names
+      await reloadConversations()
+    }
+
     // Subscribe to events
     const unsubscribe = lamaBridge.on('chat:newMessages', handleNewMessages)
     const unsubP2P = window.electronAPI?.on?.('chat:p2pConvertedToGroup', handleP2PConverted)
+    const unsubModel = window.electronAPI?.on?.('ai:defaultModelChanged', handleDefaultModelChanged)
 
     return () => {
       if (unsubscribe) unsubscribe()
       if (unsubP2P) unsubP2P()
+      if (unsubModel) unsubModel()
     }
   }, [])
 
@@ -180,7 +197,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         name: conv.name || 'Unnamed Chat',
         lastMessage: conv.lastMessage?.text || '',
         lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
-        modelName: conv.modelName || 'GPT-OSS'
+        modelName: conv.modelName || 'AI Assistant'
       }))
       
       setConversations(uiConversations)
@@ -622,7 +639,9 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                           {conv.lastMessage && (
                             <CheckCheck className="h-3 w-3 text-primary/70" />
                           )}
-                          <span className="text-primary">{conv.modelName}</span>
+                          {conv.modelName && (
+                            <span className="text-primary">{conv.modelName}</span>
+                          )}
                         </div>
                       </div>
                     </div>

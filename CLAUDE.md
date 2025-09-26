@@ -9,6 +9,7 @@ This file provides guidance to Claude Code when working with LAMA Electron.
 - **Contact Caching**: Added 5-second TTL cache in one-core.js handlers to prevent redundant `getContacts` calls
 - **Log Reduction**: Commented out excessive "OBJECT RECEIVED" logging, batched MCP tool registration logs
 - **Race Condition Fix**: Added proper mutex cleanup in `finally` block for topic creation
+- **AI Topic Registration Fix**: Fixed initialization order in ai-assistant-model.js - AI contacts must be loaded before scanning topics
 
 ### AI Response + Analysis Combined
 - **Single LLM Call**: New `chatWithAnalysis()` method in llm-manager.js combines response generation with keyword/subject extraction

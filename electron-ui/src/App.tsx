@@ -17,29 +17,33 @@ import { ipcStorage } from '@/services/ipc-storage'
 function App() {
   const [activeTab, setActiveTab] = useState('chats')
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(undefined)
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
+  const [hasTopics, setHasTopics] = useState<boolean | null>(null)
+  const [hasDefaultModel, setHasDefaultModel] = useState<boolean | null>(null)
   const { isInitialized, isAuthenticated, isLoading, login, logout, error } = useLamaInit()
   // NO AppModel in browser - use IPC for everything
-  
-  // Load onboarding status
+
+  // Check if any topics exist (for onboarding detection)
   useEffect(() => {
-    // Try IPC storage first, fallback to localStorage
-    ipcStorage.getItem('lama-onboarding-completed')
-      .then(value => {
-        if (value) {
-          setHasCompletedOnboarding(value === 'true')
-        } else {
-          // Check localStorage as fallback
-          const localValue = localStorage.getItem('lama-onboarding-completed')
-          setHasCompletedOnboarding(localValue === 'true')
-        }
-      })
-      .catch(() => {
-        // If IPC fails, check localStorage
-        const localValue = localStorage.getItem('lama-onboarding-completed')
-        setHasCompletedOnboarding(localValue === 'true')
-      })
-  }, [])
+    if (isAuthenticated && window.electronAPI) {
+      window.electronAPI.invoke('chat:getConversations')
+        .then((result: any) => {
+          const conversations = result?.conversations || []
+          setHasTopics(conversations.length > 0)
+        })
+        .catch(() => setHasTopics(false))
+    }
+  }, [isAuthenticated])
+
+  // Check if a default model has been configured
+  useEffect(() => {
+    if (isAuthenticated && window.electronAPI) {
+      window.electronAPI.invoke('ai:getDefaultModel')
+        .then((modelId: string | null) => {
+          setHasDefaultModel(!!modelId)
+        })
+        .catch(() => setHasDefaultModel(false))
+    }
+  }, [isAuthenticated])
 
   // Signal UI is ready when authenticated
   useEffect(() => {
@@ -112,20 +116,27 @@ function App() {
   }
 
   // Check if we need to show model onboarding
-  // Only show onboarding if user has never completed it before
-  // We can't check for models from browser - that's in Node.js
-  const shouldShowOnboarding = !hasCompletedOnboarding
-  
+  // Show onboarding only if no default model has been configured
+  const shouldShowOnboarding = hasDefaultModel === false
+
   if (shouldShowOnboarding) {
     return <ModelOnboarding onComplete={async () => {
-      try {
-        await ipcStorage.setItem('lama-onboarding-completed', 'true')
-      } catch (error) {
-        console.log('[App] Could not save onboarding status, saving to localStorage instead')
-        localStorage.setItem('lama-onboarding-completed', 'true')
-      }
-      setHasCompletedOnboarding(true)
+      // Model has been selected and saved to settings
+      setHasDefaultModel(true)
     }} />
+  }
+
+  // Show loading while checking for default model
+  if (hasDefaultModel === null) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
+          <h2 className="text-2xl font-bold mb-2">Loading LAMA</h2>
+          <p className="text-muted-foreground">Checking for existing conversations...</p>
+        </div>
+      </div>
+    )
   }
 
   const tabs = [

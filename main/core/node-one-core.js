@@ -132,9 +132,9 @@ class NodeOneCore {
     // No patching needed - fixed in ONE.models source
     
     try {
-      // Set storage directory
-      const storageDir = path.join(process.cwd(), 'one-core-storage', 'node')
-      
+      // ONE.core manages storage - we just specify the base directory
+      const storageDir = path.join(process.cwd(), 'OneDB')
+
       // Initialize ONE.core instance with browser credentials
       await this.initOneCoreInstance(username, password, storageDir)
       
@@ -170,16 +170,15 @@ class NodeOneCore {
    * Initialize ONE.core instance using SingleUserNoAuth (same as browser)
    */
   async initOneCoreInstance(username, password, directory) {
-    // Ensure storage directories exist
+    // Ensure storage directory exists
     const fs = await import('fs')
-    const path = await import('path')
+    const oneDbPath = directory // Define oneDbPath to match the parameter
 
-    const oneDbPath = path.join(process.cwd(), 'OneDB')
-
-    // Create OneDB directory if it doesn't exist
-    if (!fs.existsSync(oneDbPath)) {
-      fs.mkdirSync(oneDbPath, { recursive: true })
-      console.log('[NodeOneCore] Created OneDB directory')
+    // ONE.core will manage its own internal storage structure
+    // We just ensure the base directory exists
+    if (!fs.existsSync(directory)) {
+      fs.mkdirSync(directory, { recursive: true })
+      console.log('[NodeOneCore] Created storage directory:', directory)
     }
     
     // Load Node.js platform FIRST - before any other ONE.core imports
@@ -889,43 +888,10 @@ class NodeOneCore {
     await this.channelManager.createChannel('contacts')
     console.log('[NodeOneCore] ✅ Contacts channel created')
     
-    // Only create Hi and LAMA channels on first initialization
-    try {
-      const existingChannels = await this.channelManager.channels()
-      const hasHiChannel = existingChannels.some(ch => ch.id === 'hi')
-      const hasLamaChannel = existingChannels.some(ch => ch.id === 'lama')
-
-      // Only create Hi channel if it doesn't exist (first time setup)
-      if (!hasHiChannel) {
-        await this.channelManager.createChannel('hi')
-        console.log('[NodeOneCore] ✅ Hi introductory channel created (first time setup)')
-      } else {
-        console.log('[NodeOneCore] Hi channel already exists')
-      }
-
-      // Only create LAMA channel if it doesn't exist (first time setup)
-      if (!hasLamaChannel) {
-        await this.channelManager.createChannel('lama')
-        console.log('[NodeOneCore] ✅ LAMA channel created (first time setup)')
-      } else {
-        console.log('[NodeOneCore] LAMA channel already exists')
-      }
-    } catch (err) {
-      // If we can't check, assume first time and create them
-      console.log('[NodeOneCore] Could not check existing channels, creating defaults')
-      try {
-        await this.channelManager.createChannel('hi')
-        console.log('[NodeOneCore] ✅ Hi introductory channel created')
-      } catch (e) {
-        console.log('[NodeOneCore] Hi channel might already exist')
-      }
-      try {
-        await this.channelManager.createChannel('lama')
-        console.log('[NodeOneCore] ✅ LAMA channel created')
-      } catch (e) {
-        console.log('[NodeOneCore] LAMA channel might already exist')
-      }
-    }
+    // Create default topics (not just channels) on first initialization
+    // Don't create default topics here - let AIAssistantModel handle them
+    // when a model is selected to ensure proper AI participant setup
+    console.log('[NodeOneCore] Skipping default topic creation - will be created when AI model is selected')
     
     // Initialize ConnectionsModel with commserver for external connections
     // ConnectionsModel will be imported later when needed
@@ -1420,9 +1386,10 @@ class NodeOneCore {
       const { default: llmManager } = await import('../services/llm-manager.js')
       const models = llmManager.getAvailableModels()
       
-      // Use first available model or default
-      const modelId = models.length > 0 ? models[0].id : 'gpt-oss'
-      const modelName = models.length > 0 ? models[0].name : 'your AI assistant'
+      // Use default model from llmManager
+      const modelId = llmManager.defaultModelId
+      const defaultModel = llmManager.getDefaultModel()
+      const modelName = defaultModel?.name || 'your AI assistant'
       
       // Create AI person ID for the greeting
       const aiPersonId = await this.getOrCreateAIPersonId(modelId, modelName)
@@ -1469,12 +1436,12 @@ class NodeOneCore {
           role: 'user',
           content: userMessage.content
         }],
-        model: 'gpt-oss' // Default model
+        model: llmManager.defaultModelId
       })
       
       if (response && response.content) {
         // Create AI person ID for the response
-        const aiPersonId = await this.getOrCreateAIPersonId('gpt-oss')
+        const aiPersonId = await this.getOrCreateAIPersonId(llmManager.defaultModelId)
         
         // Send AI response to topic (will sync via CHUM to browser)
         await topicRoom.sendMessage(response.content, aiPersonId, this.ownerId)
@@ -1495,17 +1462,24 @@ class NodeOneCore {
     try {
       // Get available AI models from LLM manager
       const { default: llmManager } = await import('../services/llm-manager.js')
-      const allModels = llmManager.getAvailableModels()
+      const { default: stateManager } = await import('../state/manager.js')
 
-      // Only set up the first model (gpt-oss) initially
-      const initialModel = allModels.find(m => m.id === 'ollama:gpt-oss') || allModels[0]
-
-      if (!initialModel) {
-        console.log('[NodeOneCore] No AI models available')
+      // Check if user has already selected a model
+      const savedModelId = stateManager.getState('ai.defaultModelId')
+      if (!savedModelId) {
+        console.log('[NodeOneCore] No model selected yet, skipping AI contact creation')
         return []
       }
 
-      console.log(`[NodeOneCore] Setting up initial AI model: ${initialModel.name}`)
+      const allModels = llmManager.getAvailableModels()
+      const initialModel = allModels.find(m => m.id === savedModelId)
+
+      if (!initialModel) {
+        console.log('[NodeOneCore] Saved model not found:', savedModelId)
+        return []
+      }
+
+      console.log(`[NodeOneCore] Setting up saved AI model: ${initialModel.name}`)
 
       // Create ONE AI identity for the LAMA chat
       // The Hi chat will use this same AI but with a different context

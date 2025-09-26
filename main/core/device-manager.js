@@ -13,7 +13,7 @@ class DeviceManager {
     this.devices = new Map() // deviceId -> device info
     this.invites = new Map() // inviteId -> invite info
     this.connections = new Map() // websocket -> device info
-    this.configFile = path.join(process.cwd(), 'one-core-storage', 'devices.json')
+    this.configFile = path.join(process.cwd(), 'OneDB', 'devices.json')
   }
 
   /**

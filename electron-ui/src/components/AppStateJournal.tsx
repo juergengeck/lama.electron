@@ -4,10 +4,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Clock, Server, Globe, Activity } from 'lucide-react';
 import type { StateEntry } from '@refinio/refinio-api/dist/state/index.js';
-import { useAppContext } from '@/contexts/AppContext';
+import { useAppModel } from '@/contexts/AppModelContext';
 
 export const AppStateJournal: React.FC = () => {
-  const { appModel } = useAppContext();
+  const appModel = useAppModel();
   const [entries, setEntries] = useState<StateEntry[]>([]);
   const [loading, setLoading] = useState(true);
 

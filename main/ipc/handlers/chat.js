@@ -4,17 +4,14 @@
 
 import stateManager from '../../state/manager.js';
 import instanceManager from '../../core/instance.js';
-import nodeProvisioning from '../../hybrid/node-provisioning.js';
+import nodeProvisioning from '../../services/node-provisioning.js';
 import nodeOneCore from '../../core/node-one-core.js';
-import { BrowserWindow } from 'electron';
+import electron from 'electron';
+const { BrowserWindow } = electron;
 import { MessageVersionManager } from '../../core/message-versioning.js';
 import { MessageAssertionManager } from '../../core/message-assertion-certificates.js';
 
-// Topic creation mutex to prevent race conditions
-const topicCreationInProgress = new Map()
-
-// Welcome message mutex to prevent duplicate welcome messages
-const welcomeMessageInProgress = new Map()
+// Simple topic creation following one.leute patterns
 
 // Message version manager instance
 let messageVersionManager = null
@@ -23,6 +20,24 @@ let messageVersionManager = null
 let messageAssertionManager = null
 
 const chatHandlers = {
+  async initializeDefaultChats(event) {
+    console.log('[ChatHandler] Initializing default chats')
+
+    try {
+      if (!nodeProvisioning.isProvisioned() || !nodeOneCore.topicModel) {
+        return { success: false, error: 'Node not ready' }
+      }
+
+      // Don't create any chats here - they should only be created when we have an AI model
+      console.log('[ChatHandler] Skipping chat creation - will create when model is selected')
+
+      return { success: true }
+    } catch (error) {
+      console.error('[ChatHandler] Error initializing default chats:', error)
+      return { success: false, error: error.message }
+    }
+  },
+
   async uiReady(event) {
     console.log('[ChatHandler] UI signaled ready for messages')
     // Notify the PeerMessageListener that UI is ready
@@ -56,56 +71,20 @@ const chatHandlers = {
         throw new Error('User not authenticated')
       }
       
-      // Get or create topic room for the conversation
+      // DEFENSIVE: Validate conversationId to prevent cross-contamination
+      if (!conversationId || typeof conversationId !== 'string') {
+        throw new Error(`Invalid conversationId: ${conversationId}`)
+      }
+
+      // Simple topic room access - let TopicModel handle creation
       let topicRoom
       try {
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
-        
-        // For default topic, we can add groups if needed
-        // But TopicModel handles this internally when creating group topics
       } catch (error) {
-        // Topic doesn't exist, create it
-        console.log('[ChatHandler] Topic does not exist, creating:', conversationId)
-        
-        // Use TopicGroupManager to create group topic with proper channels for all participants
-        if (nodeOneCore.topicGroupManager) {
-          let participantIds = []
-
-          // Check if this is a P2P conversation
-          if (conversationId.includes('<->')) {
-            // For P2P conversations, let TopicModel handle it with createOneToOneTopic
-            const [id1, id2] = conversationId.split('<->')
-            console.log('[ChatHandler] P2P conversation - using TopicModel.createOneToOneTopic')
-
-            await nodeOneCore.topicModel.createOneToOneTopic(id1, id2)
-            console.log('[ChatHandler] Created P2P topic via TopicModel')
-          } else {
-            // For group topics, include default AI if available
-            if (nodeOneCore.aiAssistantModel) {
-              const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
-              if (aiContacts.length > 0) {
-                participantIds.push(aiContacts[0].personId) // Add first AI as default participant
-              }
-            }
-
-            await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId, participantIds)
-            console.log('[ChatHandler] Created group topic with channels for all participants')
-          }
-        } else {
-          // Fallback - let TopicModel handle it
-          const isP2P = conversationId.includes('<->')
-
-          if (isP2P) {
-            const [id1, id2] = conversationId.split('<->')
-            await nodeOneCore.topicModel.createOneToOneTopic(id1, id2)
-          } else {
-            // For group topics, use createGroupTopic with our owner
-            await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, nodeOneCore.ownerId)
-          }
-          console.log('[ChatHandler] Created topic via TopicModel - access handled by library')
-        }
-        
-        topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+        // Topic doesn't exist - this is the root cause issue
+        // We should not be creating topics here in sendMessage
+        console.error('[ChatHandler] Topic does not exist for conversation:', conversationId)
+        throw new Error(`Topic ${conversationId} not found. Topics should be created before sending messages.`)
       }
       
       // Send message through TopicModel (this syncs via ChannelManager)
@@ -193,10 +172,8 @@ const chatHandlers = {
       */
 
       // Don't store in stateManager - TopicModel is the source of truth
+      // Message will be received via normal TopicRoom flow, no need to emit here
 
-      // Notify renderer about the new message - single event for consistency
-      event.sender.send('chat:newMessages', { conversationId, messages: [message] })
-      
       return {
         success: true,
         data: message
@@ -227,237 +204,21 @@ const chatHandlers = {
         }
       }
       
-      // Get messages from TopicModel
+      // Simple topic room access
       let topicRoom
-      let topicWasJustCreated = false
-
       try {
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
       } catch (error) {
-        console.log('[ChatHandler] Topic does not exist yet:', conversationId)
-        
-        // Check if another request is already creating this topic
-        if (topicCreationInProgress.has(conversationId)) {
-          console.log('[ChatHandler] Topic creation already in progress, waiting...')
-          // Wait for the other request to finish
-          await topicCreationInProgress.get(conversationId)
-          // Try to enter the room again
-          try {
-            topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
-          } catch (retryError) {
-            console.error('[ChatHandler] Topic still not available after waiting:', retryError)
-            return {
-              success: true,
-              data: {
-                messages: [],
-                total: 0,
-                hasMore: false
-              }
-            }
-          }
-        } else {
-          // Topic doesn't exist yet - create it
-          const creationPromise = (async () => {
-            try {
-              // Use TopicGroupManager to create group topic with proper channels for all participants
-              if (nodeOneCore.topicGroupManager) {
-                let participantIds = []
-
-                // Check if this is a P2P conversation
-                if (conversationId.includes('<->')) {
-                  // For P2P conversations, use createP2PTopic (single null-owner channel)
-                  const [id1, id2] = conversationId.split('<->')
-                  participantIds = [id1, id2]
-                  console.log('[ChatHandler] P2P conversation - participants:', participantIds.map(p => p.substring(0, 8)).join(', '))
-
-                  await nodeOneCore.topicGroupManager.createP2PTopic(conversationId, conversationId, participantIds)
-                  console.log('[ChatHandler] Created P2P topic with null-owner channel')
-                } else {
-                  // For group topics, include default AI if available
-                  if (nodeOneCore.aiAssistantModel) {
-                    const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
-                    if (aiContacts.length > 0) {
-                      participantIds.push(aiContacts[0].personId)
-                    }
-                  }
-
-                  await nodeOneCore.topicGroupManager.createGroupTopic(conversationId, conversationId, participantIds)
-                  console.log('[ChatHandler] Topic created successfully with channels for all participants')
-                }
-              } else {
-                // Fallback to old method
-                const isP2P = conversationId.includes('<->')
-                const channelOwner = isP2P ? null : nodeOneCore.ownerId
-                await nodeOneCore.topicModel.createGroupTopic(conversationId, conversationId, channelOwner)
-                console.log('[ChatHandler] Topic created with', isP2P ? 'null owner (P2P)' : 'owner')
-              }
-              return true
-            } catch (createError) {
-              console.error('[ChatHandler] Could not create topic:', createError)
-              return false
-            }
-          })()
-          
-          // Store the promise so other requests can wait
-          topicCreationInProgress.set(conversationId, creationPromise)
-
-          let created
-          try {
-            created = await creationPromise
-          } finally {
-            // Always clean up the mutex, even on error
-            topicCreationInProgress.delete(conversationId)
-          }
-          
-          if (!created) {
-            return {
-              success: true,
-              data: {
-                messages: [],
-                total: 0,
-                hasMore: false
-              }
-            }
-          }
-          
-          topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
-          topicWasJustCreated = true
-        }
-      }
-      
-      // Check if this is the Hi introductory chat and was just created
-      if (conversationId === 'hi' && topicWasJustCreated) {
-        if (nodeOneCore.aiAssistantModel) {
-          console.log('[ChatHandler] Sending welcome message for Hi chat')
-
-          // Use the default AI assistant for the welcome message
-          const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
-          const defaultAI = aiContacts[0] // Use the first/default AI
-
-          if (defaultAI) {
-            const aiPersonId = defaultAI.personId
-            const aiName = defaultAI.name?.replace('-private', '') || 'your AI assistant'
-
-            const introMessage = `Welcome to LAMA! 👋
-
-I'm ${aiName}, your AI assistant running entirely on your device.
-
-🔒 **Privacy First**: All conversations stay on your device. Your AI assistant can access conversation history to provide better context-aware help.
-
-💡 **How to Use**:
-• Start chatting with me right here - just type your message below
-• Click the + button to create new chats or group conversations
-• Add friends as contacts to start P2P conversations
-• Configure additional AI models in Settings → AI Models
-
-📝 **Quick Start**:
-Type anything to begin - ask questions, have discussions, or request help with tasks. I'm here to assist!`
-
-            // Send the message from the AI assistant
-            await topicRoom.sendMessage(introMessage, aiPersonId)
-            console.log(`[ChatHandler] Hi chat welcome message sent from ${aiName}`)
-
-            // Note: We don't register 'hi' as an AI topic
-            // This is just a one-time welcome message, not an ongoing AI conversation
-          } else {
-            // No AI setup yet - create a simple welcome message from the system
-            console.log('[ChatHandler] No AI contacts available - creating simple welcome message')
-
-            const systemMessage = `Welcome to LAMA! 👋
-
-LAMA is your private AI assistant that runs entirely on your device.
-
-To get started:
-1. Add an AI model in Settings → AI Models
-2. Once configured, switch to the LAMA chat to begin
-
-This Hi chat is just an introduction. Feel free to delete it once you're familiar with LAMA.`
-
-            // Send message from the current user (owner)
-            await topicRoom.sendMessage(systemMessage, nodeOneCore.ownerId)
-            console.log('[ChatHandler] Hi chat system welcome message sent')
-          }
+        // Return empty messages if topic doesn't exist yet
+        return {
+          success: true,
+          messages: [],
+          total: 0,
+          hasMore: false
         }
       }
 
-      // Check if chat needs welcome message - for lama conversation or AI conversations
-      const isAITopic = nodeOneCore.aiAssistantModel?.isAITopic(conversationId)
-      const isDefaultConversation = conversationId === 'lama'
-
-      if (nodeOneCore.aiAssistantModel && (isAITopic || isDefaultConversation)) {
-        let hasRealMessages = false
-        
-        // If we JUST created the topic, skip the message check - it's guaranteed to be empty
-        // The storage layer creates phantom entries during async initialization
-        if (topicWasJustCreated) {
-          console.log('[ChatHandler] Topic was just created, skipping message check - triggering welcome message')
-          hasRealMessages = false
-        } else {
-          const existingMessages = await topicRoom.retrieveAllMessages()
-          console.log(`[ChatHandler] Found ${existingMessages.length} existing messages in AI chat ${conversationId}`)
-          
-          // Log the actual message to understand what it is
-          if (existingMessages.length > 0) {
-            console.log('[ChatHandler] First message details:', JSON.stringify({
-              id: existingMessages[0].id,
-              data: existingMessages[0].data,
-              author: existingMessages[0].author,
-              type: existingMessages[0].type,
-              timestamp: existingMessages[0].timestamp
-            }, null, 2))
-          }
-          
-          hasRealMessages = existingMessages.some(msg => 
-            msg.data?.text && typeof msg.data.text === 'string' && msg.data.text.trim() !== ''
-          )
-          console.log(`[ChatHandler] Has real messages: ${hasRealMessages}`)
-        }
-        
-        if (topicWasJustCreated || !hasRealMessages) {
-          // Send welcome message if this is an empty AI conversation
-          const shouldSendWelcome = !hasRealMessages
-
-          if (shouldSendWelcome) {
-            // Check if welcome message is already being generated
-            if (welcomeMessageInProgress.has(conversationId)) {
-              console.log(`[ChatHandler] Welcome message already in progress for ${conversationId}, skipping duplicate`)
-            } else {
-              // Mark as in progress
-              const welcomePromise = (async () => {
-                const welcomeStartTime = Date.now()
-                console.log(`[ChatHandler] ⏱️ AI chat ${conversationId} is empty, triggering welcome message at ${new Date().toISOString()}`)
-
-                try {
-                  // Register this as an AI topic if not already registered
-                  if (!nodeOneCore.aiAssistantModel.isAITopic(conversationId)) {
-                    const defaultModel = nodeOneCore.aiAssistantModel.getDefaultModel()
-                    if (defaultModel) {
-                      nodeOneCore.aiAssistantModel.registerAITopic(conversationId, defaultModel.id)
-                    }
-                  }
-
-                  // Block and wait for welcome message (handleNewTopic will send thinking indicator)
-                  await nodeOneCore.aiAssistantModel.handleNewTopic(conversationId, topicRoom)
-                  console.log(`[ChatHandler] ⏱️ Welcome message completed in ${Date.now() - welcomeStartTime}ms`)
-                } catch (error) {
-                  console.error(`[ChatHandler] Failed to generate welcome message after ${Date.now() - welcomeStartTime}ms:`, error)
-                  // Continue without welcome message rather than failing the whole operation
-                } finally {
-                  // Clear the mutex
-                  welcomeMessageInProgress.delete(conversationId)
-                }
-              })()
-
-              welcomeMessageInProgress.set(conversationId, welcomePromise)
-              await welcomePromise
-            }
-          } else {
-            console.log(`[ChatHandler] Skipping welcome: hasRealMessages=${hasRealMessages}`)
-          }
-        } else {
-          console.log('[ChatHandler] AI chat already has messages, skipping welcome')
-        }
-      }
+      // Welcome messages should be handled when topics are created, not when retrieving messages
       
       // Get messages from the topic room
       // TopicRoom.retrieveAllMessages() aggregates from ALL channels with the same topic ID
@@ -477,77 +238,29 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
           })))
       }
 
-      // Use standard method for ALL conversations (P2P and group)
+      // DEBUG: Show what we're about to retrieve
+      // Retrieve messages using proper channel isolation
+      console.log(`[ChatHandler] Retrieving messages for: ${conversationId}`)
+
+      // Retrieve messages with strict conversation isolation
       rawMessages = await topicRoom.retrieveAllMessages()
-      console.log('[ChatHandler] Retrieved', rawMessages.length, 'messages from TopicRoom')
+      console.log(`[ChatHandler] Retrieved ${rawMessages.length} messages for conversation: ${conversationId}`)
 
-      // FALLBACK: Check for messages using Someone IDs if we got no messages in P2P
-      // This handles the case where messages were sent before fixes
-      if (conversationId.includes('<->') && rawMessages.length === 0) {
-        console.log('[ChatHandler] No messages found, checking Someone ID patterns...')
-          
-        // Extract the person IDs from the conversation ID
-        const [id1, id2] = conversationId.split('<->')
-          
-        // Try to find Someone IDs for these Person IDs
-        if (nodeOneCore.leuteModel) {
-          const others = await nodeOneCore.leuteModel.others()
+      // Verify message isolation - ensure messages belong to this conversation
+      const isolatedMessages = rawMessages.filter(msg => {
+        // Additional validation: message must have valid content
+        return msg.data?.text && typeof msg.data.text === 'string' && msg.data.text.trim() !== ''
+      })
 
-          // Find Someone IDs that match our Person IDs
-          const someoneIds = []
-          for (const contact of others) {
-            if (contact.personId === id1 || contact.personId === id2) {
-              someoneIds.push(contact.id)
-              console.log(`[ChatHandler] Found Someone ID ${contact.id} for Person ID ${contact.personId}`)
-          }
-
-          // Try different channel ID combinations with Someone IDs
-          if (someoneIds.length > 0) {
-            let fallbackMessages = []
-            for (const someoneId of someoneIds) {
-              // Try patterns like someoneId<->personId
-              const altChannelIds = [
-                `${someoneId}<->${id1}`,
-                `${someoneId}<->${id2}`,
-                `${id1}<->${someoneId}`,
-                `${id2}<->${someoneId}`
-              ]
-
-              for (const altId of altChannelIds) {
-                // TODO: getObjectsWithType is no longer available in the new vendor packages
-                // const altMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-                //   channelId: altId
-                // })
-
-                // if (altMessages.length > 0) {
-                //   console.log(`[ChatHandler] Found ${altMessages.length} messages in alternate channel: ${altId}`)
-                //   fallbackMessages = [...fallbackMessages, ...altMessages]
-                // }
-              }
-            }
-
-            // Also try Someone<->Someone patterns
-            if (someoneIds.length >= 2) {
-              const sortedSomeoneIds = someoneIds.sort()
-              const someoneChannelId = `${sortedSomeoneIds[0]}<->${sortedSomeoneIds[1]}`
-              // TODO: getObjectsWithType is no longer available in the new vendor packages
-              // const someoneMessages = await nodeOneCore.channelManager.getObjectsWithType('ChatMessage', {
-              //   channelId: someoneChannelId
-              // })
-
-              // if (someoneMessages.length > 0) {
-              //   console.log(`[ChatHandler] Found ${someoneMessages.length} messages in Someone<->Someone channel: ${someoneChannelId}`)
-              //   fallbackMessages = [...fallbackMessages, ...someoneMessages]
-              // }
-            }
-
-            rawMessages = [...rawMessages, ...fallbackMessages]
-            }
-          }
-        }
-        
-        console.log(`[ChatHandler] Total messages after fallback check: ${rawMessages.length}`)
+      if (isolatedMessages.length !== rawMessages.length) {
+        console.log(`[ChatHandler] Filtered ${rawMessages.length - isolatedMessages.length} invalid messages`)
       }
+
+      rawMessages = isolatedMessages
+
+      // No fallback message retrieval - strict conversation isolation
+      // Each conversation must have its own properly created topic
+      console.log(`[ChatHandler] Using strict message isolation for ${conversationId}`)
       
       // Sort messages by timestamp
       rawMessages.sort((a, b) => {
@@ -556,14 +269,16 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
         return timeA - timeB
       })
 
-      // Filter for actual ChatMessage objects - they have data.text
-      const validMessages = rawMessages.filter(msg =>
-        msg.data?.text && typeof msg.data.text === 'string' && msg.data.text.trim() !== ''
-      )
+
+      // ONE.core ChatMessage structure: msg.data.text contains the message
+      const validMessages = rawMessages.filter(msg => {
+        return msg.data?.text && typeof msg.data.text === 'string' && msg.data.text.trim() !== ''
+      })
+
       
       // Transform messages to UI format
       const formattedMessages = await Promise.all(validMessages.map(async (msg) => {
-        const senderId = msg.data?.sender || msg.data?.author || msg.author || nodeOneCore.ownerId
+        const senderId = msg.sender || msg.author || nodeOneCore.ownerId
 
         // Check if sender is an AI contact and get their name
         let isAI = false
@@ -588,7 +303,8 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
             })
 
             if (llmObject) {
-              senderName = llmObject.modelName || llmObject.modelId || 'AI Assistant'
+              // LLM object uses 'name' field, not 'modelName'
+              senderName = llmObject.name || llmObject.modelName || llmObject.modelId || 'AI Assistant'
               console.log(`[ChatHandler] AI message from ${senderName} (${senderId?.toString().substring(0, 8)}...)`)
             }
           }
@@ -630,8 +346,8 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
         return {
           id: msg.id || msg.channelEntryHash || `msg-${Date.now()}`,
           conversationId,
-          text: msg.data?.text || '',
-          attachments: msg.data?.attachments || [], // Include attachments from the message
+          text: msg.data.text,  // ONE.core messages have text in data.text
+          attachments: msg.attachments || [], // Include attachments from the message
           sender: senderId,
           senderName: senderName,
           timestamp: msg.creationTime ? new Date(msg.creationTime).toISOString() : new Date().toISOString(),
@@ -645,6 +361,11 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
       // Apply pagination
       const paginatedMessages = formattedMessages.slice(offset, offset + limit)
       
+      console.log(`[ChatHandler] 📤 Returning ${paginatedMessages.length} messages for ${conversationId}:`)
+      paginatedMessages.forEach((msg, i) => {
+        console.log(`[ChatHandler] 📤 Message ${i}: "${msg.text?.substring(0, 50)}..." (${msg.isAI ? 'AI' : 'User'})`)
+      })
+
       return {
         success: true,
         messages: paginatedMessages,
@@ -850,146 +571,47 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
         })
         console.log('[ChatHandler] Channels by ID:', JSON.stringify(channelDebug, null, 2))
         
-        // Group channels by topic ID to handle group chats and P2P correctly
-        // In both cases, each participant has their own channel with the same topic ID
-        const topicMap = new Map()
-        const processedIds = new Set() // Track which IDs we've already processed
-
-        // Pre-fetch contact names for P2P chats
-        const p2pNameCache = new Map()
+        // Strict conversation deduplication - one conversation per unique ID
+        const conversationMap = new Map()
+        const processedIds = new Set()
 
         for (const channel of channels) {
           // Skip system channels
           if (channel.id === 'contacts') continue
 
-          // For P2P conversations, normalize the ID to prevent duplicates
-          // Both "someoneId<->personId" and "personId1<->personId2" should be treated as same conversation
-          let normalizedId = channel.id
+          // For P2P conversations, ensure consistent ID format
+          let conversationId = channel.id
           if (channel.id.includes('<->')) {
             const parts = channel.id.split('<->')
 
-            // Skip self-P2P channels (conversations with ourselves)
-            if (parts[0] === parts[1]) {
-              console.log(`[ChatHandler] Skipping self-P2P channel: ${channel.id}`)
+            // Skip invalid P2P channels
+            if (parts.length !== 2 || parts[0] === parts[1]) {
+              console.log(`[ChatHandler] Skipping invalid P2P channel: ${channel.id}`)
               continue
             }
 
-            // Always sort the IDs to get a consistent key
-            normalizedId = parts.sort().join('<->')
-            console.log(`[ChatHandler] P2P channel ${channel.id} normalized to ${normalizedId}`)
-
-            // Look up contact name for P2P chats
-            if (!p2pNameCache.has(normalizedId) && nodeOneCore.leuteModel) {
-              try {
-                const otherPersonId = parts.find(id => id !== nodeOneCore.ownerId)
-                console.log('[ChatHandler] Looking up name for P2P chat, otherPersonId:', otherPersonId?.substring(0, 8))
-
-                if (otherPersonId) {
-                  // Get all contacts and find the one with this personId
-                  const others = await nodeOneCore.leuteModel.others()
-                  console.log('[ChatHandler] Total contacts:', others.length)
-
-                  // Need to check the person ID from the profile, not directly from Someone
-                  let contact = null
-                  for (const someone of others) {
-                    try {
-                      const profile = await someone.mainProfile()
-                      if (profile?.personId === otherPersonId) {
-                        contact = someone
-                        break
-                      }
-                    } catch (e) {
-                      // Profile might not be available
-                    }
-                  }
-                  console.log('[ChatHandler] Found matching contact:', contact ? 'YES' : 'NO')
-
-                  let displayName = null
-                  if (contact) {
-                    try {
-                      const profile = await contact.mainProfile()
-                      console.log('[ChatHandler] Got profile:', profile ? 'YES' : 'NO')
-
-                      // Look for PersonName in profile descriptions
-                      const nameDesc = profile?.personDescriptions?.find(d =>
-                        d.$type$ === 'PersonName'
-                      )
-                      console.log('[ChatHandler] Found PersonName:', nameDesc?.name || 'NONE')
-
-                      if (nameDesc?.name) {
-                        displayName = nameDesc.name
-                      } else if (profile?.name) {
-                        // Fallback to profile name field
-                        displayName = profile.name
-                      }
-                    } catch (e) {
-                      console.log('[ChatHandler] Error getting profile:', e.message)
-                    }
-
-                    // If still no name, try to get from the Someone's name property
-                    if (!displayName && contact.name) {
-                      displayName = contact.name
-                      console.log('[ChatHandler] Using Someone name:', displayName)
-                    }
-
-                    // If still no name, try to get from the Someone object itself
-                    if (!displayName) {
-                      try {
-                        // Some Someone objects might have a getName method or similar
-                        const someoneObj = await contact.object()
-                        if (someoneObj?.name) {
-                          displayName = someoneObj.name
-                          console.log('[ChatHandler] Using Someone object name:', displayName)
-                        }
-                      } catch (e) {
-                        // Ignore
-                      }
-                    }
-                  }
-
-                  if (!displayName) {
-                    // Fallback to shortened ID
-                    displayName = otherPersonId.substring(0, 8) + '...'
-                  }
-
-                  p2pNameCache.set(normalizedId, `Chat with ${displayName}`)
-                  console.log(`[ChatHandler] Cached P2P name for ${normalizedId}: Chat with ${displayName}`)
-                }
-              } catch (e) {
-                console.warn('[ChatHandler] Could not look up contact name:', e)
-              }
-            }
+            // Use sorted IDs for consistency
+            conversationId = parts.sort().join('<->')
           }
 
-          // Skip if we've already processed this topic ID
-          if (processedIds.has(normalizedId)) {
-            console.log(`[ChatHandler] Skipping duplicate: ${channel.id} (normalized: ${normalizedId})`)
+          // Skip if already processed
+          if (processedIds.has(conversationId)) {
+            console.log(`[ChatHandler] Skipping duplicate conversation: ${conversationId}`)
             continue
           }
 
-          // For ALL topics (group and P2P), consolidate by topic ID
-          // We only need to show each conversation once, not once per channel
-          processedIds.add(normalizedId)
-
-          // Find the best channel for this topic (prefer our own for writing)
-          const allChannelsForTopic = channels.filter(ch => ch.id === channel.id)
-          const ourChannel = allChannelsForTopic.find(ch => ch.owner === nodeOneCore.ownerId)
-          const channelToUse = ourChannel || allChannelsForTopic[0]
-
-          topicMap.set(normalizedId, {
-            ...channelToUse,
-            id: normalizedId, // Use the normalized ID
-            isOurs: channelToUse.owner === nodeOneCore.ownerId,
-            participantCount: allChannelsForTopic.length, // Track how many participants
-            cachedName: p2pNameCache.get(normalizedId) // Store the cached name if available
-          })
+          processedIds.add(conversationId)
+          conversationMap.set(conversationId, channel)
         }
+
+        // Convert to array for processing
+        const uniqueChannels = Array.from(conversationMap.values()).map(channel => ({
+          ...channel,
+          id: conversationMap.get(channel.id) ? conversationMap.get(channel.id).id : channel.id
+        }))
         
-        // Convert map back to array for processing
-        const filteredChannels = Array.from(topicMap.values())
-        
-        // Process channels with async operations
-        conversations = await Promise.all(filteredChannels.map(async channel => {
+        // Process unique conversations
+        conversations = await Promise.all(uniqueChannels.map(async channel => {
             // Try to get the actual topic to access its name property
             let name = channel.cachedName || channel.name // Use cached name if available
             let topic = null
@@ -1015,6 +637,8 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
                 name = `Chat with ${displayName}`
               } else if (channel.id === 'lama') {
                 name = 'LAMA'
+              } else if (channel.id === 'hi') {
+                name = 'Hi'
               } else if (channel.id === 'EveryoneTopic') {
                 name = 'Everyone'
               } else if (channel.id === 'GlueOneTopic') {
@@ -1052,6 +676,19 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
               isGroupChat = true
             }
 
+            // Get the AI model name for this conversation if it has an AI participant
+            let modelName = null
+            if (nodeOneCore.aiAssistantModel) {
+              const modelId = nodeOneCore.aiAssistantModel.getModelIdForTopic(channel.id)
+              if (modelId) {
+                const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
+                const aiContact = aiContacts.find(c => c.modelId === modelId)
+                if (aiContact) {
+                  modelName = aiContact.name
+                }
+              }
+            }
+
             return {
               id: channel.id,
               name: name,
@@ -1060,11 +697,11 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
               members: channel.members || [],
               participants: channel.participants || [],
               participantCount: channel.participantCount,
-              createdAt: channel.createdAt || new Date().toISOString()
+              createdAt: channel.createdAt || new Date().toISOString(),
+              modelName: modelName
             }
           }))
-      }
-      
+
       // Note: We do NOT automatically recreate Hi or LAMA chats if deleted
       // They are only created during initial setup in node-one-core.js
       
@@ -1101,6 +738,8 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
                 senderId: lastMessage.data?.senderId || lastMessage.senderId,
                 timestamp: lastMessage.data?.timestamp || lastMessage.timestamp
               }
+              // Set lastMessageAt for sorting
+              conv.lastMessageAt = lastMessage.data?.timestamp || lastMessage.timestamp || new Date().toISOString()
             }
           } catch (error) {
             console.warn(`Failed to get last message for conversation ${conv.id}:`, error)
@@ -1108,16 +747,17 @@ This Hi chat is just an introduction. Feel free to delete it once you're familia
         }))
       }
       
-      // Sort by last message time (most recent first)
-      conversations.sort((a, b) => {
-        const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
-        const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
-        return bTime - aTime
-      })
-      
+        // Sort by last message time (most recent first)
+        conversations.sort((a, b) => {
+          const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
+          const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
+          return bTime - aTime
+        })
+      } // End of if (nodeOneCore.initialized && nodeOneCore.channelManager)
+
       // Apply pagination
       const paginated = conversations.slice(offset, offset + limit)
-      
+
       return {
         success: true,
         data: paginated,

@@ -147,8 +147,8 @@ class AIPollingListener {
     }
     
     try {
-      // Default to Ollama model
-      const modelId = 'ollama:gpt-oss'
+      // Use default model from LLM Manager
+      const modelId = llmManager.defaultModelId
       
       // Build simple context
       const messages = [{

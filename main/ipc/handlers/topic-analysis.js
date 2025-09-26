@@ -6,6 +6,7 @@
 import nodeOneCoreInstance from '../../core/node-one-core.js';
 import TopicAnalysisModel from '../../core/one-ai/models/TopicAnalysisModel.js';
 import RealTimeKeywordExtractor from '../../core/one-ai/services/RealTimeKeywordExtractor.js';
+import llmManager from '../../services/llm-manager.js';
 
 // Singleton instances
 let topicAnalysisModel = null;
@@ -105,13 +106,23 @@ export async function analyzeMessages(event, { topicId, messages, forceReanalysi
       throw new Error('LLM Manager not available');
     }
 
+    // Get model ID from AI assistant model (source of truth)
+    let modelId = null;
+    if (nodeOneCoreInstance.aiAssistantModel) {
+      modelId = nodeOneCoreInstance.aiAssistantModel.getModelIdForTopic(topicId);
+    }
+
+    if (!modelId) {
+      throw new Error('No AI model configured for this topic');
+    }
+
     // Prepare conversation context for analysis
     const conversationText = messages
       .map(msg => `${msg.sender || 'Unknown'}: ${msg.content || msg.text || ''}`)
       .join('\n');
 
     // Extract keywords using LLM
-    console.log('[TopicAnalysis] Extracting keywords with LLM...');
+    console.log('[TopicAnalysis] Extracting keywords with LLM using model:', modelId);
     const keywordPrompt = `Analyze this conversation and extract the most important keywords (single words or short phrases).
 Return ONLY a JSON array of keywords, no explanation.
 Focus on: main topics, technical terms, product names, important concepts.
@@ -125,7 +136,7 @@ Return format: ["keyword1", "keyword2", ...]`;
     const keywordResponse = await llmManager.chat([{
       role: 'user',
       content: keywordPrompt
-    }], 'ollama:gpt-oss'); // Use configured model
+    }], modelId); // Use determined model
 
     let keywords = [];
     try {
@@ -157,7 +168,7 @@ ${conversationText.substring(0, 3000)}`;
     const subjectResponse = await llmManager.chat([{
       role: 'user',
       content: subjectPrompt
-    }], 'ollama:gpt-oss');
+    }], modelId);
 
     let subjects = [];
     try {
@@ -193,7 +204,7 @@ ${conversationText.substring(0, 3000)}`;
     const summaryResponse = await llmManager.chat([{
       role: 'user',
       content: summaryPrompt
-    }], 'ollama:gpt-oss');
+    }], modelId);
 
     // Create summary
     const summary = await model.createSummary(
@@ -437,7 +448,7 @@ ${conversationText.substring(0, 3000)}`;
           const summaryResponse = await llmManager.chat([{
             role: 'user',
             content: summaryPrompt
-          }], 'ollama:gpt-oss');
+          }], modelId);
 
           summaryContent = summaryResponse;
           changeReason = changeReason || 'AI-generated update based on new messages';
@@ -521,7 +532,7 @@ Return format: ["keyword1", "keyword2", ...]`;
     const response = await llmManager.chat([{
       role: 'user',
       content: keywordPrompt
-    }], 'ollama:gpt-oss');
+    }], modelId);
 
     let extractedKeywords = [];
     try {
@@ -619,7 +630,7 @@ Example: ["pizza", "delivery", "restaurant", "italian"]`;
     const response = await llmManager.chat([{
       role: 'user',
       content: prompt
-    }], 'ollama:gpt-oss');
+    }], modelId);
 
     let keywords = [];
     try {
@@ -676,6 +687,24 @@ export async function extractConversationKeywords(event, { topicId, messages = [
       return {
         success: false,
         error: 'LLM not available for keyword extraction',
+        data: {
+          keywords: []
+        }
+      };
+    }
+
+    // Get model ID from AI assistant model (source of truth)
+    const nodeOneCoreInstance = getNodeOneCoreInstance();
+    let modelId = null;
+    if (nodeOneCoreInstance && nodeOneCoreInstance.aiAssistantModel) {
+      modelId = nodeOneCoreInstance.aiAssistantModel.getModelIdForTopic(topicId);
+    }
+
+    if (!modelId) {
+      console.error('[TopicAnalysis] No AI model configured for topic:', topicId);
+      return {
+        success: false,
+        error: 'No AI model configured for this topic',
         data: {
           keywords: []
         }
@@ -742,7 +771,7 @@ Example: ["blockchain", "ethereum", "smartcontract", "defi", "wallet"]`;
     const response = await llmManager.chat([{
       role: 'user',
       content: prompt
-    }], 'ollama:gpt-oss');
+    }], modelId);
 
     let keywords = [];
     try {

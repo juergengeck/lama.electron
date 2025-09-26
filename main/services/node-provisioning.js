@@ -330,10 +330,14 @@ class NodeProvisioning {
     switch (capability) {
       case 'llm':
         // Initialize LLM capability - integrate with main process LLMManager
+        const { default: llmManager } = await import('../services/llm-manager.js')
+        const availableModels = llmManager.getAvailableModels().map(m => m.id)
+
         await nodeOneCore.setState('capabilities.llm', {
           enabled: true,
           provider: 'main-process',
-          models: ['gpt-oss', 'claude-3-5-sonnet', 'claude-3-5-haiku'],
+          models: availableModels,
+          defaultModel: llmManager.defaultModelId,
           integration: 'lama-llm-manager'
         })
         console.log('[NodeProvisioning] LLM capability enabled with main process integration')
@@ -346,7 +350,7 @@ class NodeProvisioning {
           storageType: 'file-system',
           importPath: './imports',
           exportPath: './exports',
-          blobStorage: 'one-core-storage/node/blobs/'
+          blobStorage: 'OneDB/blobs/'
         })
         console.log('[NodeProvisioning] File storage capability enabled')
         break
@@ -373,7 +377,7 @@ class NodeProvisioning {
           enabled: true,
           role: 'archive',
           persistent: true,
-          location: 'one-core-storage/node/',
+          location: 'OneDB/',
           unlimited: true
         })
         console.log('[NodeProvisioning] Archive storage capability enabled')
@@ -388,7 +392,6 @@ class NodeProvisioning {
   }
 
   async createUserObjects(user) {
-    // Skip creating welcome messages - not needed and slows down init
     // User objects already created in initialization
   }
 
@@ -407,7 +410,7 @@ class NodeProvisioning {
       // Clear storage (optional - for full reset)
       const fs = require('fs').promises
       const path = require('path')
-      const dataPath = path.join(process.cwd(), 'one-data-node')
+      const dataPath = path.join(process.cwd(), 'OneDB')
       
       try {
         await fs.rm(dataPath, { recursive: true, force: true })

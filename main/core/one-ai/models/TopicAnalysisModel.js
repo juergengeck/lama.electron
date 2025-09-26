@@ -295,4 +295,45 @@ export default class TopicAnalysisModel extends Model {
         // Emit update for any channel that might contain our analysis objects
         this.onUpdated.emit(timeOfEarliestChange);
     }
+
+    /**
+     * Update topic summary with incremental changes
+     * @param {string} topicId - The topic ID
+     * @param {string} updateContent - The incremental update content
+     * @param {number} confidence - Confidence score for the update
+     * @returns {Promise<Object>} The updated summary object
+     */
+    async updateSummary(topicId, updateContent, confidence = 0.8) {
+        // Get current summary
+        const currentSummary = await this.getCurrentSummary(topicId);
+
+        if (!currentSummary) {
+            // Create first summary if none exists
+            const subjects = await this.getSubjects(topicId);
+            return await this.createSummary(
+                topicId,
+                1,
+                updateContent,
+                subjects.map(s => s.id),
+                'Initial summary from message analysis',
+                null
+            );
+        }
+
+        // Create new version with incremental update
+        const newVersion = currentSummary.version + 1;
+        const subjects = await this.getSubjects(topicId);
+
+        // Combine existing content with update
+        const updatedContent = currentSummary.content + '\n\nUpdate: ' + updateContent;
+
+        return await this.createSummary(
+            topicId,
+            newVersion,
+            updatedContent,
+            subjects.map(s => s.id),
+            'Incremental update from message analysis',
+            currentSummary.id
+        );
+    }
 }

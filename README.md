@@ -183,6 +183,7 @@ Built installers will be available in the `dist/` folder:
 - **Contact Caching**: 5-second cache eliminates redundant API calls during initialization
 - **Reduced Log Noise**: 80% reduction in startup logs through batching and filtering
 - **Race Condition Fixes**: Proper mutex cleanup prevents topic creation conflicts
+- **AI Topic Registration Fix**: Corrected initialization order ensures AI topics are properly registered for message listening
 
 #### AI & Analysis
 - **Combined Response + Analysis**: Single LLM call provides both user response and topic analysis

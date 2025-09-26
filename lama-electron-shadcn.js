@@ -403,7 +403,7 @@ ipcMain.handle('app:clearData', async (event) => {
       }
 
       // Reset node provisioning state
-      const { default: nodeProvisioning } = await import('./main/hybrid/node-provisioning.js');
+      const { default: nodeProvisioning } = await import('./main/services/node-provisioning.js');
       if (nodeProvisioning && nodeProvisioning.reset) {
         nodeProvisioning.reset();
         console.log('[ClearData] Node provisioning reset');
@@ -433,14 +433,10 @@ ipcMain.handle('app:clearData', async (event) => {
     console.log('[ClearData] Deleting data folders...');
 
     const oneDbPath = path.join(process.cwd(), 'OneDB');
-    const oneCoreStorageDir = path.join(process.cwd(), 'one-core-storage');
-    const oneDataNodePath = path.join(process.cwd(), 'one-data-node');
 
-    // Delete all data directories
+    // Delete OneDB directory - the ONLY storage location
     const dataDirs = [
-      { path: oneDbPath, name: 'OneDB' },
-      { path: oneCoreStorageDir, name: 'one-core-storage' },
-      { path: oneDataNodePath, name: 'one-data-node' }
+      { path: oneDbPath, name: 'OneDB' }
     ];
 
     for (const dir of dataDirs) {
@@ -473,8 +469,7 @@ ipcMain.handle('app:clearData', async (event) => {
     // Clear the require cache for key modules
     const modulePathsToDelete = [
       './main/core/node-one-core.js',
-      './main/hybrid/node-provisioning.js',
-      './main/hybrid/node-instance.js',
+      './main/services/node-provisioning.js',
       './main/state/manager.js',
       './main/app.js'
     ];
@@ -490,6 +485,11 @@ ipcMain.handle('app:clearData', async (event) => {
     }
 
     console.log('[ClearData] All data cleared successfully');
+
+    // Notify renderer that data has been cleared (before restart)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:dataCleared');
+    }
 
     // Step 7: Restart the application with a clean state
     console.log('[ClearData] Scheduling application restart...');
@@ -527,7 +527,7 @@ async function autoLoginTest() {
   // setTimeout(async () => {
   //   console.log('[AutoLogin] Triggering login with demo/demo...')
   //   try {
-  //     const { default: nodeProvisioning } = await import('./main/hybrid/node-provisioning.js')
+  //     const { default: nodeProvisioning } = await import('./main/services/node-provisioning.js')
   //     const result = await nodeProvisioning.provision({
   //       user: {
   //         name: 'demo',

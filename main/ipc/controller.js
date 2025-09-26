@@ -95,6 +95,7 @@ class IPCController {
     this.handle('state:subscribe', stateHandlers.subscribe)
     
     // Chat handlers
+    this.handle('chat:initializeDefaultChats', chatHandlers.initializeDefaultChats)
     this.handle('chat:sendMessage', chatHandlers.sendMessage)
     this.handle('chat:getMessages', chatHandlers.getMessages)
     this.handle('chat:createConversation', chatHandlers.createConversation)
@@ -168,6 +169,7 @@ class IPCController {
     this.handle('ai:initialize', aiHandlers.initializeLLM)
     this.handle('ai:debugTools', aiHandlers.debugTools)
     this.handle('llm:testApiKey', aiHandlers.testApiKey)
+    this.handle('ai:ensureDefaultChats', aiHandlers['ai:ensureDefaultChats'])
     
     // Attachment handlers
     this.handle('attachment:store', attachmentHandlers.storeAttachment)
@@ -225,6 +227,7 @@ class IPCController {
     this.handle('onecore:getOrCreateTopicForContact', topicHandlers.getOrCreateTopicForContact)
     this.handle('onecore:secureStore', oneCoreHandlers.secureStore)
     this.handle('onecore:secureRetrieve', oneCoreHandlers.secureRetrieve)
+    this.handle('onecore:clearStorage', oneCoreHandlers.clearStorage)
     
     // Debug handler for owner ID comparison
     this.handle('debug', (event, data) => {
@@ -368,7 +371,6 @@ class IPCController {
       
       // Clear ALL ONE.core storage
       const storageDirs = [
-        path.join(process.cwd(), 'one-core-storage'),
         path.join(process.cwd(), 'OneDB')
       ]
       

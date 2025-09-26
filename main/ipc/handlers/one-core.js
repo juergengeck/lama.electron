@@ -31,7 +31,7 @@ const oneCoreHandlers = {
     
     try {
       // Use the nodeProvisioning module to handle initialization
-      const { default: nodeProvisioning } = await import('../../hybrid/node-provisioning.js')
+      const { default: nodeProvisioning } = await import('../../services/node-provisioning.js')
       
       // Call the provision method with the user data
       const result = await nodeProvisioning.provision({
@@ -755,6 +755,47 @@ const oneCoreHandlers = {
       }
     } catch (error) {
       console.error('[OneCoreHandler] Failed to secure retrieve:', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  },
+
+  /**
+   * Clear storage - delegate to app:clearData for consistency
+   */
+  async clearStorage(event) {
+    console.log('[OneCoreHandler] Clear storage request - delegating to app:clearData')
+
+    try {
+      // Import electron to access ipcMain
+      const { ipcMain } = await import('electron')
+
+      // Create a mock event object for the app:clearData handler
+      const mockEvent = { sender: event.sender }
+
+      // Call the existing app:clearData handler directly
+      const { app } = await import('electron')
+      const mainModule = await import('../../../lama-electron-shadcn.js')
+
+      // Find and call the app:clearData handler
+      const handler = ipcMain.listeners('app:clearData')?.[0]
+      if (handler) {
+        const result = await handler(mockEvent)
+        return result
+      } else {
+        // Fallback: just clear browser storage
+        const { session } = await import('electron')
+        await session.defaultSession.clearStorageData({
+          storages: ['indexdb', 'localstorage', 'cookies', 'cachestorage', 'websql']
+        })
+        await session.defaultSession.clearCache()
+
+        return { success: true }
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to clear storage:', error)
       return {
         success: false,
         error: error.message

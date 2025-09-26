@@ -3,7 +3,8 @@
  * Initializes all services and manages the application lifecycle
  */
 
-import { app, BrowserWindow } from 'electron';
+import electron from 'electron';
+const { app, BrowserWindow } = electron;
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -13,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Core modules - now using hybrid architecture
-import nodeProvisioning from './hybrid/node-provisioning.js';
+import nodeProvisioning from './services/node-provisioning.js';
 import ipcController from './ipc/controller.js';
 import llmManager from './services/llm-manager.js';
 import attachmentService from './services/attachment-service.js';

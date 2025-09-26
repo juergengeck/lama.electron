@@ -1,14 +1,14 @@
 /**
- * Recipe registration for Node.js ONE.core instance
- * Recipes must be added to initialRecipes during initInstance
+ * LAMA Recipes
+ * Defines ONE.core object types for LAMA-specific features
  */
 
-// No need to import hasRecipe - just define the recipes
-
-// Import LAMA recipes from LAMA mobile app structure
-import { LLMRecipe } from './LLM.js'
+import { addRecipeToRuntime } from '@refinio/one.core/lib/object-recipes.js'
 import { WordCloudSettingsRecipe } from '../core/one-ai/recipes/WordCloudSettingsRecipe.js'
 import TopicAnalysisRecipes from '../core/one-ai/recipes/ai-recipes.js'
+
+// LLM Recipe - represents an AI model/assistant
+import { LLMRecipe } from './LLM.js'
 
 const LLMSettingsRecipe = {
     $type$: 'Recipe',
@@ -24,17 +24,16 @@ const LLMSettingsRecipe = {
         {
             itemprop: 'enabledLLMs',
             itemtype: {
-                type: 'array',
-                item: {
-                    type: 'string'
-                }
+                type: 'bag',
+                item: { type: 'string' }
             },
             optional: true
         },
         {
-            itemprop: 'defaultSystemPrompt',
+            itemprop: 'disabledLLMs',
             itemtype: {
-                type: 'string'
+                type: 'bag',
+                item: { type: 'string' }
             },
             optional: true
         }
@@ -54,6 +53,63 @@ const GlobalLLMSettingsRecipe = {
         },
         {
             itemprop: 'autoSelectBestModel',
+            itemtype: {
+                type: 'boolean'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'preferredModelIds',
+            itemtype: {
+                type: 'array',
+                item: { type: 'string' }
+            },
+            optional: true
+        },
+        {
+            itemprop: 'defaultModelId',
+            itemtype: {
+                type: 'string'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'temperature',
+            itemtype: {
+                type: 'number'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'maxTokens',
+            itemtype: {
+                type: 'integer'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'systemPrompt',
+            itemtype: {
+                type: 'string'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'streamResponses',
+            itemtype: {
+                type: 'boolean'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'autoSummarize',
+            itemtype: {
+                type: 'boolean'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'enableMCP',
             itemtype: {
                 type: 'boolean'
             },

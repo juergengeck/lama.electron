@@ -68,13 +68,27 @@ export class BrowserInit {
       }
       
       console.log('[BrowserInit] ✅ Node.js ONE.core initialized:', nodeResult.nodeId)
-      
+
+      // Initialize default chats (like Hi chat) after login
+      try {
+        console.log('[BrowserInit] Initializing default chats...')
+        const initResult = await window.electronAPI.invoke('chat:initializeDefaultChats')
+        if (initResult.success) {
+          console.log('[BrowserInit] Default chats initialized')
+        } else {
+          console.warn('[BrowserInit] Failed to initialize default chats:', initResult.error)
+        }
+      } catch (error) {
+        console.warn('[BrowserInit] Error initializing default chats:', error)
+        // Continue anyway - not critical
+      }
+
       // Store Node info for debugging
       ;(window as any).nodeInstanceInfo = {
         nodeId: nodeResult.nodeId,
         endpoint: nodeResult.endpoint || 'ws://localhost:8765'
       }
-      
+
       return { success: true, user: this.currentUser }
       
     } catch (error) {

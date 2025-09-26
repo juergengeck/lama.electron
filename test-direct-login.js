@@ -3,7 +3,7 @@
 async function testDirectLogin() {
   console.log('[TestDirectLogin] Starting direct login test...')
   
-  const { default: nodeProvisioning } = await import('./main/hybrid/node-provisioning.js')
+  const { default: nodeProvisioning } = await import('./main/services/node-provisioning.js')
   
   // Directly provision the Node
   const result = await nodeProvisioning.provision({

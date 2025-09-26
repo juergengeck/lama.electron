@@ -59,7 +59,7 @@ class LLMObjectManager {
               modelId: modelId,
               modelName: llm.name,
               personId: llm.personId,
-              isAI: true
+              isAI: true // Always true for LLM objects as source of truth
             });
             const personIdStr = llm.personId ? llm.personId.toString().substring(0, 8) : 'unknown';
             console.log(`[LLMObjectManager] Cached LLM: ${modelId} with person ${personIdStr}...`);
@@ -118,7 +118,8 @@ class LLMObjectManager {
         temperature: 0.7,
         contextSize: 4096,
         batchSize: 512,
-        threads: 4
+        threads: 4,
+        isAI: true // Mark as AI for source of truth
       };
       
       // Store the LLM object in ONE.core
@@ -130,7 +131,8 @@ class LLMObjectManager {
         ...llmObject,
         modelId: modelId, // Store the original modelId for reference
         hash: storedObject.hash,
-        idHash: storedObject.idHash
+        idHash: storedObject.idHash,
+        isAI: true // Ensure isAI flag is present in cache
       });
       
       // Grant access to federation group for CHUM sync
@@ -224,10 +226,11 @@ class LLMObjectManager {
    */
   cacheAIPersonId(modelId, personId) {
     if (!this.llmObjects.has(modelId)) {
-      // Create a minimal cache entry
+      // Create a minimal cache entry with isAI flag
       this.llmObjects.set(modelId, {
         modelId: modelId,
         personId: personId,
+        isAI: true, // Mark as AI for source of truth
         cached: true // Mark as cached only
       });
       console.log(`[LLMObjectManager] Cached AI person ${personId.toString().substring(0, 8)}... for model ${modelId}`);

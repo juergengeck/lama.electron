@@ -7,9 +7,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-import nodeProvisioning from '../../hybrid/node-provisioning.js';
+import nodeProvisioning from '../../services/node-provisioning.js';
 import nodeOneCore from '../../core/node-one-core.js';
-import chumMonitor from '../../hybrid/chum-monitor.js';
+import chumMonitor from '../../services/chum-monitor.js';
 import config from '../../config/iom-config.js';
 
 // Track active CHUM connections and sync state
@@ -111,7 +111,7 @@ async function getIOMInstances(event) {
 async function getStorageInfo(type) {
   try {
     if (type === 'node') {
-      const dataPath = path.join(process.cwd(), 'one-data-node')
+      const dataPath = path.join(process.cwd(), 'OneDB')
       
       let totalSize = 0
       let availableSpace = 0

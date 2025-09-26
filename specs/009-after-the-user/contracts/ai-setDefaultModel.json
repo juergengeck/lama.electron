@@ -1,0 +1,81 @@
+{
+  "ipcChannel": "ai:setDefaultModel",
+  "description": "Sets the default LLM model and creates initial conversation topics",
+  "request": {
+    "type": "object",
+    "required": ["modelId"],
+    "properties": {
+      "modelId": {
+        "type": "string",
+        "description": "The ID of the model to set as default",
+        "examples": ["llama3.2", "claude-3-opus", "gpt-4"]
+      }
+    }
+  },
+  "response": {
+    "type": "object",
+    "required": ["success", "topics"],
+    "properties": {
+      "success": {
+        "type": "boolean",
+        "description": "Whether the operation completed successfully"
+      },
+      "topics": {
+        "type": "object",
+        "description": "The created or existing topic IDs",
+        "required": ["hi", "lama"],
+        "properties": {
+          "hi": {
+            "type": "string",
+            "description": "Topic ID for the Hi conversation",
+            "enum": ["hi"]
+          },
+          "lama": {
+            "type": "string",
+            "description": "Topic ID for the LAMA conversation",
+            "enum": ["lama"]
+          }
+        }
+      },
+      "created": {
+        "type": "object",
+        "description": "Indicates which topics were newly created",
+        "properties": {
+          "hi": {
+            "type": "boolean",
+            "description": "Whether Hi topic was newly created"
+          },
+          "lama": {
+            "type": "boolean",
+            "description": "Whether LAMA topic was newly created"
+          }
+        }
+      },
+      "error": {
+        "type": "string",
+        "description": "Error message if success is false"
+      }
+    }
+  },
+  "sideEffects": [
+    "Creates AI contact for the model if not exists",
+    "Creates Hi topic with static welcome message if not exists",
+    "Creates LAMA topic with LLM-generated welcome if not exists",
+    "Persists default model selection to settings",
+    "Pre-warms LLM connection"
+  ],
+  "errors": [
+    {
+      "code": "MODEL_NOT_FOUND",
+      "description": "The specified model ID does not exist"
+    },
+    {
+      "code": "TOPIC_CREATION_FAILED",
+      "description": "Failed to create one or more topics"
+    },
+    {
+      "code": "SETTINGS_SAVE_FAILED",
+      "description": "Failed to persist default model selection"
+    }
+  ]
+}

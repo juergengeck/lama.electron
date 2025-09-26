@@ -100,44 +100,63 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   const handleLoadSelectedModels = async () => {
+    console.log('[ModelOnboarding] 🚀 handleLoadSelectedModels called, selected models:', selectedModels.size)
     if (selectedModels.size === 0) return
-    
+
     const modelIds = Array.from(selectedModels)
-    
+    console.log('[ModelOnboarding] 🚀 Model IDs to load:', modelIds)
+
     // Load all selected Ollama models
     for (let i = 0; i < modelIds.length; i++) {
       const modelId = modelIds[i]
+      console.log(`[ModelOnboarding] 🚀 Processing model ${i+1}/${modelIds.length}: ${modelId}`)
       const ollamaModel = ollamaModels.find(m => m.id === modelId)
       if (ollamaModel) {
         // Only complete on the last model
         const isLastModel = i === modelIds.length - 1
+        console.log(`[ModelOnboarding] 🚀 Calling handleModelReady for ${modelId}, isLast: ${isLastModel}`)
+        console.log(`[ModelOnboarding] 🚀 Ollama model details:`, ollamaModel)
         await handleModelReady(modelId, ollamaModel, isLastModel)
+      } else {
+        console.log(`[ModelOnboarding] ❌ No Ollama model found for ID: ${modelId}`)
       }
     }
   }
 
   const handleModelSelect = async (modelId: string) => {
+    console.log('[ModelOnboarding] ⭐ handleModelSelect called with:', modelId)
+
     // Check if it's an Ollama model
     if (modelId.startsWith('ollama:')) {
+      console.log('[ModelOnboarding] Ollama model detected:', modelId)
       setSelectedModel(modelId)
       setShowOllamaConsent(true)
       return
     }
-    
-    const model = MODEL_OPTIONS.find(m => m.id === modelId)
-    if (!model) return
 
+    const model = MODEL_OPTIONS.find(m => m.id === modelId)
+    if (!model) {
+      console.log('[ModelOnboarding] ❌ Model not found in OPTIONS:', modelId)
+      return
+    }
+
+    console.log('[ModelOnboarding] Found model:', model.name, 'requiresDownload:', model.requiresDownload)
     setSelectedModel(modelId)
 
     if (model.requiresDownload) {
+      console.log('[ModelOnboarding] Model requires download, checking if it exists locally...')
       // Check if model weights already exist locally
-      if (await checkModelExists(modelId)) {
+      const exists = await checkModelExists(modelId)
+      console.log('[ModelOnboarding] Model exists locally?', exists)
+
+      if (exists) {
         console.log(`[ModelOnboarding] ${model.name} already downloaded, loading...`)
         handleModelReady(modelId)
         return
       }
-      
+
       // Start real download from HuggingFace
+      console.log('[ModelOnboarding] Starting download from HuggingFace...')
       setIsDownloading(true)
       setDownloadError(null)
       setDownloadStatus(null)
@@ -193,18 +212,39 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
 
   const handleModelReady = async (modelId: string, ollamaModel?: OllamaModelInfo, shouldComplete: boolean = true) => {
     // Model configuration handled by Node.js via IPC
-    console.log('[ModelOnboarding] Model ready:', ollamaModel?.displayName || modelId)
-    
+    console.log('[ModelOnboarding] 🎯 handleModelReady called')
+    console.log('[ModelOnboarding] 🎯 Model ID:', modelId)
+    console.log('[ModelOnboarding] 🎯 Ollama model:', ollamaModel?.displayName || 'none')
+    console.log('[ModelOnboarding] 🎯 Should complete:', shouldComplete)
+
     // Track loading progress
     setLoadingModels(prev => new Set(prev).add(modelId))
     setModelLoadProgress(prev => new Map(prev).set(modelId, 0))
-    
+
     // Simulate progress for UI
     setModelLoadProgress(prev => new Map(prev).set(modelId, 50))
-    
+
+    let modelSetSuccessfully = false
+    try {
+      // Save the selected model as default via IPC
+      console.log(`[ModelOnboarding] 🎯 Calling lamaBridge.setDefaultModel(${modelId})`)
+      const success = await lamaBridge.setDefaultModel(modelId)
+      console.log(`[ModelOnboarding] 🎯 lamaBridge.setDefaultModel returned:`, success)
+
+      if (success) {
+        console.log(`[ModelOnboarding] ✅ Successfully set ${modelId} as default model`)
+        console.log(`[ModelOnboarding] ✅ AI contact created, chats will be created when accessed`)
+        modelSetSuccessfully = true
+      } else {
+        console.warn(`[ModelOnboarding] ⚠️ Failed to set ${modelId} as default model`)
+      }
+    } catch (error) {
+      console.error('[ModelOnboarding] ❌ Error setting default model:', error)
+    }
+
     // Complete loading
     setModelLoadProgress(prev => new Map(prev).set(modelId, 100))
-    
+
     // Wait for loading animation to complete before calling handleComplete
     setTimeout(() => {
       setLoadingModels(prev => {
@@ -212,10 +252,12 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
         next.delete(modelId)
 
         // If this was the last loading model and we should complete, do so after animation
-        if (next.size === 0 && shouldComplete) {
+        // Only complete if the model was set successfully
+        if (next.size === 0 && shouldComplete && modelSetSuccessfully) {
+          // Complete after a short delay for animation
           setTimeout(() => {
             handleComplete()
-          }, 500) // Give a bit more time for the UI to update
+          }, 500) // Short delay for animation to complete
         }
 
         return next
@@ -226,28 +268,10 @@ export function ModelOnboarding({ onComplete }: { onComplete: () => void }) {
         return next
       })
     }, 1500) // Increased from 1000ms to give more time for the loading animation
-
-    // Check if we have appModel.llmManager to load the model
-    if (appModel?.llmManager) {
-      // Log which model is being set
-      if (ollamaModel) {
-        console.log(`[ModelOnboarding] Setting Ollama ${ollamaModel.displayName} as model`)
-      } else if (modelId === 'openai-gpt-oss-20b') {
-        console.log('[ModelOnboarding] Setting OpenAI GPT-OSS-20B as primary model')
-      } else {
-        const modelConfig = models.find(m => m.id === modelId)
-        console.log(`[ModelOnboarding] Setting ${modelConfig?.name || modelId} as model`)
-      }
-
-      await appModel.llmManager.loadModel(modelId)
-    } else if (shouldComplete) {
-      // If no llmManager, still complete if requested
-      handleComplete()
-    }
   }
 
   const skipSetup = () => {
-    // User can add models later from settings
+    // Allow user to skip model selection and proceed without LLM
     handleComplete()
   }
 

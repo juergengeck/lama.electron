@@ -7,7 +7,7 @@ async function triggerLogin() {
   console.log('[TestLogin] Attempting to trigger login...')
   
   // Import and call the provision function directly
-  const { default: nodeProvisioning } = await import('./main/hybrid/node-provisioning.js')
+  const { default: nodeProvisioning } = await import('./main/services/node-provisioning.js')
   
   try {
     const result = await nodeProvisioning.provision({

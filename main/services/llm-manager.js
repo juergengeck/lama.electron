@@ -40,7 +40,6 @@ class LLMManager extends EventEmitter {
     this.mcpClients = new Map()
     this.mcpTools = new Map()
     this.isInitialized = false
-    this.defaultModelId = 'ollama:gpt-oss'
     
     // Bind methods to preserve 'this' context
     this.chat = this.chat.bind(this)
@@ -55,11 +54,13 @@ class LLMManager extends EventEmitter {
     console.log('[LLMManager] Pre-warming LLM connection...')
     try {
       // Send a minimal ping to Ollama to establish connection
+      // Use first available model for pre-warming
+      const modelToWarm = Array.from(this.models.keys())[0] || 'llama3.2:latest'
       const response = await fetch('http://localhost:11434/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-oss',
+          model: modelToWarm,
           prompt: 'Hi',
           stream: false,
           options: {
@@ -125,11 +126,11 @@ class LLMManager extends EventEmitter {
     try {
       const lmstudio = await import('./lmstudio.js');
       const isLMStudioAvailable = await lmstudio.isLMStudioRunning()
-      
+
       if (isLMStudioAvailable) {
         console.log('[LLMManager] LM Studio is available')
         const lmStudioModels = await lmstudio.getAvailableModels()
-        
+
         if (lmStudioModels.length > 0) {
           // Register each available LM Studio model
           for (const model of lmStudioModels) {
@@ -147,7 +148,7 @@ class LLMManager extends EventEmitter {
               }
             })
           }
-          
+
           // Also register a default LM Studio option
           this.models.set('lmstudio:default', {
             id: 'lmstudio:default',
@@ -162,34 +163,22 @@ class LLMManager extends EventEmitter {
               maxTokens: 2048
             }
           })
-          
+
           console.log(`[LLMManager] Registered ${lmStudioModels.length} LM Studio models`)
         }
       }
     } catch (error) {
       console.log('[LLMManager] LM Studio not available:', error.message)
     }
-    
-    // Register Ollama models
-    this.models.set('ollama:gpt-oss', {
-      id: 'ollama:gpt-oss',
-      name: 'gpt-oss-private',
-      provider: 'ollama',
-      description: 'Local GPT model via Ollama',
-      capabilities: ['chat', 'completion'],
-      contextLength: 8192,
-      parameters: {
-        modelName: 'gpt-oss',
-        temperature: 0.7,
-        maxTokens: 2048
-      }
-    })
+
+    // Discover Ollama models dynamically
+    await this.discoverOllamaModels()
 
     // Register Claude models
     const claudeModels = [
       {
         id: 'claude:claude-3-5-sonnet',
-        name: 'Claude 3.5 Sonnet-private',
+        name: 'Claude 3.5 Sonnet',
         provider: 'anthropic',
         description: 'Advanced reasoning and analysis',
         contextLength: 200000,
@@ -197,7 +186,7 @@ class LLMManager extends EventEmitter {
       },
       {
         id: 'claude:claude-3-5-haiku',
-        name: 'Claude 3.5 Haiku-private',
+        name: 'Claude 3.5 Haiku',
         provider: 'anthropic',
         description: 'Fast and efficient',
         contextLength: 200000,
@@ -217,6 +206,45 @@ class LLMManager extends EventEmitter {
     })
 
     console.log(`[LLMManager] Registered ${this.models.size} models`)
+
+    // No default model concept in LLM manager
+    console.log(`[LLMManager] ${this.models.size} models registered`)
+  }
+
+  async discoverOllamaModels() {
+    try {
+      const { getLocalOllamaModels, parseOllamaModel } = await import('../../electron-ui/src/services/ollama.js')
+      const ollamaModels = await getLocalOllamaModels()
+
+      if (ollamaModels.length > 0) {
+        console.log(`[LLMManager] Discovered ${ollamaModels.length} Ollama models`)
+
+        for (const rawModel of ollamaModels) {
+          const parsedModel = parseOllamaModel(rawModel)
+
+          // Register the base model
+          this.models.set(parsedModel.id, {
+            id: parsedModel.id,
+            name: parsedModel.displayName,
+            provider: 'ollama',
+            description: `${parsedModel.description} (${parsedModel.size})`,
+            capabilities: ['chat', 'completion'],
+            contextLength: 8192,
+            parameters: {
+              modelName: parsedModel.name, // The actual Ollama model name
+              temperature: 0.7,
+              maxTokens: 2048
+            }
+          })
+
+          console.log(`[LLMManager] Registered Ollama model: ${parsedModel.id}`)
+        }
+      } else {
+        console.log('[LLMManager] No Ollama models found')
+      }
+    } catch (error) {
+      console.log('[LLMManager] Failed to discover Ollama models:', error.message)
+    }
   }
 
   async initializeMCP() {
@@ -305,10 +333,15 @@ class LLMManager extends EventEmitter {
     return modelsArray
   }
 
-  async chat(messages, modelId = null, options = {}) {
-    const model = modelId ? this.models.get(modelId) : this.models.get(this.defaultModelId)
+  async chat(messages, modelId, options = {}) {
+    // modelId is required - no default
+    if (!modelId) {
+      throw new Error('Model ID is required for chat')
+    }
+    const effectiveModelId = modelId
+    const model = this.models.get(effectiveModelId)
     if (!model) {
-      throw new Error('No model available')
+      throw new Error(`Model ${effectiveModelId} not found. Available models: ${Array.from(this.models.keys()).join(', ')}`)
     }
 
     console.log(`[LLMManager] Chat with ${model.id} (${messages.length} messages), ${this.mcpTools.size} MCP tools available`)
@@ -337,33 +370,47 @@ class LLMManager extends EventEmitter {
   }
 
   enhanceMessagesWithTools(messages) {
+    // Check if this is a simple welcome message request
+    const isWelcomeMessage = messages.some(m =>
+      m.content && (
+        m.content.includes('Generate a welcome message') ||
+        m.content.includes('Generate a brief, friendly welcome')
+      )
+    )
+
+    // Skip tool enhancement for welcome messages
+    if (isWelcomeMessage) {
+      console.log(`[LLMManager] Skipping tool enhancement for welcome message`)
+      return messages
+    }
+
     const logMsg1 = `[LLMManager] ============= ENHANCING MESSAGES =============`
     const logMsg2 = `[LLMManager] MCP Tools size: ${this.mcpTools.size}`
     const toolDescriptions = this.getToolDescriptions()
     const logMsg3 = `[LLMManager] Tool descriptions length: ${toolDescriptions.length}`
     const logMsg4 = `[LLMManager] ============================================`
-    
+
     console.log(logMsg1)
     console.log(logMsg2)
     console.log(logMsg3)
     console.log(logMsg4)
-    
+
     // Forward to renderer
     forwardLog('log', logMsg1)
     forwardLog('log', logMsg2)
     forwardLog('log', logMsg3)
     forwardLog('log', logMsg4)
-    
+
     if (!toolDescriptions) {
       const logMsg5 = `[LLMManager] NO TOOL DESCRIPTIONS - returning original messages`
       console.log(logMsg5)
       forwardLog('warn', logMsg5)
       return messages
     }
-    
+
     const enhanced = [...messages]
     const systemIndex = enhanced.findIndex(m => m.role === 'system')
-    
+
     if (systemIndex >= 0) {
       enhanced[systemIndex] = {
         ...enhanced[systemIndex],
@@ -373,11 +420,11 @@ class LLMManager extends EventEmitter {
     } else {
       enhanced.unshift({
         role: 'system',
-        content: 'You are LAMA, a private AI assistant with access to all of the owner\'s conversations and filesystem tools. You can help with any topic across all chats.' + toolDescriptions
+        content: 'You are a private AI assistant with access to all of the owner\'s conversations and filesystem tools. You can help with any topic across all chats.' + toolDescriptions
       })
       console.log(`[LLMManager] Added new system message with tools`)
     }
-    
+
     console.log(`[LLMManager] Enhanced messages count: ${enhanced.length}, first message preview: ${enhanced[0]?.content?.substring(0, 200)}...`)
     return enhanced
   }
@@ -536,7 +583,10 @@ class LLMManager extends EventEmitter {
     const startTime = Date.now()
 
     try {
-      const model = modelId ? this.models.get(modelId) : this.models.get(this.defaultModelId)
+      if (!modelId) {
+        throw new Error('Model ID is required for chatWithAnalysis')
+      }
+      const model = this.models.get(modelId)
       if (!model) {
         throw new Error('No model available')
       }
@@ -564,13 +614,15 @@ Your natural response to the user here
 keywords: keyword1, keyword2, keyword3 (max 10 most relevant keywords)
 subject: subject-name | description of what this subject is about
 new_subject: yes/no (whether this is a new subject not previously discussed)
+summary_update: brief update about how this message changes the conversation summary (or "none" if no update needed)
 [/ANALYSIS]
 
 IMPORTANT:
 - Your response should be natural and helpful
 - Focus on keywords that capture the essence of the conversation
 - Even short messages can contain critical information
-- Identify the current subject being discussed`
+- Identify the current subject being discussed
+- Provide summary updates for significant conversation developments`
 
       // Replace the last message with our enhanced prompt
       const enhancedMessages = [
@@ -591,13 +643,13 @@ IMPORTANT:
           // Extract just the response part for streaming
           const responseMatch = fullResponse.match(/\[RESPONSE\]([\s\S]*?)(?:\[\/RESPONSE\]|$)/)
           if (responseMatch) {
-            const responseText = responseMatch[1].trim()
+            const responseText = responseMatch[1]
             // Only stream new content
             if (responseText.length > streamedLength) {
               const newContent = responseText.substring(streamedLength)
               streamedLength = responseText.length
-              // Only stream if we haven't hit the end marker
-              if (!fullResponse.includes('[/RESPONSE]') || !newContent.includes('[')) {
+              // Stream the new content unless it contains analysis markers
+              if (!newContent.includes('[/RESPONSE]') && !newContent.includes('[ANALYSIS]')) {
                 options.onStream(newContent)
               }
             }
@@ -621,10 +673,12 @@ IMPORTANT:
         const keywordsLine = analysisText.match(/keywords:\s*(.+)/)
         const subjectLine = analysisText.match(/subject:\s*(.+)/)
         const newSubjectLine = analysisText.match(/new_subject:\s*(.+)/)
+        const summaryUpdateLine = analysisText.match(/summary_update:\s*(.+)/)
 
         analysis = {
           keywords: keywordsLine ? keywordsLine[1].split(',').map(k => k.trim()).filter(k => k) : [],
-          subject: null
+          subject: null,
+          summaryUpdate: null
         }
 
         if (subjectLine) {
@@ -635,11 +689,24 @@ IMPORTANT:
             isNew: newSubjectLine ? newSubjectLine[1].trim().toLowerCase() === 'yes' : false
           }
         }
+
+        if (summaryUpdateLine) {
+          const updateText = summaryUpdateLine[1].trim()
+          if (updateText.toLowerCase() !== 'none') {
+            analysis.summaryUpdate = updateText
+          }
+        }
       }
 
       console.log(`[LLMManager] Chat with analysis completed in ${Date.now() - startTime}ms`)
+      console.log(`[LLMManager] Raw LLM response length: ${response.length}`)
+      console.log(`[LLMManager] Raw LLM response preview: ${response.substring(0, 200)}...`)
+      console.log(`[LLMManager] Extracted user response length: ${userResponse.length}`)
+      console.log(`[LLMManager] Extracted user response preview: ${userResponse.substring(0, 100)}...`)
+      console.log(`[LLMManager] Response match found: ${responseMatch ? 'YES' : 'NO'}`)
+      console.log(`[LLMManager] Analysis match found: ${analysisMatch ? 'YES' : 'NO'}`)
       if (analysis) {
-        console.log(`[LLMManager] Extracted ${analysis.keywords.length} keywords, subject: ${analysis.subject?.name || 'none'}`)
+        console.log(`[LLMManager] Extracted ${analysis.keywords.length} keywords, subject: ${analysis.subject?.name || 'none'}, summaryUpdate: ${analysis.summaryUpdate ? 'YES' : 'NO'}`)
       }
 
       return {
@@ -710,13 +777,8 @@ IMPORTANT:
   }
 
   async loadSettings() {
-    // Load from storage (implement based on your storage system)
-    // For now, use defaults
-    this.modelSettings.set(this.defaultModelId, {
-      temperature: 0.7,
-      maxTokens: 2048,
-      systemPrompt: 'You are LAMA, a private AI assistant with access to all of the owner\'s conversations.'
-    })
+    // Runtime settings only - no default model concept here
+    console.log('[LLMManager] Loaded runtime settings')
   }
 
   getStoredApiKey(provider) {
@@ -737,9 +799,6 @@ IMPORTANT:
     return this.models.get(id)
   }
 
-  getDefaultModel() {
-    return this.models.get(this.defaultModelId)
-  }
 
   /**
    * Get available models for external consumers
@@ -843,9 +902,46 @@ IMPORTANT:
     }
   }
 
+  /**
+   * Register a -private variant of a model for LAMA conversations
+   */
+  registerPrivateVariant(modelId) {
+    const baseModel = this.models.get(modelId)
+    if (!baseModel) {
+      console.warn(`[LLMManager] Cannot create private variant - base model ${modelId} not found`)
+      return null
+    }
+
+    const privateModelId = `${modelId}-private`
+    const privateModel = {
+      ...baseModel,
+      id: privateModelId,
+      name: `${baseModel.name}-private`,
+      description: `${baseModel.description} (Private for LAMA)`
+    }
+
+    this.models.set(privateModelId, privateModel)
+    console.log(`[LLMManager] Registered private variant: ${privateModelId}`)
+    return privateModelId
+  }
+
+  /**
+   * Register private variant for LAMA conversations
+   * Called by AI assistant when needed
+   */
+  registerPrivateVariantForModel(modelId) {
+    const model = this.models.get(modelId)
+    if (!model) {
+      throw new Error(`Model ${modelId} not found`)
+    }
+
+    this.registerPrivateVariant(modelId)
+    console.log(`[LLMManager] Registered private variant for: ${modelId}`)
+  }
+
   async shutdown() {
     console.log('[LLMManager] Shutting down...')
-    
+
     // Close MCP connections
     for (const [name, client] of this.mcpClients) {
       try {
@@ -855,13 +951,13 @@ IMPORTANT:
         console.error(`[LLMManager] Error closing ${name}:`, error)
       }
     }
-    
+
     this.mcpClients.clear()
     this.mcpTools.clear()
     this.models.clear()
     this.modelSettings.clear()
     this.isInitialized = false
-    
+
     console.log('[LLMManager] Shutdown complete')
   }
 }

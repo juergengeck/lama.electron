@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { lamaBridge } from '@/bridge/lama-bridge'
+import { ipcStorage } from '@/services/ipc-storage'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import InstancesView from './InstancesView'
 import {
@@ -400,13 +401,13 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
         if (window.electronAPI?.invoke) {
           try {
             // Get message and conversation stats
-            const conversationsResult = await window.electronAPI.invoke('chat:listConversations')
-            if (conversationsResult?.success && conversationsResult.conversations) {
-              stats.conversations = conversationsResult.conversations.length
+            const conversationsResult = await window.electronAPI.invoke('chat:getConversations')
+            if (conversationsResult?.success && conversationsResult.data) {
+              stats.conversations = conversationsResult.data.length
 
               // Count messages in conversations
               let totalMessages = 0
-              for (const conv of conversationsResult.conversations) {
+              for (const conv of conversationsResult.data) {
                 try {
                   const messagesResult = await window.electronAPI.invoke('chat:getMessages', {
                     conversationId: conv.id
@@ -897,7 +898,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
                       <AlertDialogAction
                         className="bg-red-600 hover:bg-red-700"
                         onClick={async () => {

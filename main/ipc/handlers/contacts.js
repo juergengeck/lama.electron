@@ -2,7 +2,8 @@
  * Contact management IPC handlers
  */
 
-import { ipcMain } from 'electron'
+import electron from 'electron'
+const { ipcMain } = electron
 import nodeOneCore from '../../core/node-one-core.js'
 
 export function registerContactHandlers() {
