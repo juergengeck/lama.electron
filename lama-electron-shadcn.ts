@@ -234,8 +234,10 @@ function startViteServer(): Promise<void> {
     }).on('error', () => {
       // Start Vite server
       console.log(`[Main-${process.pid}] Starting Vite dev server...`);
+      // __dirname is dist/ after compilation, go up one level to project root
+      const projectRoot = path.join(__dirname, '..');
       viteProcess = spawn('npm', ['run', 'dev'], {
-        cwd: path.join(__dirname, 'electron-ui'),
+        cwd: path.join(projectRoot, 'electron-ui'),
         shell: true,
         stdio: 'pipe',
         env: { ...process.env }
