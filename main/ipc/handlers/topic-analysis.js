@@ -805,6 +805,7 @@ Example: ["blockchain", "ethereum", "smartcontract", "defi", "wallet"]`;
 export default {
     analyzeMessages,
     getSubjects,
+    getKeywords,
     getSummary,
     updateSummary,
     extractKeywords,
