@@ -135,10 +135,14 @@ const SummaryRecipe = {
     ]
 };
 
+import { KeywordAccessStateRecipe } from './KeywordAccessState.js';
+
 const TopicAnalysisRecipes = [
     SubjectRecipe,
     KeywordRecipe,
-    SummaryRecipe
+    SummaryRecipe,
+    KeywordAccessStateRecipe
 ];
 
 export default TopicAnalysisRecipes;
+export { KeywordAccessStateRecipe };

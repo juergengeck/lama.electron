@@ -257,4 +257,130 @@ export default class TopicAnalysisModel extends Model {
         const updatedContent = currentSummary.content + '\n\nUpdate: ' + updateContent;
         return await this.createSummary(topicId, newVersion, updatedContent, subjects.map((s) => s.id), 'Incremental update from message analysis', currentSummary.id);
     }
+    /**
+     * Get keyword with access states
+     * Loads keyword data and associated access states for keyword detail view
+     * @param {string} keyword - The keyword term to retrieve
+     * @param {string} [topicId] - Optional topic ID to filter by
+     * @returns {Promise<Object|null>} Keyword object with accessStates array, or null if not found
+     */
+    async getKeywordWithAccessStates(keyword, topicId = null) {
+        this.state.assertCurrentState('Initialised');
+        if (!keyword || typeof keyword !== 'string') {
+            throw new Error('[KeywordDetail] keyword is required and must be a string');
+        }
+        const normalizedKeyword = keyword.toLowerCase().trim();
+        // Get keywords from the topic
+        let keywords;
+        if (topicId) {
+            keywords = await this.getKeywords(topicId);
+        }
+        else {
+            // Get all keywords across all topics
+            keywords = await this.getAllKeywords();
+        }
+        // Find the specific keyword
+        const foundKeyword = keywords.find((k) => k.term === normalizedKeyword);
+        if (!foundKeyword) {
+            console.log(`[KeywordDetail] Keyword "${normalizedKeyword}" not found${topicId ? ` in topic ${topicId}` : ''}`);
+            return null;
+        }
+        // Load access states for this keyword
+        const { getAccessStatesByKeyword } = await import('../storage/keyword-access-storage.js');
+        const accessStates = await getAccessStatesByKeyword(this.channelManager, normalizedKeyword);
+        console.log(`[KeywordDetail] Retrieved keyword "${normalizedKeyword}" with ${accessStates.length} access states`);
+        return {
+            ...foundKeyword,
+            accessStates
+        };
+    }
+    /**
+     * Get all keywords across all topics
+     * Used for global keyword search and management
+     * @returns {Promise<Array>} Array of all keyword objects
+     */
+    async getAllKeywords() {
+        this.state.assertCurrentState('Initialised');
+        // Since keywords are stored per topic, we need to aggregate across all topics
+        // This requires iterating through all channels and collecting keywords
+        // For now, we'll use TopicAnalysisRoom to get keywords from known topics
+        // In a production system, you'd want proper indexing
+        const allKeywords = [];
+        const seenTerms = new Set();
+        // Get all channel infos
+        const channels = await this.channelManager.getChannels();
+        for (const channel of channels) {
+            try {
+                const room = new TopicAnalysisRoom(channel.id, this.channelManager);
+                const keywords = await room.retrieveAllKeywords();
+                for (const keyword of keywords) {
+                    // Deduplicate by term
+                    if (!seenTerms.has(keyword.term)) {
+                        seenTerms.add(keyword.term);
+                        allKeywords.push(keyword);
+                    }
+                }
+            }
+            catch (error) {
+                console.error(`[KeywordDetail] Error retrieving keywords from channel ${channel.id}:`, error);
+            }
+        }
+        console.log(`[KeywordDetail] Retrieved ${allKeywords.length} unique keywords across all topics`);
+        return allKeywords;
+    }
+    /**
+     * Get subjects that contain a specific keyword
+     * @param {string} keyword - The keyword term to search for
+     * @param {string} [topicId] - Optional topic ID to filter by
+     * @returns {Promise<Array>} Array of subject objects containing the keyword
+     */
+    async getSubjectsForKeyword(keyword, topicId = null) {
+        this.state.assertCurrentState('Initialised');
+        if (!keyword || typeof keyword !== 'string') {
+            throw new Error('[KeywordDetail] keyword is required and must be a string');
+        }
+        const normalizedKeyword = keyword.toLowerCase().trim();
+        // Get subjects from the topic or all topics
+        let subjects;
+        if (topicId) {
+            subjects = await this.getSubjects(topicId);
+        }
+        else {
+            // Get all subjects across all topics
+            subjects = await this.getAllSubjects();
+        }
+        // Filter subjects that contain the keyword in their keywordCombination
+        const matchingSubjects = subjects.filter((subject) => {
+            const combination = subject.keywordCombination.toLowerCase();
+            // Check if keyword is in the combination
+            // Keywords in combination are joined with '+', so we need to check each part
+            const keywords = combination.split('+');
+            return keywords.includes(normalizedKeyword);
+        });
+        console.log(`[KeywordDetail] Found ${matchingSubjects.length} subjects containing keyword "${normalizedKeyword}"${topicId ? ` in topic ${topicId}` : ''}`);
+        return matchingSubjects;
+    }
+    /**
+     * Get all subjects across all topics
+     * Helper method for global subject queries
+     * @returns {Promise<Array>} Array of all subject objects
+     */
+    async getAllSubjects() {
+        this.state.assertCurrentState('Initialised');
+        const allSubjects = [];
+        // Get all channel infos
+        const channels = await this.channelManager.getChannels();
+        for (const channel of channels) {
+            try {
+                const room = new TopicAnalysisRoom(channel.id, this.channelManager);
+                const subjects = await room.retrieveAllSubjects();
+                allSubjects.push(...subjects);
+            }
+            catch (error) {
+                console.error(`[KeywordDetail] Error retrieving subjects from channel ${channel.id}:`, error);
+            }
+        }
+        console.log(`[KeywordDetail] Retrieved ${allSubjects.length} subjects across all topics`);
+        return allSubjects;
+    }
 }

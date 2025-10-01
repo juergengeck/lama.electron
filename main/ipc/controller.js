@@ -22,6 +22,7 @@ import { registerContactHandlers } from './handlers/contacts.js';
 import * as topicHandlers from './handlers/topics.js';
 import topicAnalysisHandlers from './handlers/topic-analysis.js';
 import * as wordCloudSettingsHandlers from './handlers/word-cloud-settings.js';
+import keywordDetailHandlers from './handlers/keyword-detail.js';
 import auditHandlers from './handlers/audit.js';
 import exportHandlers from './handlers/export.js';
 import feedForwardHandlers from './handlers/feed-forward.js';
@@ -186,6 +187,12 @@ class IPCController {
         this.handle('topicAnalysis:mergeSubjects', topicAnalysisHandlers.mergeSubjects);
         this.handle('topicAnalysis:extractRealtimeKeywords', topicAnalysisHandlers.extractRealtimeKeywords);
         this.handle('topicAnalysis:extractConversationKeywords', topicAnalysisHandlers.extractConversationKeywords);
+        // Keyword Detail handlers
+        this.handle('keywordDetail:getKeywordDetails', keywordDetailHandlers.getKeywordDetails);
+        this.handle('keywordDetail:getKeywordsByTopic', keywordDetailHandlers.getKeywordsByTopic);
+        this.handle('keywordDetail:getAllKeywords', keywordDetailHandlers.getAllKeywords);
+        this.handle('keywordDetail:updateKeywordAccessState', keywordDetailHandlers.updateKeywordAccessState);
+        this.handle('keywordDetail:getKeywordAccessStates', keywordDetailHandlers.getKeywordAccessStates);
         // Word Cloud Settings handlers
         this.handle('wordCloudSettings:getSettings', wordCloudSettingsHandlers.getWordCloudSettings);
         this.handle('wordCloudSettings:updateSettings', wordCloudSettingsHandlers.updateWordCloudSettings);

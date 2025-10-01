@@ -8,6 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Badge } from '../ui/badge.js';
 import { Button } from '../ui/button.js';
 import { RefreshCw, History, ChevronDown, ChevronUp, Loader2, Sparkles } from 'lucide-react';
+import { KeywordCloud } from './KeywordCloud.js';
+import { KeywordDetailPanel } from '../KeywordDetail/KeywordDetailPanel.js';
 import type { Summary, GetSummaryResponse } from '../../types/topic-analysis.js';
 
 interface TopicSummaryProps {
@@ -31,6 +33,10 @@ export const TopicSummary: React.FC<TopicSummaryProps> = ({
   const [showHistory, setShowHistory] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
+
+  // Keyword detail panel state
+  const [view, setView] = useState<'summary' | 'keyword-detail'>('summary');
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
 
   // Auto-analyze on first mount if we have messages
   useEffect(() => {
@@ -147,6 +153,38 @@ export const TopicSummary: React.FC<TopicSummaryProps> = ({
     }
   };
 
+  const handleKeywordClick = (keyword: string) => {
+    console.log('[TopicSummary] 🔍 Keyword clicked:', keyword);
+    if (selectedKeyword === keyword && view === 'keyword-detail') {
+      // Same keyword clicked - toggle back to summary view
+      setView('summary');
+      setSelectedKeyword(null);
+    } else {
+      // Different keyword or first click - show keyword detail
+      setSelectedKeyword(keyword);
+      setView('keyword-detail');
+    }
+  };
+
+  const handleCloseKeywordDetail = () => {
+    console.log('[TopicSummary] Closing keyword detail view');
+    setView('summary');
+    setSelectedKeyword(null);
+  };
+
+  // Show keyword detail panel if in keyword-detail view
+  if (view === 'keyword-detail' && selectedKeyword) {
+    return (
+      <KeywordDetailPanel
+        keyword={selectedKeyword}
+        topicId={topicId}
+        onClose={handleCloseKeywordDetail}
+        className={className}
+      />
+    );
+  }
+
+  // Otherwise show summary view
   if (loading) {
     return (
       <Card className={className}>
@@ -273,22 +311,15 @@ export const TopicSummary: React.FC<TopicSummaryProps> = ({
           <p className="text-gray-700 leading-relaxed">{summary.content}</p>
         </div>
 
-        {/* Keywords */}
+        {/* Keywords - Using KeywordCloud for clickable keywords */}
         {summary.keywords && summary.keywords.length > 0 && (
           <div className="mt-4 pt-3 border-t">
             <p className="text-xs font-medium text-gray-500 mb-2">Keywords</p>
-            <div className="flex flex-wrap gap-1">
-              {summary.keywords.slice(0, 10).map((keyword, idx) => (
-                <Badge key={idx} variant="secondary" className="text-xs">
-                  {keyword}
-                </Badge>
-              ))}
-              {summary.keywords.length > 10 && (
-                <Badge variant="outline" className="text-xs">
-                  +{summary.keywords.length - 10} more
-                </Badge>
-              )}
-            </div>
+            <KeywordCloud
+              keywords={summary.keywords}
+              maxDisplay={15}
+              onKeywordClick={handleKeywordClick}
+            />
           </div>
         )}
 
