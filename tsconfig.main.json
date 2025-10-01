@@ -21,15 +21,19 @@
   "include": [
     "@OneCoreTypes.d.ts",
     "lama-electron-shadcn.ts",
+    "main/app.ts",
     "main/types/**/*.ts",
     "main/ipc/controller.ts",
     "main/ipc/handlers/*.ts",
-    "main/core/*.ts",
-    "main/services/*.ts",
-    "main/models/*.ts",
-    "main/state/*.ts",
-    "main/config/*.ts",
-    "main/utils/*.ts"
+    "main/core/**/*.ts",
+    "main/services/**/*.ts",
+    "main/models/**/*.ts",
+    "main/state/**/*.ts",
+    "main/config/**/*.ts",
+    "main/utils/**/*.ts",
+    "main/recipes/**/*.ts",
+    "main/api/**/*.ts",
+    "main/startup/**/*.ts"
   ],
   "exclude": [
     "**/*.js",
