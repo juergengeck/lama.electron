@@ -34,20 +34,8 @@ export const CLAUDE_MODELS = [
     // Check Anthropic's API documentation for the latest model IDs
 ];
 class ClaudeService {
-    constructor() {
-        Object.defineProperty(this, "client", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: void 0
-        });
-        Object.defineProperty(this, "config", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: void 0
-        });
-    }
+    client;
+    config;
     /**
      * Initialize the Claude service with API credentials
      */

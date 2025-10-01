@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '../setup/test-utils'
+import { render, screen, waitFor } from '../setup/test-utils.js'
 import App from '@/App'
 
 // Mock the initialization hook

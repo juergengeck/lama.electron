@@ -42,7 +42,7 @@ export default defineConfig({
         'dgram'
       ],
       output: {
-        format: 'cjs',
+        format: 'es',
         manualChunks: {
           vendor: ['react', 'react-dom'],
           ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-avatar']

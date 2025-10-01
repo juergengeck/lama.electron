@@ -7,15 +7,15 @@
 
 import type { SHA256Hash } from '@refinio/one.core/lib/util/type-checks.js'
 import { storeArrayBufferAsBlob, readBlobAsArrayBuffer } from '@refinio/one.core/lib/storage-blob.js'
-import type { 
-  BlobDescriptor, 
-  IAttachmentService, 
+import type {
+  BlobDescriptor,
+  IAttachmentService,
   UploadOptions,
   CacheEntry,
   MessageAttachment
-} from '@/types/attachments'
-import { getAttachmentType, formatFileSize } from '@/types/attachments'
-import { metadataExtractor, type FileMetadata } from '@/services/metadata/MetadataExtractor'
+} from '../../types/attachments.js'
+import { getAttachmentType, formatFileSize } from '../../types/attachments.js'
+import { metadataExtractor, type FileMetadata } from '../metadata/MetadataExtractor.js'
 
 /**
  * Maximum cache size (100MB)
@@ -31,8 +31,8 @@ const CACHE_TTL = 60 * 60 * 1000
  * AttachmentService implementation
  */
 export class AttachmentService implements IAttachmentService {
-  private cache: Map<string, CacheEntry> = new Map()
-  private cacheSize: number = 0
+  public cache: Map<string, CacheEntry> = new Map()
+  public cacheSize: number = 0
   private static instance: AttachmentService
 
   /**
@@ -53,8 +53,8 @@ export class AttachmentService implements IAttachmentService {
       console.log(`[AttachmentService] Storing attachment: ${file.name} (${formatFileSize(file.size)})`)
       
       // Extract metadata first
-      const metadata = await metadataExtractor.extractMetadata(file)
-      console.log(`[AttachmentService] Extracted metadata with ${metadata.subjects.length} subjects:`, metadata.subjects)
+      const metadata = await metadataExtractor.extractMetadata(file as any)
+      console.log(`[AttachmentService] Extracted metadata with ${metadata.subjects?.length || 0} subjects:`, metadata.subjects)
       
       // Report initial progress
       options?.onProgress?.(10)
@@ -68,8 +68,7 @@ export class AttachmentService implements IAttachmentService {
         data: arrayBuffer,
         type: file.type || 'application/octet-stream',
         name: file.name,
-        size: file.size,
-        lastModified: file.lastModified || Date.now()
+        size: file.size
       }
       
       // Generate thumbnail if requested and applicable
@@ -78,7 +77,7 @@ export class AttachmentService implements IAttachmentService {
         try {
           thumbnailHash = await this.generateThumbnail(file, options.thumbnailSize)
           console.log(`[AttachmentService] Generated thumbnail: ${thumbnailHash}`)
-        } catch (error) {
+        } catch (error: unknown) {
           console.warn('[AttachmentService] Failed to generate thumbnail:', error)
         }
       }
@@ -106,12 +105,12 @@ export class AttachmentService implements IAttachmentService {
           } else {
             console.warn(`[AttachmentService] Node storage failed (${result.error}), using browser fallback`)
             // Fallback to browser storage
-            const result = await storeArrayBufferAsBlob(arrayBuffer)
-            hash = result.hash as unknown as string
-            console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${result.status}`)
+            const fallbackResult = await storeArrayBufferAsBlob(arrayBuffer)
+            hash = fallbackResult.hash as unknown as string
+            console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${fallbackResult.status}`)
           }
-        } catch (error) {
-          console.warn(`[AttachmentService] IPC failed (${error.message}), using browser fallback`)
+        } catch (error: unknown) {
+          console.warn(`[AttachmentService] IPC failed (${(error as Error).message}), using browser fallback`)
           // Fallback to browser storage
           const result = await storeArrayBufferAsBlob(arrayBuffer)
           hash = result.hash as unknown as string
@@ -133,7 +132,7 @@ export class AttachmentService implements IAttachmentService {
         try {
           const subjects = await this.extractSubjects(file)
           console.log(`[AttachmentService] Extracted subjects:`, subjects)
-        } catch (error) {
+        } catch (error: unknown) {
           console.warn('[AttachmentService] Failed to extract subjects:', error)
         }
       }
@@ -141,18 +140,17 @@ export class AttachmentService implements IAttachmentService {
       options?.onProgress?.(100)
       
       return hash
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[AttachmentService] Failed to store attachment:', error)
-      throw new Error(`Failed to store attachment: ${error.message}`)
+      throw new Error(`Failed to store attachment: ${(error as Error).message}`)
     }
   }
   
   /**
    * Retrieve BlobDescriptor by hash
    * @param hash - The attachment hash
-   * @param metadata - Optional metadata to use if not cached
    */
-  async getAttachment(hash: string, metadata?: { type?: string; name?: string }): Promise<BlobDescriptor> {
+  async getAttachment(hash: SHA256Hash): Promise<BlobDescriptor | null> {
     try {
       // Check cache first
       const cached = this.getCachedAttachment(hash)
@@ -183,21 +181,19 @@ export class AttachmentService implements IAttachmentService {
         
         descriptor = {
           data: bytes.buffer,
-          type: result.data.metadata?.type || metadata?.type || 'application/octet-stream',
-          name: result.data.metadata?.name || metadata?.name || 'attachment',
-          size: result.data.metadata?.size || bytes.length,
-          lastModified: Date.now()
+          type: result.data.metadata?.type || 'application/octet-stream',
+          name: result.data.metadata?.name || 'attachment',
+          size: result.data.metadata?.size || bytes.length
         }
       } else {
         // Fallback to browser storage
-        const data = await readBlobAsArrayBuffer(hash as SHA256Hash)
+        const data = await readBlobAsArrayBuffer(hash as any)
         
         descriptor = {
           data,
-          type: metadata?.type || 'application/octet-stream',
-          name: metadata?.name || 'attachment',
-          size: data.byteLength,
-          lastModified: Date.now()
+          type: 'application/octet-stream',
+          name: 'attachment',
+          size: data.byteLength
         }
       }
       
@@ -205,9 +201,9 @@ export class AttachmentService implements IAttachmentService {
       this.cacheAttachment(hash, descriptor)
       
       return descriptor
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(`[AttachmentService] Failed to get attachment ${hash}:`, error)
-      throw new Error(`Failed to retrieve attachment: ${error.message}`)
+      throw new Error(`Failed to retrieve attachment: ${(error as Error).message}`)
     }
   }
   
@@ -221,7 +217,7 @@ export class AttachmentService implements IAttachmentService {
       }
       
       // Try to read from storage
-      await readBlobAsArrayBuffer(hash as SHA256Hash)
+      await readBlobAsArrayBuffer(hash as any)
       return true
     } catch {
       return false
@@ -365,14 +361,13 @@ export class AttachmentService implements IAttachmentService {
                 data: arrayBuffer,
                 type: blob.type,
                 name: `thumb_${file.name}`,
-                size: blob.size,
-                lastModified: Date.now()
+                size: blob.size
               }
               this.cacheAttachment(hash, descriptor)
               
               resolve(hash)
             }, 'image/jpeg', 0.8)
-          } catch (error) {
+          } catch (error: unknown) {
             reject(error)
           }
         }
@@ -391,7 +386,7 @@ export class AttachmentService implements IAttachmentService {
    */
   async extractSubjects(file: File): Promise<string[]> {
     // Use metadata extractor for rich subject generation
-    const metadata = await metadataExtractor.extractMetadata(file)
+    const metadata = await metadataExtractor.extractMetadata(file as any)
     return metadata.subjects
   }
   
@@ -399,7 +394,7 @@ export class AttachmentService implements IAttachmentService {
    * Get file metadata (for display purposes)
    */
   async getFileMetadata(file: File): Promise<FileMetadata> {
-    return await metadataExtractor.extractMetadata(file)
+    return await metadataExtractor.extractMetadata(file as any)
   }
   
   /**

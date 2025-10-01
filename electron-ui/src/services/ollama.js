@@ -7,19 +7,11 @@
  */
 export async function isOllamaRunning() {
     try {
-        const response = await fetch('http://localhost:11434/api/tags', {
-            method: 'GET',
-            // Add timeout to avoid hanging
-            signal: AbortSignal.timeout(3000)
-        });
+        const response = await fetch('http://localhost:11434/api/tags');
         return response.ok;
     }
     catch (error) {
-        // Don't log connection errors - they're expected when Ollama isn't running
-        // Only log unexpected errors
-        if (error.name !== 'TypeError' && !error.message.includes('Failed to fetch')) {
-            console.warn('[Ollama] Unexpected error checking service:', error.message);
-        }
+        console.log('[Ollama] Service not running on localhost:11434');
         return false;
     }
 }
@@ -56,7 +48,7 @@ export function parseOllamaModel(model) {
         capabilities.push('code', 'code-completion');
     }
     // Build description from model details
-    const family = model.details?.family || model.details?.families?.[0] || '';
+    const family = model.details?.family || '';
     const format = model.details?.format || '';
     const quantization = model.details?.quantization_level || '';
     let description = 'Locally available Ollama model';
@@ -155,7 +147,7 @@ export async function generateWithOllama(modelName, prompt, options) {
             throw new Error(`Ollama API error: ${response.statusText}`);
         }
         const data = await response.json();
-        return data.response;
+        return data.response || '';
     }
     catch (error) {
         console.error('[Ollama] Generation failed:', error);

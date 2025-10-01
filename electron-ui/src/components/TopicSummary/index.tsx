@@ -25,4 +25,4 @@ export type {
   ExtractKeywordsResponse,
   MergeSubjectsRequest,
   MergeSubjectsResponse
-} from '../../types/topic-analysis';
+} from '../../types/topic-analysis.js';

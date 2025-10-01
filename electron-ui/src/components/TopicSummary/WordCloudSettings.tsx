@@ -5,12 +5,12 @@
  */
 
 import React, { useState } from 'react';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Checkbox } from '../ui/checkbox';
-import { useWordCloudSettings } from '../../hooks/useWordCloudSettings';
+import { Button } from '../ui/button.js';
+import { Input } from '../ui/input.js';
+import { Label } from '../ui/label.js';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card.js';
+import { Checkbox } from '../ui/checkbox.js';
+import { useWordCloudSettings } from '../../hooks/useWordCloudSettings.js';
 import { Settings, RotateCcw, Save } from 'lucide-react';
 
 interface WordCloudSettingsProps {

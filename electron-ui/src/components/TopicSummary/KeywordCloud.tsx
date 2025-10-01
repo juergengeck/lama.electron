@@ -4,9 +4,9 @@
  */
 
 import React, { useMemo } from 'react';
-import { Badge } from '../ui/badge';
-import type { Keyword } from '../../types/topic-analysis';
-import { useWordCloudSettings } from '../../hooks/useWordCloudSettings';
+import { Badge } from '../ui/badge.js';
+import type { Keyword } from '../../types/topic-analysis.js';
+import { useWordCloudSettings } from '../../hooks/useWordCloudSettings.js';
 
 interface KeywordCloudProps {
   keywords: Keyword[] | string[];

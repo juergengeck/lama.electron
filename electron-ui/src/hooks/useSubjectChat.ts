@@ -187,14 +187,14 @@ export function useSubjectChat(
     
     // Add related media context
     const relevantMedia = mediaItems.filter(item => {
-      const itemSubjects = new Set(item.subjects.map(s => s.name))
+      const itemSubjects = new Set(item.subjects.map((s: any) => s.name))
       return Array.from(contextSubjects).some(s => itemSubjects.has(s))
     })
     
     if (relevantMedia.length > 0) {
       prompt += `\nRelated media in conversation: ${relevantMedia.length} items\n`
       const mediaSubjects = new Set<string>()
-      relevantMedia.forEach(m => m.subjects.forEach(s => mediaSubjects.add(s.name)))
+      relevantMedia.forEach(m => m.subjects.forEach((s: any) => mediaSubjects.add(s.name)))
       prompt += `Media themes: ${Array.from(mediaSubjects).slice(0, 5).map(s => `#${s}`).join(', ')}\n`
     }
     
@@ -292,8 +292,8 @@ export function useSubjectChat(
         uniqueSubjects: signature.uniqueSubjects,
         signatureHash: signature.signature,
         similarContacts: similar,
-        messageCount: messages.filter(m => m.senderId === llmId).length + 1,
-        firstSeen: messages.find(m => m.senderId === llmId)?.timestamp || new Date(),
+        messageCount: messages.filter(m => (m as any).senderId === llmId).length + 1,
+        firstSeen: messages.find(m => (m as any).senderId === llmId)?.timestamp || new Date(),
         lastSeen: new Date()
       })
       
@@ -312,14 +312,14 @@ export function useSubjectChat(
     messageId: string,
     subject: string
   ) => {
-    const message = messages.find(m => m.id === messageId)
+    const message = messages.find(m => (m as any).id === messageId)
     if (!message) return
     
     const normalized = subject.toLowerCase().replace(/^#/, '')
     await subjectService.createSubject(normalized, currentUserId)
     
     setMessages(prev => prev.map(m => {
-      if (m.id === messageId) {
+      if ((m as any).id === messageId) {
         return {
           ...m,
           subjects: [...new Set([...m.subjects, normalized])]

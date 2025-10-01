@@ -1,0 +1,249 @@
+{
+  "name": "Feed-Forward IPC Contract",
+  "version": "1.0.0",
+  "description": "Internal IPC endpoints for feed-forward knowledge sharing",
+  "endpoints": [
+    {
+      "channel": "feedForward:createSupply",
+      "description": "Create a Supply object declaring available knowledge",
+      "request": {
+        "type": "object",
+        "required": ["keywords", "contextLevel", "conversationId"],
+        "properties": {
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "Keywords to be hashed"
+          },
+          "contextLevel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Depth of context available"
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "Source conversation ID"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Additional context data"
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "supplyHash": { "type": "string" },
+          "keywordHashes": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "channel": "feedForward:createDemand",
+      "description": "Create a Demand object requesting knowledge",
+      "request": {
+        "type": "object",
+        "required": ["keywords", "urgency", "context"],
+        "properties": {
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 10
+          },
+          "urgency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "context": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "criteria": {
+            "type": "object",
+            "properties": {
+              "minTrust": { "type": "number" },
+              "maxAge": { "type": "integer" },
+              "preferredSources": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "expires": { "type": "integer" },
+          "maxResults": { "type": "integer" }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "demandHash": { "type": "string" }
+        }
+      }
+    },
+    {
+      "channel": "feedForward:matchSupplyDemand",
+      "description": "Find Supply objects matching a Demand",
+      "request": {
+        "type": "object",
+        "required": ["demandHash"],
+        "properties": {
+          "demandHash": { "type": "string" },
+          "minTrust": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.3
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 10
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "supplyHash": { "type": "string" },
+                "matchScore": { "type": "number" },
+                "trustWeight": { "type": "number" },
+                "matchedKeywords": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "conversationId": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "channel": "feedForward:updateTrust",
+      "description": "Update trust score after exchange",
+      "request": {
+        "type": "object",
+        "required": ["participantId", "adjustment", "reason"],
+        "properties": {
+          "participantId": { "type": "string" },
+          "adjustment": {
+            "type": "number",
+            "minimum": -0.1,
+            "maximum": 0.1
+          },
+          "reason": { "type": "string" },
+          "evidence": { "type": "object" }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "newScore": { "type": "number" },
+          "components": { "type": "object" }
+        }
+      }
+    },
+    {
+      "channel": "feedForward:getCorpusStream",
+      "description": "Stream training corpus entries",
+      "request": {
+        "type": "object",
+        "properties": {
+          "since": { "type": "integer" },
+          "minQuality": { "type": "number" },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/TrainingCorpusEntry"
+            }
+          },
+          "hasMore": { "type": "boolean" },
+          "nextCursor": { "type": "string" }
+        }
+      }
+    },
+    {
+      "channel": "feedForward:enableSharing",
+      "description": "Enable/disable sharing for a conversation",
+      "request": {
+        "type": "object",
+        "required": ["conversationId", "enabled"],
+        "properties": {
+          "conversationId": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "retroactive": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "previousState": { "type": "boolean" }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "TrainingCorpusEntry": {
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "authorId": { "type": "string" },
+              "isAI": { "type": "boolean" },
+              "content": { "type": "string" },
+              "keywords": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "timestamp": { "type": "integer" },
+              "trustScore": { "type": "number" }
+            }
+          }
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "qualityScore": { "type": "number" },
+        "created": { "type": "integer" }
+      }
+    }
+  }
+}

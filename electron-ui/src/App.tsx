@@ -37,11 +37,21 @@ function App() {
   // Check if a default model has been configured
   useEffect(() => {
     if (isAuthenticated && window.electronAPI) {
+      console.log('[App] Checking for default model...')
       window.electronAPI.invoke('ai:getDefaultModel')
-        .then((modelId: string | null) => {
-          setHasDefaultModel(!!modelId)
+        .then((response: any) => {
+          console.log('[App] Default model response:', response)
+          // Handle wrapped response from IPC controller
+          const modelId = response?.data !== undefined ? response.data : response
+          console.log('[App] Default model ID extracted:', modelId)
+          const hasModel = !!modelId
+          console.log('[App] Setting hasDefaultModel to:', hasModel)
+          setHasDefaultModel(hasModel)
         })
-        .catch(() => setHasDefaultModel(false))
+        .catch((error) => {
+          console.error('[App] Error checking default model:', error)
+          setHasDefaultModel(false)
+        })
     }
   }, [isAuthenticated])
 
@@ -118,16 +128,21 @@ function App() {
   // Check if we need to show model onboarding
   // Show onboarding only if no default model has been configured
   const shouldShowOnboarding = hasDefaultModel === false
+  console.log('[App] hasDefaultModel state:', hasDefaultModel)
+  console.log('[App] shouldShowOnboarding:', shouldShowOnboarding)
 
   if (shouldShowOnboarding) {
+    console.log('[App] Showing ModelOnboarding component')
     return <ModelOnboarding onComplete={async () => {
       // Model has been selected and saved to settings
+      console.log('[App] ModelOnboarding completed, setting hasDefaultModel to true')
       setHasDefaultModel(true)
     }} />
   }
 
   // Show loading while checking for default model
   if (hasDefaultModel === null) {
+    console.log('[App] Still checking for default model, showing loading...')
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="text-center">

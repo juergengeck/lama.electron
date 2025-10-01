@@ -4,7 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import type { ChatMessage } from '@/models/ai/LLMManager'
+import type { ChatMessage } from './llm-proxy.js'
 
 export interface ClaudeConfig {
   apiKey: string

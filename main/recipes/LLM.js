@@ -2,7 +2,6 @@
  * LLM Recipe for ONE.core - matching LAMA mobile app structure
  * This must match the recipe from /Users/gecko/src/lama/src/recipes/llm.ts
  */
-
 export const LLMRecipe = {
     $type$: 'Recipe',
     name: 'LLM',
@@ -22,7 +21,7 @@ export const LLMRecipe = {
         },
         {
             itemprop: 'modelType',
-            itemtype: { 
+            itemtype: {
                 type: 'string',
                 regexp: /^(local|remote)$/
             }
@@ -73,20 +72,20 @@ export const LLMRecipe = {
         },
         {
             itemprop: 'personId',
-            itemtype: { 
-                type: 'referenceToId', 
-                allowedTypes: new Set(['Person']) 
+            itemtype: {
+                type: 'referenceToId',
+                allowedTypes: new Set(['Person'])
             },
             optional: true
         },
         {
             itemprop: 'capabilities',
-            itemtype: { 
-                type: 'array', 
-                item: { 
+            itemtype: {
+                type: 'array',
+                item: {
                     type: 'string',
                     regexp: /^(chat|inference)$/
-                } 
+                }
             },
             optional: true
         },

@@ -3,7 +3,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { browserInit as browserInit } from '../services/browser-init.ts'
+import { browserInit as browserInit } from '../services/browser-init.ts.js'
+import { ipcStorage } from '../services/ipc-storage.js'
 
 export interface LamaAuthState {
   isInitialized: boolean

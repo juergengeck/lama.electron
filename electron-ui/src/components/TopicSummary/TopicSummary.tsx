@@ -4,11 +4,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card.js';
+import { Badge } from '../ui/badge.js';
+import { Button } from '../ui/button.js';
 import { RefreshCw, History, ChevronDown, ChevronUp, Loader2, Sparkles } from 'lucide-react';
-import type { Summary, GetSummaryResponse } from '../../types/topic-analysis';
+import type { Summary, GetSummaryResponse } from '../../types/topic-analysis.js';
 
 interface TopicSummaryProps {
   topicId: string;

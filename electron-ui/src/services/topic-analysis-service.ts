@@ -17,7 +17,7 @@ import type {
   MergeSubjectsRequest,
   MergeSubjectsResponse,
   TopicAnalysisChannels
-} from '../types/topic-analysis';
+} from '../types/topic-analysis.js';
 
 class TopicAnalysisService {
   /**

@@ -1,6 +1,8 @@
 // Bridge to integrate LAMA with Electron
 // Browser uses IPC ONLY - NO ONE.core, NO AppModel
 
+import { ipcStorage } from '../services/ipc-storage.js'
+
 export interface LamaAPI {
   // Identity & Authentication
   createIdentity: (name: string, password: string) => Promise<string>

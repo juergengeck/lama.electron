@@ -92,8 +92,17 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         // First ensure default AI chats exist when chat view is accessed
         console.log('[ChatLayout] Ensuring default AI chats exist...')
         const ensureResult = await window.electronAPI.invoke('ai:ensureDefaultChats')
+        let topicsCreated = false
         if (ensureResult.success) {
           console.log('[ChatLayout] Default chats ensured:', ensureResult.topics)
+          // Check if any topics were newly created
+          if (ensureResult.created?.hi || ensureResult.created?.lama) {
+            console.log('[ChatLayout] New topics were created, waiting for them to be ready...')
+            topicsCreated = true
+            // Add a longer delay to ensure topics are fully created and channels registered
+            await new Promise(resolve => setTimeout(resolve, 1500))
+            console.log('[ChatLayout] Delay complete, now loading conversations...')
+          }
         }
 
         const result = await window.electronAPI.invoke('chat:getConversations')
@@ -413,10 +422,16 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   }
 
   // Filter conversations by search
+  console.log('[ChatLayout] Filtering conversations:', {
+    conversationsLength: conversations.length,
+    searchQuery,
+    conversations: conversations.map(c => ({ id: c.id, name: c.name }))
+  })
   const filteredConversations = conversations.filter(conv =>
     conv.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     conv.lastMessage?.toLowerCase().includes(searchQuery.toLowerCase())
   )
+  console.log('[ChatLayout] Filtered conversations:', filteredConversations.length)
 
   // Format time for display
   const formatTime = (time?: Date | string): string => {

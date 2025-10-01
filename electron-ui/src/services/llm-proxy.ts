@@ -8,12 +8,20 @@ export interface ChatMessage {
   content: string
 }
 
+declare global {
+  interface Window {
+    electronAPI: any;
+  }
+}
+
 export class LLMProxy {
   private ipcRenderer: any
 
   constructor() {
     // Get IPC renderer from window object (injected by preload)
-    this.ipcRenderer = (window as any).electronAPI
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      this.ipcRenderer = window.electronAPI
+    }
   }
 
   async chat(messages: ChatMessage[], modelId?: string): Promise<string> {

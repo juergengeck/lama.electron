@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { wordCloudSettingsService, type WordCloudSettings, DEFAULT_WORD_CLOUD_SETTINGS } from '../services/word-cloud-settings-service';
+import { wordCloudSettingsService, type WordCloudSettings, DEFAULT_WORD_CLOUD_SETTINGS } from '../services/word-cloud-settings-service.js';
 
 export function useWordCloudSettings() {
   const [settings, setSettings] = useState<WordCloudSettings>(DEFAULT_WORD_CLOUD_SETTINGS);

@@ -56,6 +56,7 @@ export const ChatView = memo(function ChatView({
 
 
   // Auto-trigger topic analysis after 5 messages
+  // Debounced to avoid concurrent LLM calls
   useEffect(() => {
     const triggerAnalysis = async () => {
       if (topicAnalysisService.shouldAnalyze(messages.length, lastAnalysisMessageCount)) {
@@ -94,7 +95,9 @@ export const ChatView = memo(function ChatView({
 
     if (messages.length >= 5) {
       console.log('[ChatView] 🎯 Message threshold reached, checking if analysis needed...')
-      triggerAnalysis()
+      // Debounce to avoid running immediately on page load
+      const timeoutId = setTimeout(triggerAnalysis, 2000)
+      return () => clearTimeout(timeoutId)
     }
   }, [messages.length, conversationId, lastAnalysisMessageCount])
 

@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '../../setup/test-utils'
+import { render, screen, waitFor } from '../../setup/test-utils.js'
 import { MessageView } from '@/components/MessageView'
-import { createMockMessage } from '../../setup/test-utils'
+import { createMockMessage } from '../../setup/test-utils.js'
 
 describe('MessageView', () => {
   const mockOnSendMessage = jest.fn()

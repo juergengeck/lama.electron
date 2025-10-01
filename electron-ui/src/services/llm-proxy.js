@@ -3,15 +3,12 @@
  * Proxies LLM calls from renderer to main process via IPC
  */
 export class LLMProxy {
+    ipcRenderer;
     constructor() {
-        Object.defineProperty(this, "ipcRenderer", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: void 0
-        });
         // Get IPC renderer from window object (injected by preload)
-        this.ipcRenderer = window.electronAPI;
+        if (typeof window !== 'undefined' && window.electronAPI) {
+            this.ipcRenderer = window.electronAPI;
+        }
     }
     async chat(messages, modelId) {
         console.log('[LLMProxy] Sending chat to main process, messages:', messages.length);

@@ -92,6 +92,15 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2">
+          {/* Message & Keyword count - show next to brain icon */}
+          {keywords.length > 0 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mr-2">
+              <span>{messageCount} messages</span>
+              <span>•</span>
+              <span>{keywords.length} keywords</span>
+            </div>
+          )}
+
           {/* AI Summary Button - only show for AI conversations */}
           {hasAI && (
             <Button
@@ -288,13 +297,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                 <ChevronRight className="h-4 w-4" />
               </Button>
             )}
-          </div>
-
-          {/* Quick stats */}
-          <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-            <span>{messageCount} messages</span>
-            <span>•</span>
-            <span>{keywords.length} keywords</span>
           </div>
         </div>
       )}

@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
 import { Loader2, User, Lock } from 'lucide-react'
-import initFlow from '../services/init-flow.ts'
+import initFlow from '../services/init-flow.ts.js'
 
 interface LoginDeployProps {
   onLogin: (username: string, password: string) => Promise<void>

@@ -1,6 +1,6 @@
-import { render, screen, waitFor, act } from '../../setup/test-utils'
+import { render, screen, waitFor, act } from '../../setup/test-utils.js'
 import { ChatView } from '@/components/ChatView'
-import { mockMessages } from '../../mocks/lama-bridge-mock'
+import { mockMessages } from '../../mocks/lama-bridge-mock.js'
 
 // Mock the hooks
 jest.mock('@/hooks/useLama', () => ({

@@ -2,22 +2,15 @@
  * HTML Template Service
  * Provides HTML boilerplate and structure templates
  */
-
 /**
  * Generate complete HTML document with all components
  * @param {Object} data - Export data
  * @returns {string} - Complete HTML document
  */
 export function generateCompleteHTML(data) {
-  const {
-    metadata,
-    messages,
-    options = {}
-  } = data;
-
-  const { theme = 'light' } = options;
-
-  return `<!DOCTYPE html>
+    const { metadata, messages, options = {} } = data;
+    const { theme = 'light' } = options;
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -36,35 +29,24 @@ export function generateCompleteHTML(data) {
 </body>
 </html>`;
 }
-
 /**
  * Generate conversation header
  * @param {Object} metadata - Conversation metadata
  * @returns {string} - Header HTML
  */
 function generateHeader(metadata) {
-  const {
-    title = 'Conversation Export',
-    topicId,
-    messageCount = 0,
-    participants = [],
-    dateRange,
-    exportDate = new Date().toISOString()
-  } = metadata;
-
-  const participantsList = participants.map(participant => `
+    const { title = 'Conversation Export', topicId, messageCount = 0, participants = [], dateRange, exportDate = new Date().toISOString() } = metadata;
+    const participantsList = participants.map((participant) => `
     <div class="participant" itemscope itemtype="//refin.io/Person">
       <span itemprop="name">${escapeHTML(participant.name)}</span>
       <span itemprop="email" class="participant-email">${escapeHTML(participant.email)}</span>
       ${participant.personHash ? `<meta itemprop="personHash" content="${participant.personHash}">` : ''}
     </div>
   `).join('');
-
-  const dateRangeText = dateRange ?
-    `${formatDate(dateRange.start)} - ${formatDate(dateRange.end)}` :
-    'All messages';
-
-  return `
+    const dateRangeText = dateRange ?
+        `${formatDate(dateRange.start)} - ${formatDate(dateRange.end)}` :
+        'All messages';
+    return `
     <header class="conversation-header" itemscope itemtype="//refin.io/ConversationExport">
       <div class="header-main">
         <h1 class="conversation-title" itemprop="title">${escapeHTML(title)}</h1>
@@ -101,14 +83,13 @@ function generateHeader(metadata) {
     </header>
   `;
 }
-
 /**
  * Generate footer with export information
  * @param {Object} metadata - Export metadata
  * @returns {string} - Footer HTML
  */
 function generateFooter(metadata) {
-  return `
+    return `
     <footer class="conversation-footer">
       <div class="export-info">
         <p class="export-notice">
@@ -130,22 +111,20 @@ function generateFooter(metadata) {
     </footer>
   `;
 }
-
 /**
  * Get Content Security Policy meta tag
  * @returns {string} - CSP meta tag
  */
 function getContentSecurityPolicy() {
-  return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src data: 'self'; script-src 'unsafe-inline'; connect-src 'none';">`;
+    return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src data: 'self'; script-src 'unsafe-inline'; connect-src 'none';">`;
 }
-
 /**
  * Get CSS styles for the document
  * @param {string} theme - Theme name
  * @returns {string} - Style tag with CSS
  */
 function getStyles(theme) {
-  const baseStyles = `
+    const baseStyles = `
     :root {
       --primary-color: #007bff;
       --secondary-color: #6c757d;
@@ -429,8 +408,7 @@ function getStyles(theme) {
       }
     }
   `;
-
-  const darkTheme = theme === 'dark' ? `
+    const darkTheme = theme === 'dark' ? `
     body {
       background-color: #1a1a1a;
       color: #e0e0e0;
@@ -511,25 +489,23 @@ function getStyles(theme) {
       border-color: #495057;
     }
   ` : '';
-
-  return `<style>${baseStyles}${darkTheme}</style>`;
+    return `<style>${baseStyles}${darkTheme}</style>`;
 }
-
 /**
  * Get verification script (optional JavaScript for hash verification)
  * @returns {string} - Script tag with verification code
  */
 function getVerificationScript() {
-  return `
+    return `
     <script>
       // Optional client-side hash verification
-      function verifyMessageHashes() {
+      function verifyMessageHashes(): any {
         const messages = document.querySelectorAll('[data-hash]');
         console.log('Found', messages.length, 'messages with hashes');
 
         messages.forEach((message, index) => {
           const hash = message.getAttribute('data-hash');
-          const shortHash = hash ? hash.substring(0, 8) + '...' : 'N/A';
+          const shortHash = hash ? String(hash).substring(0, 8) + '...' : 'N/A';
           console.log(\`Message \${index + 1}: \${shortHash}\`);
         });
       }
@@ -539,45 +515,42 @@ function getVerificationScript() {
     </script>
   `;
 }
-
 /**
  * Format date to human-readable string
  * @param {string} isoDate - ISO date string
  * @returns {string} - Formatted date
  */
 function formatDate(isoDate) {
-  try {
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (error) {
-    return isoDate;
-  }
+    try {
+        const date = new Date(isoDate);
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+    catch (error) {
+        return isoDate;
+    }
 }
-
 /**
  * Escape HTML special characters
  * @param {string} text - Text to escape
  * @returns {string} - Escaped text
  */
 function escapeHTML(text) {
-  if (typeof text !== 'string') {
-    return '';
-  }
-
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    if (typeof text !== 'string') {
+        return '';
+    }
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
-
 export default {
-  generateCompleteHTML
+    generateCompleteHTML
 };

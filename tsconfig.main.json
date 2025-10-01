@@ -1,0 +1,48 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ES2022",
+    "target": "ES2022",
+    "outDir": "./dist",
+    "rootDir": "./",
+    "allowJs": false,
+    "checkJs": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "strictPropertyInitialization": false,
+    "noImplicitThis": false,
+    "skipLibCheck": true,
+    "types": ["node", "electron"],
+    "lib": ["ES2022"],
+    "isolatedModules": false,
+    "verbatimModuleSyntax": false,
+    "downlevelIteration": true,
+    "esModuleInterop": true
+  },
+  "include": [
+    "@OneCoreTypes.d.ts",
+    "lama-electron-shadcn.ts",
+    "main/types/**/*.ts",
+    "main/ipc/controller.ts",
+    "main/ipc/handlers/*.ts",
+    "main/core/*.ts",
+    "main/services/*.ts",
+    "main/models/*.ts",
+    "main/state/*.ts",
+    "main/config/*.ts",
+    "main/utils/*.ts"
+  ],
+  "exclude": [
+    "**/*.js",
+    "**/*.jsx",
+    "electron-ui/**",
+    "node_modules",
+    "dist",
+    "vendor",
+    "OneDB",
+    "specs/**",
+    "tests/**",
+    "packages/**",
+    "reference/**"
+  ]
+}

@@ -1,0 +1,441 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "LAMA Training Corpus API",
+    "version": "1.0.0",
+    "description": "External API for LLM providers to access training data"
+  },
+  "servers": [
+    {
+      "url": "https://api.lama.network/v1",
+      "description": "Production API"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/corpus/stream": {
+      "get": {
+        "summary": "Stream training corpus entries",
+        "description": "Get a stream of verified conversation data for training",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Unix timestamp to get entries after",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "min_quality",
+            "in": "query",
+            "description": "Minimum quality score (0-1)",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.5
+            }
+          },
+          {
+            "name": "keywords",
+            "in": "query",
+            "description": "Filter by keyword hashes",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum entries to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/corpus/subscribe": {
+      "post": {
+        "summary": "Subscribe to real-time corpus updates",
+        "description": "Create a webhook subscription for new training data",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subscription created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/corpus/stats": {
+      "get": {
+        "summary": "Get corpus statistics",
+        "description": "Get statistics about available training data",
+        "responses": {
+          "200": {
+            "description": "Statistics response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/supply/search": {
+      "post": {
+        "summary": "Search available knowledge supply",
+        "description": "Find supply objects matching keywords",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "CorpusResponse": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpusEntry"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "total_entries": {
+                "type": "integer"
+              },
+              "quality_distribution": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "CorpusEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Entry hash"
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "Anonymized conversation ID"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Keyword hashes"
+          },
+          "quality_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "created": {
+            "type": "integer",
+            "description": "Unix timestamp"
+          },
+          "participant_count": {
+            "type": "integer"
+          },
+          "ai_participant_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "is_ai": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "string",
+            "description": "Sanitized message content"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trust_score": {
+            "type": "number",
+            "description": "Author's trust score"
+          },
+          "timestamp": {
+            "type": "integer"
+          }
+        }
+      },
+      "SubscriptionRequest": {
+        "type": "object",
+        "required": ["webhook_url", "events"],
+        "properties": {
+          "webhook_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["corpus.new", "corpus.updated", "corpus.deleted"]
+            }
+          },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "min_quality": {
+                "type": "number"
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "SubscriptionResponse": {
+        "type": "object",
+        "properties": {
+          "subscription_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["active", "pending"]
+          },
+          "created": {
+            "type": "integer"
+          }
+        }
+      },
+      "SearchRequest": {
+        "type": "object",
+        "required": ["keywords"],
+        "properties": {
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "min_trust": {
+            "type": "number"
+          },
+          "context_level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SupplyResult"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "SupplyResult": {
+        "type": "object",
+        "properties": {
+          "supply_hash": {
+            "type": "string"
+          },
+          "matched_keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context_level": {
+            "type": "integer"
+          },
+          "trust_score": {
+            "type": "number"
+          },
+          "created": {
+            "type": "integer"
+          }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "properties": {
+          "total_entries": {
+            "type": "integer"
+          },
+          "total_messages": {
+            "type": "integer"
+          },
+          "unique_participants": {
+            "type": "integer"
+          },
+          "ai_participants": {
+            "type": "integer"
+          },
+          "average_quality": {
+            "type": "number"
+          },
+          "keywords_indexed": {
+            "type": "integer"
+          },
+          "active_supplies": {
+            "type": "integer"
+          },
+          "pending_demands": {
+            "type": "integer"
+          },
+          "last_updated": {
+            "type": "integer"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status_code": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

@@ -459,9 +459,9 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   
   // Handle key down (onKeyPress is deprecated)
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    console.log('[EnhancedMessageInput] Key pressed:', e.key, 'shift:', e.shiftKey);
+    // console.log('[EnhancedMessageInput] Key pressed:', e.key, 'shift:', e.shiftKey);
     if (e.key === 'Enter' && !e.shiftKey) {
-      console.log('[EnhancedMessageInput] Enter pressed without shift, calling handleSend');
+      // console.log('[EnhancedMessageInput] Enter pressed without shift, calling handleSend');
       e.preventDefault();
       handleSend();
     }

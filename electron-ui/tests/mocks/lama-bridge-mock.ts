@@ -1,5 +1,5 @@
 // Mock implementation of lama-bridge
-import { type Message, type Peer } from '../../src/bridge/lama-bridge'
+import { type Message, type Peer } from '../../src/bridge/lama-bridge.js'
 
 export const mockMessages: Message[] = [
   {

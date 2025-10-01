@@ -2,14 +2,11 @@
  * LAMA Recipes
  * Defines ONE.core object types for LAMA-specific features
  */
-
-import { addRecipeToRuntime } from '@refinio/one.core/lib/object-recipes.js'
-import { WordCloudSettingsRecipe } from '../core/one-ai/recipes/WordCloudSettingsRecipe.js'
-import TopicAnalysisRecipes from '../core/one-ai/recipes/ai-recipes.js'
-
+import { WordCloudSettingsRecipe } from '../core/one-ai/recipes/WordCloudSettingsRecipe.js';
+import TopicAnalysisRecipes from '../core/one-ai/recipes/ai-recipes.js';
+// import { FeedForwardRecipes } from './feed-forward-recipes.js'
 // LLM Recipe - represents an AI model/assistant
-import { LLMRecipe } from './LLM.js'
-
+import { LLMRecipe } from './LLM.js';
 const LLMSettingsRecipe = {
     $type$: 'Recipe',
     name: 'LLMSettings',
@@ -38,12 +35,18 @@ const LLMSettingsRecipe = {
             optional: true
         }
     ]
-}
-
+};
 const GlobalLLMSettingsRecipe = {
     $type$: 'Recipe',
     name: 'GlobalLLMSettings',
     rule: [
+        {
+            itemprop: 'name',
+            itemtype: {
+                type: 'string'
+            },
+            isId: true
+        },
         {
             itemprop: 'defaultProvider',
             itemtype: {
@@ -116,6 +119,20 @@ const GlobalLLMSettingsRecipe = {
             optional: true
         },
         {
+            itemprop: 'created',
+            itemtype: {
+                type: 'number'
+            },
+            optional: true
+        },
+        {
+            itemprop: 'modified',
+            itemtype: {
+                type: 'number'
+            },
+            optional: true
+        },
+        {
             itemprop: 'maxConcurrentRequests',
             itemtype: {
                 type: 'integer'
@@ -123,8 +140,7 @@ const GlobalLLMSettingsRecipe = {
             optional: true
         }
     ]
-}
-
+};
 // Export recipes for use in initInstance
 // Note: Group recipe is already in CORE_RECIPES, don't duplicate it
 const LamaRecipes = [
@@ -133,6 +149,6 @@ const LamaRecipes = [
     GlobalLLMSettingsRecipe,
     WordCloudSettingsRecipe,
     ...TopicAnalysisRecipes
-]
-
-export { LamaRecipes }
+    // ...FeedForwardRecipes
+];
+export { LamaRecipes };

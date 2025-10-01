@@ -1,3 +1,4 @@
+import type { ConnectionsModel } from '@refinio/one.models/lib/models/index.js';
 /**
  * QUIC Transport Layer
  *
@@ -45,10 +46,15 @@ interface RInfo {
 }
 
 export default class QuicTransport extends EventEmitter {
-  private nodeOneCore: NodeOneCore
-  private connections: Map<string, any> = new Map() // peerId -> connection
-  private socket: dgram.Socket | null = null
-  private quicvcManager: QuicVCConnectionManager | null = null
+  public nodeOneCore: NodeOneCore
+  public connections: Map<string, any> = new Map() // peerId -> connection
+  public socket: dgram.Socket | null = null
+  public quicvcManager: QuicVCConnectionManager | null = null
+  public trustManager: any = null // Trust manager for peer verification
+  public peers: Map<string, any> = new Map() // peerId -> peer info
+  public leuteModel: any = null // Reference to LeuteModel
+  public type: string = 'quic'
+  public connectionRouteManager: any = null
 
   constructor(nodeOneCore: NodeOneCore) {
     super()

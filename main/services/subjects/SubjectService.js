@@ -9,32 +9,11 @@ import { calculateIdHashOfObj } from '@refinio/one.core/lib/util/object.js';
  * SubjectService - Core service for Subject management
  */
 export class SubjectService {
-    constructor() {
-        Object.defineProperty(this, "subjects", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: new Map()
-        });
-        Object.defineProperty(this, "attachments", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: new Map()
-        });
-        Object.defineProperty(this, "signatures", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: new Map()
-        });
-        Object.defineProperty(this, "someoneMemories", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: new Map()
-        });
-    }
+    subjects = new Map();
+    attachments = new Map();
+    signatures = new Map();
+    someoneMemories = new Map();
+    static instance;
     static getInstance() {
         if (!SubjectService.instance) {
             SubjectService.instance = new SubjectService();
@@ -110,7 +89,7 @@ export class SubjectService {
                 this.associateSubjects(normalized, att.subjectName);
             }
         });
-        console.log(`[SubjectService] Attached '${normalized}' to ${contentHash.substring(0, 8)}...`);
+        console.log(`[SubjectService] Attached '${normalized}' to ${String(contentHash).substring(0, 8)}...`);
         return attachment;
     }
     /**
@@ -200,7 +179,7 @@ export class SubjectService {
             // Calculate similarity based on subject overlap
             const mySubjects = new Set(signature.topSubjects.map(s => s.name));
             const otherSubjects = new Set(otherSig.topSubjects.map(s => s.name));
-            const intersection = new Set([...mySubjects].filter(x => otherSubjects.has(x)));
+            const intersection = new Set([...mySubjects].filter(x => otherSubjects.includes(x)));
             const union = new Set([...mySubjects, ...otherSubjects]);
             const similarity = intersection.size / union.size;
             if (similarity >= threshold) {
@@ -218,7 +197,7 @@ export class SubjectService {
         const subjects = new Set();
         // Extract hashtags
         const hashtagRegex = /#[\w-]+/g;
-        const hashtags = text.match(hashtagRegex) || [];
+        const hashtags = String(text).match(hashtagRegex) || [];
         hashtags.forEach(tag => subjects.add(this.normalizeSubject(tag)));
         // Extract common patterns (customize based on domain)
         const patterns = [
@@ -232,7 +211,7 @@ export class SubjectService {
             /\b(music|song|audio|podcast)\b/gi
         ];
         patterns.forEach(pattern => {
-            const matches = text.match(pattern) || [];
+            const matches = String(text).match(pattern) || [];
             matches.forEach(match => subjects.add(this.normalizeSubject(match)));
         });
         return Array.from(subjects);

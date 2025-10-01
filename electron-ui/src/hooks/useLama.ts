@@ -63,13 +63,13 @@ export function useLamaMessages(conversationId: string) {
       if (eventId === currentId) {
         console.log('[useLamaMessages] ✅ Match! Refreshing messages...')
         // Directly fetch and update messages - no complex state management
-        lamaBridge.getMessages(conversationId).then(msgs => {
+        lamaBridge.getMessages(conversationId).then((msgs: any) => {
           console.log('[useLamaMessages] 🔄 Got', msgs.length, 'messages from refresh')
-          msgs.forEach((msg, i) => {
+          msgs.forEach((msg: any, i: any) => {
             console.log(`[useLamaMessages] 🔍 Refreshed message ${i}: "${msg.content?.substring(0, 30)}..." for ${conversationId}`)
           })
           setMessages(msgs)
-        }).catch(err => {
+        }).catch((err: any) => {
           console.error('[useLamaMessages] Failed to refresh:', err)
         })
       } else {

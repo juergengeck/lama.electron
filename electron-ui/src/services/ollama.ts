@@ -49,8 +49,8 @@ export async function getLocalOllamaModels(): Promise<OllamaModel[]> {
     if (!response.ok) {
       throw new Error(`Failed to fetch models: ${response.statusText}`)
     }
-    
-    const data = await response.json()
+
+    const data = await response.json() as { models?: OllamaModel[] }
     return data.models || []
   } catch (error) {
     console.error('[Ollama] Failed to fetch local models:', error)
@@ -77,7 +77,7 @@ export function parseOllamaModel(model: OllamaModel): OllamaModelInfo {
   }
   
   // Build description from model details
-  const family = model.details?.family || model.details?.families?.[0] || ''
+  const family = model.details?.family || ''
   const format = model.details?.format || ''
   const quantization = model.details?.quantization_level || ''
   
@@ -152,7 +152,7 @@ export async function testOllamaModel(modelName: string): Promise<boolean> {
       return false
     }
     
-    const data = await response.json()
+    const data = await response.json() as { response?: string }
     console.log(`[Ollama] Model ${modelName} test successful:`, data.response)
     return true
   } catch (error) {
@@ -194,8 +194,8 @@ export async function generateWithOllama(
       throw new Error(`Ollama API error: ${response.statusText}`)
     }
     
-    const data = await response.json()
-    return data.response
+    const data = await response.json() as { response?: string }
+    return data.response || ''
   } catch (error) {
     console.error('[Ollama] Generation failed:', error)
     throw error

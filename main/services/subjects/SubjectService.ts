@@ -6,7 +6,7 @@
  */
 
 import type { SHA256Hash } from '@refinio/one.core/lib/util/type-checks.js'
-import { storeUnversionedObject, getObjectByIdHash } from '@refinio/one.core/lib/storage-unversioned-objects.js'
+import { storeUnversionedObject, getObject as getObjectByHash } from '@refinio/one.core/lib/storage-unversioned-objects.js'
 import { calculateIdHashOfObj } from '@refinio/one.core/lib/util/object.js'
 
 /**
@@ -74,10 +74,10 @@ export interface SomeoneMemory {
  * SubjectService - Core service for Subject management
  */
 export class SubjectService {
-  private subjects: Map<string, Subject> = new Map()
-  private attachments: Map<string, SubjectAttachment[]> = new Map()
-  private signatures: Map<string, SubjectSignature> = new Map()
-  private someoneMemories: Map<string, SomeoneMemory> = new Map()
+  public subjects: Map<string, Subject> = new Map()
+  public attachments: Map<string, SubjectAttachment[]> = new Map()
+  public signatures: Map<string, SubjectSignature> = new Map()
+  public someoneMemories: Map<string, SomeoneMemory> = new Map()
   
   private static instance: SubjectService
   
@@ -130,7 +130,10 @@ export class SubjectService {
     // For now, we're simulating with in-memory updates
     
     // Update creator's signature
-    this.updateSignature(createdBy, normalized)
+    // Fire and forget - signature update doesn't need to block
+    this.updateSignature(createdBy, normalized).catch(err =>
+      console.error('[SubjectService] Failed to update signature:', err)
+    )
     
     console.log(`[SubjectService] Subject '${normalized}' ${subject.usageCount === 1 ? 'created' : 'updated'} (count: ${subject.usageCount})`)
     
@@ -179,7 +182,7 @@ export class SubjectService {
       }
     })
     
-    console.log(`[SubjectService] Attached '${normalized}' to ${contentHash.substring(0, 8)}...`)
+    console.log(`[SubjectService] Attached '${normalized}' to ${String(contentHash).substring(0, 8)}...`)
     
     return attachment
   }
@@ -223,9 +226,9 @@ export class SubjectService {
     const allSubjects = this.getAllSubjects()
     const maxUsage = Math.max(...allSubjects.map(s => s.usageCount))
     const avgUsage = allSubjects.reduce((sum, s) => sum + s.usageCount, 0) / allSubjects.length
-    
+
     // Normalized usage score
-    const usageScore = subject.usageCount / maxUsage
+    const usageScore = subject.usageCount / (maxUsage || 1)
     
     // Recency score (exponential decay over 30 days)
     const daysSinceUse = (Date.now() - subject.lastUsedAt.getTime()) / (1000 * 60 * 60 * 24)
@@ -284,7 +287,7 @@ export class SubjectService {
       // Calculate similarity based on subject overlap
       const mySubjects = new Set(signature.topSubjects.map(s => s.name))
       const otherSubjects = new Set(otherSig.topSubjects.map(s => s.name))
-      
+
       const intersection = new Set([...mySubjects].filter(x => otherSubjects.has(x)))
       const union = new Set([...mySubjects, ...otherSubjects])
       
@@ -308,7 +311,7 @@ export class SubjectService {
     
     // Extract hashtags
     const hashtagRegex = /#[\w-]+/g
-    const hashtags = text.match(hashtagRegex) || []
+    const hashtags = String(text).match(hashtagRegex) || []
     hashtags.forEach(tag => subjects.add(this.normalizeSubject(tag)))
     
     // Extract common patterns (customize based on domain)
@@ -324,7 +327,7 @@ export class SubjectService {
     ]
     
     patterns.forEach(pattern => {
-      const matches = text.match(pattern) || []
+      const matches = String(text).match(pattern) || []
       matches.forEach(match => subjects.add(this.normalizeSubject(match)))
     })
     
@@ -626,7 +629,7 @@ export class SubjectService {
   /**
    * Update contact's subject signature
    */
-  private updateSignature(contactId: string, subjectName: string): void {
+  private async updateSignature(contactId: string, subjectName: string): Promise<void> {
     let signature = this.signatures.get(contactId)
     
     if (!signature) {
@@ -653,7 +656,10 @@ export class SubjectService {
     
     // Update signature hash
     const pattern = signature.topSubjects.map(s => `${s.name}:${s.affinity}`).join(',')
-    signature.signature = calculateIdHashOfObj({ pattern }) as string
+    // Use a simple hash of the pattern for determinism
+    const crypto = await import('crypto')
+    const hash = crypto.createHash('sha256').update(pattern).digest('hex')
+    signature.signature = hash.substring(0, 64) as any
     
     // Find unique subjects (used mainly by this contact)
     const allAttachments = Array.from(this.attachments.values()).flat()

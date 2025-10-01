@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Badge } from '../ui/badge';
+import { Badge } from '../ui/badge.js';
 
 interface KeywordDisplayProps {
   topicId: string;
@@ -10,75 +10,42 @@ export function KeywordDisplay({ topicId, messages }: KeywordDisplayProps) {
   const [keywords, setKeywords] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Extract keywords when messages change
+  // Load keywords from storage (populated by analyzeMessages)
   useEffect(() => {
     if (!topicId || messages.length === 0) {
       setKeywords([]);
       return;
     }
 
-    const extractKeywords = async () => {
+    const loadKeywords = async () => {
       setLoading(true);
       try {
-        // Extract keywords from all messages in the conversation
+        // Get already-extracted keywords from storage
         const result = await window.electronAPI.invoke(
-          'topicAnalysis:extractConversationKeywords',
+          'topicAnalysis:getKeywords',
           {
             topicId,
-            messages: messages.map(m => ({
-              text: m.content || m.text,
-              sender: m.sender
-            })),
-            maxKeywords: 12
+            limit: 12
           }
         );
 
         if (result.success && result.data.keywords) {
-          setKeywords(result.data.keywords);
+          // Extract just the keyword terms
+          const keywordTerms = result.data.keywords.map((k: any) => k.term || k);
+          setKeywords(keywordTerms);
         }
       } catch (error) {
-        console.error('Error extracting keywords:', error);
+        console.error('Error loading keywords:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    // Debounce keyword extraction
-    const timeoutId = setTimeout(extractKeywords, 500);
-    return () => clearTimeout(timeoutId);
+    loadKeywords();
   }, [topicId, messages.length]);
 
-  // Extract keywords from new message in real-time
-  const updateKeywordsForNewMessage = async (messageText: string) => {
-    if (!messageText) return;
-
-    try {
-      const result = await window.electronAPI.invoke(
-        'topicAnalysis:extractRealtimeKeywords',
-        {
-          text: messageText,
-          existingKeywords: keywords,
-          maxKeywords: 12
-        }
-      );
-
-      if (result.success && result.data.keywords) {
-        setKeywords(result.data.keywords);
-      }
-    } catch (error) {
-      console.error('Error updating keywords:', error);
-    }
-  };
-
-  // Listen for new messages to update keywords in real-time
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage && lastMessage.content) {
-        updateKeywordsForNewMessage(lastMessage.content);
-      }
-    }
-  }, [messages[messages.length - 1]?.content]);
+  // Keywords will be updated by auto-analysis after 5 messages
+  // No need for real-time extraction on every message
 
   if (keywords.length === 0 && !loading) {
     return null;

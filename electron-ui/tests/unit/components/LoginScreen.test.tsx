@@ -1,4 +1,4 @@
-import { render, screen, waitFor, userEvent } from '../../setup/test-utils'
+import { render, screen, waitFor, userEvent } from '../../setup/test-utils.js'
 import { LoginScreen } from '@/components/LoginScreen'
 
 describe('LoginScreen', () => {

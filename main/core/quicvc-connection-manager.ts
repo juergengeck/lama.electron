@@ -139,12 +139,13 @@ interface CryptoKeys {
 }
 
 export class QuicVCConnectionManager extends EventEmitter {
+  copy: any;
   private static instance: QuicVCConnectionManager | null = null
-  private connections: Map<string, QuicVCConnection> = new Map()
-  private quicModel: IQuicTransport | null = null
-  private vcManager: VCManager | null = null
-  private ownPersonId: SHA256IdHash<Person>
-  private ownVC: DeviceIdentityCredential | null = null
+  public connections: Map<string, QuicVCConnection> = new Map()
+  public quicModel: IQuicTransport | null = null
+  public vcManager: VCManager | null = null
+  public ownPersonId: SHA256IdHash<Person>
+  public ownVC: DeviceIdentityCredential | null = null
 
   // Configuration
   private readonly QUICVC_PORT = 49497 // All QUICVC communication on this port
@@ -395,7 +396,7 @@ export class QuicVCConnectionManager extends EventEmitter {
         default:
           debug(`Unknown packet type: ${header.type}`)
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[QuicVCConnectionManager] Error handling packet:', error)
     }
   }
@@ -902,12 +903,14 @@ export class QuicVCConnectionManager extends EventEmitter {
     buffer.writeUInt32BE(header.version, offset)
     offset += 4
 
-    buffer.writeUInt8(header.dcid.length, offset++)
-    header.dcid.copy(buffer, offset)
+    buffer.writeUInt8(header.dcid.length, offset);
+    offset++;
+    (header.dcid as any).copy(buffer, offset)
     offset += header.dcid.length
 
-    buffer.writeUInt8(header.scid.length, offset++)
-    header.scid.copy(buffer, offset)
+    buffer.writeUInt8(header.scid.length, offset);
+    offset++;
+    (header.scid as any).copy(buffer, offset)
     offset += header.scid.length
 
     buffer.writeUInt8(Number(header.packetNumber & 0xFFn), offset)
@@ -1004,7 +1007,7 @@ export class QuicVCConnectionManager extends EventEmitter {
 
         frames.push(frame)
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[QuicVCConnectionManager] Error parsing frames:', error)
     }
 

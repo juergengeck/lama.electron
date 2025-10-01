@@ -4,11 +4,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card.js';
+import { Badge } from '../ui/badge.js';
+import { Button } from '../ui/button.js';
 import { Merge, Archive, MessageSquare, Clock } from 'lucide-react';
-import type { Subject, GetSubjectsResponse } from '../../types/topic-analysis';
+import type { Subject, GetSubjectsResponse } from '../../types/topic-analysis.js';
 
 interface SubjectListProps {
   topicId: string;

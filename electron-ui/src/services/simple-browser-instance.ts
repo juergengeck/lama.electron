@@ -3,6 +3,8 @@
  * Handles authentication without complex imports
  */
 
+import { ipcStorage } from './ipc-storage'
+
 export class SimpleBrowserInstance {
   private users: Map<string, any> = new Map()
   private currentUser: any = null

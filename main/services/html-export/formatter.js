@@ -2,7 +2,6 @@
  * HTML Formatter Service
  * Adds human-readable formatting to imploded microdata
  */
-
 /**
  * Create a complete HTML5 document
  * @param {string} content - Body content
@@ -11,9 +10,8 @@
  * @returns {string} - Complete HTML document
  */
 export function createHTMLDocument(content, title, options = {}) {
-  const { theme = 'light' } = options;
-
-  return `<!DOCTYPE html>
+    const { theme = 'light' } = options;
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -27,14 +25,13 @@ export function createHTMLDocument(content, title, options = {}) {
 </body>
 </html>`;
 }
-
 /**
  * Add inline CSS styles for the specified theme
  * @param {string} theme - Theme name (light, dark, auto)
  * @returns {string} - Style tag with CSS
  */
 export function addStyles(theme) {
-  const baseStyles = `
+    const baseStyles = `
     * {
       box-sizing: border-box;
     }
@@ -159,8 +156,7 @@ export function addStyles(theme) {
       font-style: italic;
     }
   `;
-
-  const themeStyles = theme === 'dark' ? `
+    const themeStyles = theme === 'dark' ? `
     body {
       background-color: #1a1a1a;
       color: #e0e0e0;
@@ -197,10 +193,8 @@ export function addStyles(theme) {
       background: rgba(255,255,255,0.05);
     }
   ` : '';
-
-  return `<style>${baseStyles}${themeStyles}</style>`;
+    return `<style>${baseStyles}${themeStyles}</style>`;
 }
-
 /**
  * Format a message with proper styling and structure
  * @param {string} microdata - Message microdata
@@ -208,47 +202,30 @@ export function addStyles(theme) {
  * @returns {string} - Formatted message HTML
  */
 export function formatMessage(microdata, options = {}) {
-  const { isOwn = false } = options;
-
-  // Wrap message in styled container
-  const messageClass = `message message-bubble ${isOwn ? 'message-own' : 'message-other'}`;
-
-  // Format timestamp if present
-  const timestampFormatted = formatTimestamps(microdata);
-
-  // Add hash display
-  const withHashDisplay = addHashDisplay(timestampFormatted);
-
-  return `<div class="${messageClass}">${withHashDisplay}</div>`;
+    const { isOwn = false } = options;
+    // Wrap message in styled container
+    const messageClass = `message message-bubble ${isOwn ? 'message-own' : 'message-other'}`;
+    // Format timestamp if present
+    const timestampFormatted = formatTimestamps(microdata);
+    // Add hash display
+    const withHashDisplay = addHashDisplay(timestampFormatted);
+    return `<div class="${messageClass}">${withHashDisplay}</div>`;
 }
-
 /**
  * Create conversation header with metadata
  * @param {Object} metadata - Conversation metadata
  * @returns {string} - HTML header
  */
 export function createHeader(metadata) {
-  const {
-    title = 'Conversation Export',
-    topicId,
-    messageCount = 0,
-    participants = [],
-    dateRange,
-    exportDate = new Date().toISOString()
-  } = metadata;
-
-  const participantsList = participants.map(p =>
-    `<span class="participant" itemscope itemtype="//refin.io/Person">
+    const { title = 'Conversation Export', topicId, messageCount = 0, participants = [], dateRange, exportDate = new Date().toISOString() } = metadata;
+    const participantsList = participants.map((p) => `<span class="participant" itemscope itemtype="//refin.io/Person">
       <span itemprop="name">${escapeHTML(p.name)}</span>
       ${p.email ? `<span itemprop="email" style="display:none;">${escapeHTML(p.email)}</span>` : ''}
-    </span>`
-  ).join('');
-
-  const dateRangeText = dateRange ?
-    `${formatDate(dateRange.start)} to ${formatDate(dateRange.end)}` :
-    'All time';
-
-  return `
+    </span>`).join('');
+    const dateRangeText = dateRange ?
+        `${formatDate(dateRange.start)} to ${formatDate(dateRange.end)}` :
+        'All time';
+    return `
     <header class="conversation-header" itemscope itemtype="//refin.io/ConversationExport">
       <h1 class="conversation-title" itemprop="title">${escapeHTML(title)}</h1>
       <div class="conversation-meta">
@@ -268,95 +245,83 @@ export function createHeader(metadata) {
     </header>
   `;
 }
-
 /**
  * Escape HTML special characters
  * @param {string} text - Text to escape
  * @returns {string} - Escaped text
  */
 export function escapeHTML(text) {
-  if (typeof text !== 'string') {
-    return '';
-  }
-
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    if (typeof text !== 'string') {
+        return '';
+    }
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
-
 /**
  * Add Content Security Policy meta tag
  * @returns {string} - CSP meta tag
  */
 export function addContentSecurityPolicy() {
-  return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src data: 'self'; script-src 'none';">`;
+    return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src data: 'self'; script-src 'none';">`;
 }
-
 /**
  * Format timestamps in microdata to human-readable format
  * @param {string} microdata - HTML with time elements
  * @returns {string} - Microdata with formatted timestamps
  */
 function formatTimestamps(microdata) {
-  return microdata.replace(
-    /<time([^>]*itemprop="timestamp"[^>]*)>([^<]+)<\/time>/g,
-    (match, attributes, isoDate) => {
-      const humanDate = formatDate(isoDate);
-      return `<time${attributes}><span class="message-timestamp">${humanDate}</span></time>`;
-    }
-  );
+    return microdata.replace(/<time([^>]*itemprop="timestamp"[^>]*)>([^<]+)<\/time>/g, (match, attributes, isoDate) => {
+        const humanDate = formatDate(isoDate);
+        return `<time${attributes}><span class="message-timestamp">${humanDate}</span></time>`;
+    });
 }
-
 /**
  * Add hash display to message
  * @param {string} microdata - Message microdata
  * @returns {string} - Microdata with hash display
  */
 function addHashDisplay(microdata) {
-  // Extract hash from data-hash attribute
-  const hashMatch = microdata.match(/data-hash="([^"]+)"/);
-  if (hashMatch) {
-    const hash = hashMatch[1];
-    const shortHash = hash.substring(0, 8) + '...';
-
-    // Add hash display at the end
-    const hashDisplay = `<div class="message-hash" title="Message Hash: ${hash}">Hash: ${shortHash}</div>`;
-
-    // Insert before the closing div
-    return microdata.replace(/<\/div>$/, hashDisplay + '</div>');
-  }
-
-  return microdata;
+    // Extract hash from data-hash attribute
+    const hashMatch = String(microdata).match(/data-hash="([^"]+)"/);
+    if (hashMatch) {
+        const hash = hashMatch[1];
+        const shortHash = String(hash).substring(0, 8) + '...';
+        // Add hash display at the end
+        const hashDisplay = `<div class="message-hash" title="Message Hash: ${hash}">Hash: ${shortHash}</div>`;
+        // Insert before the closing div
+        return microdata.replace(/<\/div>$/, hashDisplay + '</div>');
+    }
+    return microdata;
 }
-
 /**
  * Format date to human-readable string
  * @param {string} isoDate - ISO date string
  * @returns {string} - Formatted date
  */
 function formatDate(isoDate) {
-  try {
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (error) {
-    return isoDate;
-  }
+    try {
+        const date = new Date(isoDate);
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+    catch (error) {
+        return isoDate;
+    }
 }
-
 export default {
-  createHTMLDocument,
-  addStyles,
-  formatMessage,
-  createHeader,
-  escapeHTML,
-  addContentSecurityPolicy
+    createHTMLDocument,
+    addStyles,
+    formatMessage,
+    createHeader,
+    escapeHTML,
+    addContentSecurityPolicy
 };

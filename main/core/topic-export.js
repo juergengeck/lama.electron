@@ -4,115 +4,106 @@
  * Exports topics with structured data including attestations
  * Supports HTML with microdata, JSON, and pure microdata formats
  */
-
 /**
  * Topic Exporter with attestation support
  */
 export class TopicExporter {
-  constructor(channelManager, attestationManager) {
-    this.channelManager = channelManager;
-    this.attestationManager = attestationManager;
-  }
-
-  /**
-   * Export topic with attestations
-   *
-   * @param {Object} params
-   * @param {string} params.topicId - Topic to export
-   * @param {boolean} params.includeAttestations - Include attestations
-   * @param {string} params.format - 'html', 'json', or 'microdata'
-   * @returns {Promise<Object>} Export result
-   */
-  async exportTopicWithAttestations(params) {
-    const { topicId, includeAttestations = true, format = 'html' } = params;
-
-    if (!topicId) {
-      throw new Error('Topic ID is required for export');
+    channelManager;
+    attestationManager;
+    constructor(channelManager, attestationManager) {
+        this.channelManager = channelManager;
+        this.attestationManager = attestationManager;
     }
-
-    try {
-      // Get topic data
-      const topicData = await this.getTopicData(topicId);
-
-      // Get messages from topic
-      const messages = await this.getTopicMessages(topicId);
-
-      // Get attestations if requested
-      let attestations = [];
-      if (includeAttestations && this.attestationManager) {
-        attestations = await this.attestationManager.getAttestationsForTopic(topicId);
-      }
-
-      // Group attestations by message
-      const attestationsByMessage = this.groupAttestationsByMessage(attestations);
-
-      // Format based on requested type
-      let exportData;
-      switch (format) {
-        case 'json':
-          exportData = this.exportAsJSON(topicData, messages, attestationsByMessage);
-          break;
-        case 'microdata':
-          exportData = this.exportAsMicrodata(topicData, messages, attestationsByMessage);
-          break;
-        case 'html':
-        default:
-          exportData = this.exportAsHTML(topicData, messages, attestationsByMessage);
-          break;
-      }
-
-      return {
-        format,
-        data: exportData,
-        metadata: {
-          exportedAt: new Date().toISOString(),
-          topicId,
-          messageCount: messages.length,
-          attestationCount: attestations.length
+    /**
+     * Export topic with attestations
+     *
+     * @param {Object} params
+     * @param {string} params.topicId - Topic to export
+     * @param {boolean} params.includeAttestations - Include attestations
+     * @param {string} params.format - 'html', 'json', or 'microdata'
+     * @returns {Promise<Object>} Export result
+     */
+    async exportTopicWithAttestations(params) {
+        const { topicId, includeAttestations = true, format = 'html' } = params;
+        if (!topicId) {
+            throw new Error('Topic ID is required for export');
         }
-      };
-    } catch (error) {
-      console.error('[TopicExporter] Error exporting topic:', error);
-      throw error;
+        try {
+            // Get topic data
+            const topicData = await this.getTopicData(topicId);
+            // Get messages from topic
+            const messages = await this.getTopicMessages(topicId);
+            // Get attestations if requested
+            let attestations = [];
+            if (includeAttestations && this.attestationManager) {
+                attestations = await this.attestationManager.getAttestationsForTopic(topicId);
+            }
+            // Group attestations by message
+            const attestationsByMessage = this.groupAttestationsByMessage(attestations);
+            // Format based on requested type
+            let exportData;
+            switch (format) {
+                case 'json':
+                    exportData = this.exportAsJSON(topicData, messages, attestationsByMessage);
+                    break;
+                case 'microdata':
+                    exportData = this.exportAsMicrodata(topicData, messages, attestationsByMessage);
+                    break;
+                case 'html':
+                default:
+                    exportData = this.exportAsHTML(topicData, messages, attestationsByMessage);
+                    break;
+            }
+            return {
+                format,
+                data: exportData,
+                metadata: {
+                    exportedAt: new Date().toISOString(),
+                    topicId,
+                    messageCount: messages.length,
+                    attestationCount: attestations.length
+                }
+            };
+        }
+        catch (error) {
+            console.error('[TopicExporter] Error exporting topic:', error);
+            throw error;
+        }
     }
-  }
-
-  /**
-   * Export as JSON
-   *
-   * @private
-   */
-  exportAsJSON(topicData, messages, attestationsByMessage) {
-    const exportObj = {
-      $type$: 'AuditedTopic',
-      topicId: topicData.id,
-      topicName: topicData.name || 'Unnamed Topic',
-      exportedAt: new Date().toISOString(),
-      exportedBy: topicData.exportedBy || 'unknown',
-      schemaVersion: '1.0.0',
-      schemaUrl: 'https://one.core/schemas/audited-topic',
-      messages: messages.map(msg => ({
-        hash: msg.hash,
-        version: msg.version || 1,
-        content: msg.text || msg.content,
-        timestamp: msg.timestamp,
-        sender: msg.sender || msg.senderId,
-        senderName: msg.senderName,
-        subjects: msg.subjects || [],
-        attestations: attestationsByMessage.get(msg.hash) || []
-      }))
-    };
-
-    return JSON.stringify(exportObj, null, 2);
-  }
-
-  /**
-   * Export as HTML with microdata
-   *
-   * @private
-   */
-  exportAsHTML(topicData, messages, attestationsByMessage) {
-    const html = `<!DOCTYPE html>
+    /**
+     * Export as JSON
+     *
+     * @private
+     */
+    exportAsJSON(topicData, messages, attestationsByMessage) {
+        const exportObj = {
+            $type$: 'AuditedTopic',
+            topicId: topicData.id,
+            topicName: topicData.name || 'Unnamed Topic',
+            exportedAt: new Date().toISOString(),
+            exportedBy: topicData.exportedBy || 'unknown',
+            schemaVersion: '1.0.0',
+            schemaUrl: 'https://one.core/schemas/audited-topic',
+            messages: messages.map((msg) => ({
+                hash: msg.hash,
+                version: msg.version || 1,
+                content: msg.text || msg.content,
+                timestamp: msg.timestamp,
+                sender: msg.sender || msg.senderId,
+                senderName: msg.senderName,
+                subjects: msg.subjects || [],
+                attestations: attestationsByMessage.get(msg.hash) || []
+            }))
+        };
+        return JSON.stringify(exportObj, null, 2);
+    }
+    /**
+     * Export as HTML with microdata
+     *
+     * @private
+     */
+    exportAsHTML(topicData, messages, attestationsByMessage) {
+        const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -189,20 +180,18 @@ export class TopicExporter {
     </div>
   </div>
 
-  ${messages.map(msg => this.renderMessage(msg, attestationsByMessage.get(msg.hash) || [])).join('\n')}
+  ${messages.map((msg) => this.renderMessage(msg, attestationsByMessage.get(msg.hash) || [])).join('\n')}
 </body>
 </html>`;
-
-    return html;
-  }
-
-  /**
-   * Render a single message with attestations
-   *
-   * @private
-   */
-  renderMessage(message, attestations) {
-    return `
+        return html;
+    }
+    /**
+     * Render a single message with attestations
+     *
+     * @private
+     */
+    renderMessage(message, attestations) {
+        return `
   <div itemscope itemtype="https://one.core/Message" class="message">
     <meta itemprop="hash" content="${message.hash}">
     <meta itemprop="version" content="${message.version || 1}">
@@ -221,19 +210,18 @@ export class TopicExporter {
       ${this.escapeHtml(message.text || message.content || '')}
     </div>
 
-    <div class="hash">Hash: ${message.hash.substring(0, 16)}...</div>
+    <div class="hash">Hash: ${message.hash?.substring(0, 16)}...</div>
 
-    ${attestations.map(att => this.renderAttestation(att)).join('\n')}
+    ${attestations.map((att) => this.renderAttestation(att)).join('\n')}
   </div>`;
-  }
-
-  /**
-   * Render an attestation
-   *
-   * @private
-   */
-  renderAttestation(attestation) {
-    return `
+    }
+    /**
+     * Render an attestation
+     *
+     * @private
+     */
+    renderAttestation(attestation) {
+        return `
     <div itemscope itemtype="https://one.core/Attestation" class="attestation">
       <meta itemprop="messageHash" content="${attestation.messageHash}">
       <meta itemprop="auditorId" content="${attestation.auditorId}">
@@ -254,20 +242,19 @@ export class TopicExporter {
         </time>
       </div>
     </div>`;
-  }
-
-  /**
-   * Export as pure microdata
-   *
-   * @private
-   */
-  exportAsMicrodata(topicData, messages, attestationsByMessage) {
-    const microdata = `<div itemscope itemtype="https://one.core/Topic">
+    }
+    /**
+     * Export as pure microdata
+     *
+     * @private
+     */
+    exportAsMicrodata(topicData, messages, attestationsByMessage) {
+        const microdata = `<div itemscope itemtype="https://one.core/Topic">
   <meta itemprop="id" content="${topicData.id}">
   <meta itemprop="name" content="${this.escapeHtml(topicData.name || '')}">
   <meta itemprop="exportedAt" content="${new Date().toISOString()}">
 
-  ${messages.map(msg => `
+  ${messages.map((msg) => `
   <div itemprop="message" itemscope itemtype="https://one.core/Message">
     <meta itemprop="hash" content="${msg.hash}">
     <meta itemprop="version" content="${msg.version || 1}">
@@ -275,7 +262,7 @@ export class TopicExporter {
     <meta itemprop="timestamp" content="${msg.timestamp}">
     <div itemprop="content">${this.escapeHtml(msg.text || msg.content || '')}</div>
 
-    ${(attestationsByMessage.get(msg.hash) || []).map(att => `
+    ${(attestationsByMessage.get(msg.hash) || []).map((att) => `
     <div itemprop="attestation" itemscope itemtype="https://one.core/Attestation">
       <meta itemprop="messageHash" content="${att.messageHash}">
       <meta itemprop="auditorId" content="${att.auditorId}">
@@ -286,116 +273,104 @@ export class TopicExporter {
     </div>`).join('\n')}
   </div>`).join('\n')}
 </div>`;
-
-    return microdata;
-  }
-
-  /**
-   * Get topic data
-   *
-   * @private
-   */
-  async getTopicData(topicId) {
-    // In a real implementation, this would fetch from TopicModel
-    return {
-      id: topicId,
-      name: topicId, // Would be fetched from topic metadata
-      exportedBy: 'current-user' // Would be current user ID
-    };
-  }
-
-  /**
-   * Get messages from topic
-   *
-   * @private
-   */
-  async getTopicMessages(topicId) {
-    if (!this.channelManager) {
-      return [];
+        return microdata;
     }
-
-    try {
-      // Get messages from channel
-      const entries = await this.channelManager.getChannelEntries(topicId);
-
-      // Filter and format messages
-      const messages = entries
-        .filter(entry => entry.data && entry.data.$type$ !== 'MessageAttestation')
-        .map(entry => ({
-          hash: entry.hash || this.generateHash(entry.data),
-          version: entry.data.version || 1,
-          text: entry.data.text,
-          content: entry.data.content || entry.data.text,
-          timestamp: entry.timestamp || entry.data.timestamp,
-          sender: entry.author || entry.data.sender,
-          senderName: entry.data.senderName,
-          subjects: entry.data.subjects || []
-        }));
-
-      return messages;
-    } catch (error) {
-      console.error('[TopicExporter] Error getting messages:', error);
-      return [];
+    /**
+     * Get topic data
+     *
+     * @private
+     */
+    async getTopicData(topicId) {
+        // In a real implementation, this would fetch from TopicModel
+        return {
+            id: topicId,
+            name: topicId, // Would be fetched from topic metadata
+            exportedBy: 'current-user' // Would be current user ID
+        };
     }
-  }
-
-  /**
-   * Group attestations by message hash
-   *
-   * @private
-   */
-  groupAttestationsByMessage(attestations) {
-    const grouped = new Map();
-
-    for (const attestation of attestations) {
-      const hash = attestation.messageHash;
-      if (!grouped.has(hash)) {
-        grouped.set(hash, []);
-      }
-      grouped.get(hash).push(attestation);
+    /**
+     * Get messages from topic
+     *
+     * @private
+     */
+    async getTopicMessages(topicId) {
+        if (!this.channelManager) {
+            return [];
+        }
+        try {
+            // Get messages from channel
+            const entries = await this.channelManager.getChannelEntries(topicId);
+            // Filter and format messages
+            const messages = entries
+                .filter((entry) => entry.data && entry.data.$type$ !== 'MessageAttestation')
+                .map((entry) => ({
+                hash: entry.hash || this.generateHash(entry.data),
+                version: entry.data.version || 1,
+                text: entry.data.text,
+                content: entry.data.content || entry.data.text,
+                timestamp: entry.timestamp || entry.data.timestamp,
+                sender: entry.author || entry.data.sender,
+                senderName: entry.data.senderName,
+                subjects: entry.data.subjects || []
+            }));
+            return messages;
+        }
+        catch (error) {
+            console.error('[TopicExporter] Error getting messages:', error);
+            return [];
+        }
     }
-
-    return grouped;
-  }
-
-  /**
-   * Count total attestations
-   *
-   * @private
-   */
-  countTotalAttestations(attestationsByMessage) {
-    let count = 0;
-    for (const attestations of attestationsByMessage.values()) {
-      count += attestations.length;
+    /**
+     * Group attestations by message hash
+     *
+     * @private
+     */
+    groupAttestationsByMessage(attestations) {
+        const grouped = new Map();
+        for (const attestation of attestations) {
+            const hash = attestation.messageHash;
+            if (!grouped.has(hash)) {
+                grouped.set(hash, []);
+            }
+            grouped.get(hash).push(attestation);
+        }
+        return grouped;
     }
-    return count;
-  }
-
-  /**
-   * Escape HTML
-   *
-   * @private
-   */
-  escapeHtml(text) {
-    const map = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    };
-    return (text || '').replace(/[&<>"']/g, m => map[m]);
-  }
-
-  /**
-   * Generate hash for data (simplified)
-   *
-   * @private
-   */
-  generateHash(data) {
-    // In production, this would use proper SHA256 hashing
-    return 'hash-' + JSON.stringify(data).substring(0, 16);
-  }
+    /**
+     * Count total attestations
+     *
+     * @private
+     */
+    countTotalAttestations(attestationsByMessage) {
+        let count = 0;
+        for (const attestations of attestationsByMessage.values()) {
+            count += attestations.length;
+        }
+        return count;
+    }
+    /**
+     * Escape HTML
+     *
+     * @private
+     */
+    escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        };
+        return (text || '').replace(/[&<>"']/g, (m) => map[m]);
+    }
+    /**
+     * Generate hash for data (simplified)
+     *
+     * @private
+     */
+    generateHash(data) {
+        // In production, this would use proper SHA256 hashing
+        return 'hash-' + JSON.stringify(data).substring(0, 16);
+    }
 }
-
 export default TopicExporter;

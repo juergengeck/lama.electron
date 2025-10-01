@@ -2,7 +2,6 @@
  * Topic Analysis Recipes for ONE.core
  * Following one.leute patterns for proper object structure
  */
-
 const SubjectRecipe = {
     $type$: 'Recipe',
     name: 'Subject',
@@ -45,7 +44,6 @@ const SubjectRecipe = {
         }
     ]
 };
-
 const KeywordRecipe = {
     $type$: 'Recipe',
     name: 'Keyword',
@@ -91,7 +89,6 @@ const KeywordRecipe = {
         }
     ]
 };
-
 const SummaryRecipe = {
     $type$: 'Recipe',
     name: 'Summary',
@@ -134,11 +131,9 @@ const SummaryRecipe = {
         }
     ]
 };
-
 const TopicAnalysisRecipes = [
     SubjectRecipe,
     KeywordRecipe,
     SummaryRecipe
 ];
-
 export default TopicAnalysisRecipes;

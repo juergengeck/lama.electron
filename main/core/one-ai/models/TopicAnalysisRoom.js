@@ -2,13 +2,13 @@
  * TopicAnalysisRoom - Extension of TopicRoom for topic analysis functionality
  * Provides methods to retrieve Keywords, Subjects, and Summaries from a topic
  */
-
 export default class TopicAnalysisRoom {
+    topicId;
+    channelManager;
     constructor(topicId, channelManager) {
         this.topicId = topicId;
         this.channelManager = channelManager;
     }
-
     /**
      * Retrieve all keywords for this topic
      */
@@ -17,12 +17,10 @@ export default class TopicAnalysisRoom {
             const channelInfos = await this.channelManager.getMatchingChannelInfos({
                 channelId: this.topicId
             });
-
             if (!channelInfos || channelInfos.length === 0) {
                 console.log('[TopicAnalysisRoom] No channels found for topic:', this.topicId);
                 return [];
             }
-
             // Use multiChannelObjectIterator to get all objects from all channels with this topic ID
             const keywords = [];
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
@@ -30,14 +28,13 @@ export default class TopicAnalysisRoom {
                     keywords.push(entry.data);
                 }
             }
-
             return keywords;
-        } catch (error) {
+        }
+        catch (error) {
             console.error('[TopicAnalysisRoom] Error retrieving keywords:', error);
             return [];
         }
     }
-
     /**
      * Retrieve all subjects for this topic
      */
@@ -46,26 +43,23 @@ export default class TopicAnalysisRoom {
             const channelInfos = await this.channelManager.getMatchingChannelInfos({
                 channelId: this.topicId
             });
-
             if (!channelInfos || channelInfos.length === 0) {
                 console.log('[TopicAnalysisRoom] No channels found for topic:', this.topicId);
                 return [];
             }
-
             const subjects = [];
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
                 if (entry.data && entry.data.$type$ === 'Subject' && entry.data.topicId === this.topicId) {
                     subjects.push(entry.data);
                 }
             }
-
             return subjects;
-        } catch (error) {
+        }
+        catch (error) {
             console.error('[TopicAnalysisRoom] Error retrieving subjects:', error);
             return [];
         }
     }
-
     /**
      * Retrieve all summaries for this topic
      */
@@ -74,29 +68,25 @@ export default class TopicAnalysisRoom {
             const channelInfos = await this.channelManager.getMatchingChannelInfos({
                 channelId: this.topicId
             });
-
             if (!channelInfos || channelInfos.length === 0) {
                 console.log('[TopicAnalysisRoom] No channels found for topic:', this.topicId);
                 return [];
             }
-
             const summaries = [];
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
                 if (entry.data && entry.data.$type$ === 'Summary' && entry.data.topicId === this.topicId) {
                     summaries.push(entry.data);
                 }
             }
-
             // Sort by version (highest first)
             summaries.sort((a, b) => (b.version || 0) - (a.version || 0));
-
             return summaries;
-        } catch (error) {
+        }
+        catch (error) {
             console.error('[TopicAnalysisRoom] Error retrieving summaries:', error);
             return [];
         }
     }
-
     /**
      * Retrieve the latest summary for this topic
      */
@@ -104,7 +94,6 @@ export default class TopicAnalysisRoom {
         const summaries = await this.retrieveAllSummaries();
         return summaries.length > 0 ? summaries[0] : null;
     }
-
     /**
      * Retrieve all analysis objects (keywords, subjects, summaries) in one go
      */
@@ -113,7 +102,6 @@ export default class TopicAnalysisRoom {
             const channelInfos = await this.channelManager.getMatchingChannelInfos({
                 channelId: this.topicId
             });
-
             if (!channelInfos || channelInfos.length === 0) {
                 console.log('[TopicAnalysisRoom] No channels found for topic:', this.topicId);
                 return {
@@ -122,14 +110,12 @@ export default class TopicAnalysisRoom {
                     summaries: []
                 };
             }
-
             const keywords = [];
             const subjects = [];
             const summaries = [];
-
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
-                if (!entry.data || !entry.data.$type$) continue;
-
+                if (!entry.data || !entry.data.$type$)
+                    continue;
                 switch (entry.data.$type$) {
                     case 'Keyword':
                         if (entry.data.topicId === this.topicId) {
@@ -148,16 +134,15 @@ export default class TopicAnalysisRoom {
                         break;
                 }
             }
-
             // Sort summaries by version
             summaries.sort((a, b) => (b.version || 0) - (a.version || 0));
-
             return {
                 keywords,
                 subjects,
                 summaries
             };
-        } catch (error) {
+        }
+        catch (error) {
             console.error('[TopicAnalysisRoom] Error retrieving analysis objects:', error);
             return {
                 keywords: [],

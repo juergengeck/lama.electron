@@ -57,22 +57,20 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
           }
 
           if (messages && messages.length > 0) {
-            console.log('[useChatKeywords] Starting non-blocking extraction for', messages.length, 'messages');
+            console.log('[useChatKeywords] Loading keywords from storage for', messages.length, 'messages');
 
-            const response = await window.electronAPI.invoke('topicAnalysis:extractConversationKeywords', {
+            // Get keywords from storage (populated by analyzeMessages)
+            const response = await window.electronAPI.invoke('topicAnalysis:getKeywords', {
               topicId,
-              messages: messages.map(m => ({
-                text: m.content || m.text || '',
-                sender: m.sender
-              })),
-              maxKeywords: 15
+              limit: 15
             });
 
             // Only update if this is still the latest request
             if (currentRequest === requestCounter.current) {
               if (response.success && response.data?.keywords) {
-                console.log('[useChatKeywords] Keywords extracted:', response.data.keywords.length);
-                setKeywords(response.data.keywords);
+                const keywordTerms = response.data.keywords.map((k: any) => k.term || k);
+                console.log('[useChatKeywords] Keywords loaded from storage:', keywordTerms.length);
+                setKeywords(keywordTerms);
                 setError(null);
               }
             } else {

@@ -3,7 +3,7 @@ import { ChevronUp, ChevronDown, Sparkles, RefreshCw, Loader2 } from 'lucide-rea
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import type { Summary } from '../../types/topic-analysis'
+import type { Summary } from '../../types/topic-analysis.js'
 
 interface ChatContextProps {
   topicId: string

@@ -2,6 +2,45 @@
 
 This file provides guidance to Claude Code when working with LAMA Electron.
 
+## NodeOneCore: Comprehensive ONE.core Instance
+
+**CRITICAL**: The Node.js process runs a FULL ONE.core instance (`NodeOneCore`) with complete capabilities:
+
+### Available Models & Services
+- `leuteModel` - Full Leute model (people, contacts, profiles, groups)
+- `channelManager` - Complete channel management
+- `connectionsModel` - P2P connections, pairing, CHUM sync
+- `topicModel` - Chat topics and messages
+- `aiAssistantModel` - AI contact management
+- `llmManager` - LLM provider integration
+- `llmObjectManager` - LLM configuration storage
+- `topicGroupManager` - Group chat management
+- `contentSharing` - Content sharing capabilities
+- `federationAPI` - Federation features
+- `accessRightsManager` - Access control
+- `quicTransport` - QUIC transport layer
+- `apiServer` - Refinio API server (QuicVC)
+
+### Storage & Persistence
+- Full ONE.core storage via `@refinio/one.core/lib/storage-*`
+- BLOB storage for attachments
+- Versioned object storage
+- Access control and encryption
+- Recipe-based object definitions
+
+### DO NOT Castrate Functionality
+- **DO NOT** stub out or disable methods because types aren't perfect
+- **DO** use proper TypeScript types from `@refinio/one.core/lib/recipes.js`
+- **DO** import union types like `PersonDescriptionTypes`, `CommunicationEndpointTypes`
+- **DO** use type guards with proper typing (not `any`)
+- **DO** trust that NodeOneCore has comprehensive ONE.core capabilities
+
+### TypeScript Type Strategy
+1. Import proper types from `@refinio/one.core/lib/recipes.js`
+2. Use TypeScript's `Extract<>` utility for union type narrowing
+3. Create type guards that preserve type information
+4. Avoid `as any` - use proper type assertions or guards
+
 ## Recent Optimizations (January 2025)
 
 ### Performance Improvements

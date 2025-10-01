@@ -1,0 +1,260 @@
+{
+  "name": "LAMA Feed-Forward IPC Handlers",
+  "version": "1.0.0",
+  "description": "IPC handler contracts for feed-forward knowledge sharing",
+  "handlers": [
+    {
+      "channel": "feedforward:createSupply",
+      "description": "Create a new Supply object advertising available knowledge",
+      "request": {
+        "keywords": {
+          "type": "string[]",
+          "description": "Plain text keywords to be hashed",
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "contextLevel": {
+          "type": "integer",
+          "description": "Maximum context level willing to share (0-3)",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "conversationId": {
+          "type": "string",
+          "description": "Reference to source conversation",
+          "optional": true
+        }
+      },
+      "response": {
+        "success": {
+          "supplyHash": "string",
+          "keywords": "object",
+          "timestamp": "string"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:createDemand",
+      "description": "Create a new Demand object requesting knowledge",
+      "request": {
+        "keywords": {
+          "type": "string[]",
+          "description": "Plain text keywords being sought",
+          "minItems": 1,
+          "maxItems": 10
+        },
+        "urgency": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Priority level of request"
+        },
+        "context": {
+          "type": "string",
+          "description": "Brief context showing knowledge gap",
+          "maxLength": 500
+        },
+        "criteria": {
+          "type": "string",
+          "description": "What constitutes adequate response",
+          "maxLength": 200
+        }
+      },
+      "response": {
+        "success": {
+          "demandHash": "string",
+          "status": "string",
+          "timestamp": "string"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:matchSupplyDemand",
+      "description": "Find matching Supply for a Demand",
+      "request": {
+        "demandHash": {
+          "type": "string",
+          "description": "Hash of Demand object to match"
+        },
+        "minTrust": {
+          "type": "number",
+          "description": "Minimum trust score for matches",
+          "minimum": 0,
+          "maximum": 1,
+          "optional": true,
+          "default": 0.3
+        }
+      },
+      "response": {
+        "success": {
+          "matches": [
+            {
+              "supplyHash": "string",
+              "matchScore": "number",
+              "trustScore": "number",
+              "contextAvailable": "integer"
+            }
+          ]
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:updateTrustScore",
+      "description": "Update trust score after an exchange",
+      "request": {
+        "targetInstance": {
+          "type": "string",
+          "description": "PersonId of instance to score"
+        },
+        "exchangeResult": {
+          "type": "string",
+          "enum": ["success", "partial", "failure"],
+          "description": "Outcome of knowledge exchange"
+        },
+        "quality": {
+          "type": "number",
+          "description": "Quality rating (0-1)",
+          "minimum": 0,
+          "maximum": 1,
+          "optional": true
+        }
+      },
+      "response": {
+        "success": {
+          "scoreHash": "string",
+          "newTrust": "number",
+          "exchangeCount": "integer"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:detectPatterns",
+      "description": "Analyze network for knowledge patterns",
+      "request": {
+        "timeRange": {
+          "type": "object",
+          "properties": {
+            "start": "string",
+            "end": "string"
+          },
+          "description": "ISO8601 date range for analysis",
+          "optional": true
+        },
+        "patternTypes": {
+          "type": "string[]",
+          "enum": ["trending", "gap", "cluster", "recursive"],
+          "description": "Types of patterns to detect",
+          "optional": true
+        }
+      },
+      "response": {
+        "success": {
+          "patterns": [
+            {
+              "type": "string",
+              "confidence": "number",
+              "data": "object"
+            }
+          ],
+          "observationCount": "integer"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:getSharingPreferences",
+      "description": "Get user's knowledge sharing preferences",
+      "request": {},
+      "response": {
+        "success": {
+          "enabled": "boolean",
+          "defaultContextLevel": "integer",
+          "whitelist": "string[]",
+          "blacklist": "string[]",
+          "autoShare": "boolean"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:setSharingPreferences",
+      "description": "Update user's knowledge sharing preferences",
+      "request": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable/disable feed-forward system"
+        },
+        "defaultContextLevel": {
+          "type": "integer",
+          "description": "Default context sharing level",
+          "minimum": 0,
+          "maximum": 3,
+          "optional": true
+        },
+        "whitelist": {
+          "type": "string[]",
+          "description": "Instances always trusted",
+          "optional": true
+        },
+        "blacklist": {
+          "type": "string[]",
+          "description": "Instances never trusted",
+          "optional": true
+        },
+        "autoShare": {
+          "type": "boolean",
+          "description": "Automatically share knowledge",
+          "optional": true
+        }
+      },
+      "response": {
+        "success": {
+          "updated": "boolean"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    },
+    {
+      "channel": "feedforward:getNetworkStatus",
+      "description": "Get current feed-forward network status",
+      "request": {},
+      "response": {
+        "success": {
+          "activeSupplies": "integer",
+          "activeDemands": "integer",
+          "connectedInstances": "integer",
+          "recentExchanges": "integer",
+          "averageTrust": "number"
+        },
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      }
+    }
+  ]
+}

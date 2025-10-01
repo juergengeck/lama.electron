@@ -36,17 +36,13 @@ async function startApp() {
       console.log('[MAIN] ✅ Ready to show UI (NO ONE.CORE initialized yet)')
       
       ReactDOM.createRoot(document.getElementById('root')!).render(
-        <React.StrictMode>
-          <App />
-        </React.StrictMode>,
+        <App />
       )
     } else {
       console.error('[MAIN] ❌ Browser ONE.CORE initialization failed')
       // Still render the app - it can show error state
       ReactDOM.createRoot(document.getElementById('root')!).render(
-        <React.StrictMode>
-          <App />
-        </React.StrictMode>,
+        <App />
       )
     }
     
