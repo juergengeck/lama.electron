@@ -123,9 +123,9 @@ class NodeAccessRightsManager {
    */
   async giveAccessToMainProfile(): Promise<any> {
     try {
-      const { serializeWithType } = await import('../../node_modules/@refinio/one.core/lib/util/promise.js')
-      const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-      const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
+      const { serializeWithType } = await import('@refinio/one.core/lib/util/promise.js')
+      const { createAccess } = await import('@refinio/one.core/lib/access.js')
+      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
       
       const me = await this.leuteModel.me()
       const mainProfile = me.mainProfileLazyLoad()
@@ -151,10 +151,10 @@ class NodeAccessRightsManager {
    */
   async giveAccessToChannels(): Promise<any> {
     try {
-      const { serializeWithType } = await import('../../node_modules/@refinio/one.core/lib/util/promise.js')
-      const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-      const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-      const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+      const { serializeWithType } = await import('@refinio/one.core/lib/util/promise.js')
+      const { createAccess } = await import('@refinio/one.core/lib/access.js')
+      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+      const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
 
       const me = await this.leuteModel.me()
       const mainId = await me.mainIdentity()

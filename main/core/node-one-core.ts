@@ -1130,9 +1130,10 @@ class NodeOneCore implements INodeOneCore {
     
     // ConnectionsModel should automatically handle socket listener startup
     // Add debug listeners for incoming connections
-    if (this.connectionsModel["leuteConnectionsModule" as keyof ConnectionsModel]) {
-      const originalAcceptConnection: any = (this.connectionsModel["leuteConnectionsModule" as keyof ConnectionsModel] as any).acceptConnection.bind(this.connectionsModel["leuteConnectionsModule" as keyof ConnectionsModel])
-      (this.connectionsModel as any).leuteConnectionsModule.acceptConnection = async (...args: any) => {
+    const leuteModule = (this.connectionsModel as any).leuteConnectionsModule
+    if (leuteModule && typeof leuteModule.acceptConnection === 'function') {
+      const originalAcceptConnection: any = leuteModule.acceptConnection.bind(leuteModule)
+      leuteModule.acceptConnection = async (...args: any) => {
         console.log('[NodeOneCore] 🔌 DEBUG: Incoming connection being accepted')
         console.log('[NodeOneCore] 🔌 DEBUG: Connection args:', (args as any)?.length)
         if (args[0]) {
