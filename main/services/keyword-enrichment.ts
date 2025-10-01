@@ -179,7 +179,7 @@ function calculateRelevanceScore(subject, placesMentioned) {
         try {
             const lastSeenDate = new Date(subject.lastSeen);
             const now = new Date();
-            const daysSinceLastSeen = (now - lastSeenDate) / (1000 * 60 * 60 * 24);
+            const daysSinceLastSeen = (now.getTime() - lastSeenDate.getTime()) / (1000 * 60 * 60 * 24);
             recencyFactor = 1 / (daysSinceLastSeen + 1);
         } catch (error) {
             console.warn('[KeywordEnrichment] Invalid lastSeen date:', subject.lastSeen);
