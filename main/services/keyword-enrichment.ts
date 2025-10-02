@@ -268,7 +268,7 @@ function sortByAuthor(enrichedSubjects) {
     });
 }
 
-module.exports = {
+export {
     enrichKeywordWithTopicReferences,
     enrichSubjectsWithMetadata,
     calculateRelevanceScore,

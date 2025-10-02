@@ -804,6 +804,38 @@ const oneCoreHandlers = {
         error: (error as Error).message
       }
     }
+  },
+
+  /**
+   * Restart Node.js ONE.core instance
+   * Useful during development when UI reloads
+   * Shuts down the instance - UI must re-initialize with credentials
+   */
+  async restartNode(event: IpcMainInvokeEvent): Promise<IpcResponse> {
+    console.log('[OneCoreHandler] Restarting Node.js ONE.core instance...')
+
+    try {
+      // Shutdown current instance
+      if (nodeOneCore.initialized) {
+        console.log('[OneCoreHandler] Shutting down current instance...')
+        await nodeOneCore.shutdown()
+      }
+
+      console.log('[OneCoreHandler] Node.js instance shut down - UI must re-initialize')
+
+      return {
+        success: true,
+        data: {
+          message: 'Node instance shut down - please re-login'
+        }
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to restart Node instance:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
   }
 }
 

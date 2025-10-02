@@ -23,6 +23,10 @@ import { attachmentService } from '@/services/attachments/AttachmentService'
 import { createAttachmentView } from '@/components/attachments/AttachmentViewFactory'
 import type { MessageAttachment, BlobDescriptor } from '@/types/attachments'
 
+// Import keyword detail panel
+import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+
 interface MessageViewProps {
   messages: Message[]
   currentUserId?: string
@@ -60,9 +64,13 @@ export function MessageView({
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  
+
   // Store attachment descriptors for display
   const [attachmentDescriptors, setAttachmentDescriptors] = useState<Map<string, BlobDescriptor>>(new Map())
+
+  // Keyword detail dialog state
+  const [showKeywordDetail, setShowKeywordDetail] = useState(false)
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null)
   
   // Load contact names
   useEffect(() => {
@@ -219,11 +227,24 @@ export function MessageView({
     }
   }
 
-  // Handle hashtag clicks
+  // Handle hashtag clicks - open keyword detail dialog
   const handleHashtagClick = (hashtag: string) => {
-    console.log('[MessageView] Hashtag clicked:', hashtag)
-    // TODO: Implement hashtag search/filtering
-    alert(`Search for #${hashtag} - Feature coming soon!`)
+    console.log('[MessageView] Hashtag/keyword clicked:', hashtag, '| topicId:', topicId)
+
+    if (topicId) {
+      // Open keyword detail dialog
+      setSelectedKeyword(hashtag)
+      setShowKeywordDetail(true)
+    } else {
+      // No topicId available - can't show context-specific details
+      console.warn('[MessageView] Cannot show keyword detail - no topicId available')
+      alert(`Search for #${hashtag} - Feature coming soon!`)
+    }
+  }
+
+  const handleCloseKeywordDetail = () => {
+    setShowKeywordDetail(false)
+    setSelectedKeyword(null)
   }
 
   // Handle attachment clicks
@@ -396,6 +417,19 @@ export function MessageView({
             </Button>
           </div>
         </div>
+      )}
+
+      {/* Keyword Detail Dialog */}
+      {showKeywordDetail && selectedKeyword && topicId && (
+        <Dialog open={showKeywordDetail} onOpenChange={handleCloseKeywordDetail}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <KeywordDetailPanel
+              keyword={selectedKeyword}
+              topicId={topicId}
+              onClose={handleCloseKeywordDetail}
+            />
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )

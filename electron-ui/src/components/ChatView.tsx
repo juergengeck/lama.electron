@@ -9,6 +9,8 @@ import { topicAnalysisService } from '@/services/topic-analysis-service'
 import { useChatKeywords } from '@/hooks/useChatKeywords'
 import { ChatHeader } from './chat/ChatHeader'
 import { ChatContext } from './chat/ChatContext'
+import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 export const ChatView = memo(function ChatView({
   conversationId = 'lama',
@@ -48,6 +50,8 @@ export const ChatView = memo(function ChatView({
   const [aiStreamingContent, setAiStreamingContent] = useState('')
   const [lastAnalysisMessageCount, setLastAnalysisMessageCount] = useState(0)
   const [showSummary, setShowSummary] = useState(false)
+  const [showKeywordDetail, setShowKeywordDetail] = useState(false)
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null)
 
   // Check if this is an AI conversation
   const hasAIParticipant = messages.some(m => m.isAI) ||
@@ -287,8 +291,8 @@ export const ChatView = memo(function ChatView({
         onToggleSummary={() => setShowSummary(!showSummary)}
         onKeywordClick={(keyword) => {
           console.log('[ChatView] Keyword clicked:', keyword)
-          // TODO: Implement keyword search/filtering
-          alert(`Search for #${keyword} - Feature coming soon!`)
+          setSelectedKeyword(keyword)
+          setShowKeywordDetail(true)
         }}
       />
 
@@ -318,6 +322,19 @@ export const ChatView = memo(function ChatView({
           topicId={conversationId}
         />
       </CardContent>
+
+      {/* Keyword Detail Dialog */}
+      {showKeywordDetail && selectedKeyword && (
+        <Dialog open={showKeywordDetail} onOpenChange={setShowKeywordDetail}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <KeywordDetailPanel
+              keyword={selectedKeyword}
+              topicId={conversationId}
+              onClose={() => setShowKeywordDetail(false)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </Card>
   )
 })

@@ -921,6 +921,43 @@ Example: ["blockchain", "ethereum", "smartcontract", "defi", "wallet"]`;
   }
 }
 
+/**
+ * Get all keywords for a topic
+ */
+async function getKeywords(event: IpcMainInvokeEvent, params: { topicId: string; limit?: number }): Promise<any> {
+  try {
+    console.log('[TopicAnalysis] Getting keywords for topic:', params.topicId);
+
+    const model: any = await initializeModel();
+    const keywords: any = await model.getKeywords(params.topicId);
+
+    // Apply limit if specified
+    const limitedKeywords = params.limit ? keywords.slice(0, params.limit) : keywords;
+
+    console.log('[TopicAnalysis] Retrieved keywords:', {
+      topicId: params.topicId,
+      keywordCount: limitedKeywords.length,
+      limit: params.limit
+    });
+
+    return {
+      success: true,
+      data: {
+        keywords: limitedKeywords
+      }
+    };
+  } catch (error) {
+    console.error('[TopicAnalysis] Error getting keywords:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+      data: {
+        keywords: []
+      }
+    };
+  }
+}
+
 // Export all handlers
 export default {
   analyzeMessages,
@@ -931,5 +968,6 @@ export default {
   mergeSubjects,
   getConversationRestartContext,
   extractRealtimeKeywords,
-  extractConversationKeywords
+  extractConversationKeywords,
+  getKeywords
 };

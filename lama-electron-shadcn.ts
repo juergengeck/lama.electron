@@ -107,7 +107,7 @@ function createWindow(): void {
     webPreferences: {
       nodeIntegration: false,  // Disable Node in renderer for cleaner browser environment
       contextIsolation: true,   // Enable context isolation for security
-      preload: path.join(__dirname, 'dist', 'electron-preload.js'),
+      preload: path.join(__dirname, 'electron-preload.js'),
       webSecurity: true,  // Must be true for preload to work
       partition: 'persist:lama'  // Use persistent partition for IndexedDB
     },

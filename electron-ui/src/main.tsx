@@ -59,3 +59,18 @@ async function startApp() {
 
 // Start the application
 startApp()
+
+// Development: Restart Node.js instance when HMR reloads the page
+if (import.meta.hot) {
+  import.meta.hot.on('vite:beforeFullReload', async () => {
+    console.log('[MAIN] Vite HMR full reload detected - restarting Node.js instance...')
+    if (window.electronAPI && window.electronAPI.invoke) {
+      try {
+        const result = await window.electronAPI.invoke('onecore:restartNode')
+        console.log('[MAIN] Node restart result:', result)
+      } catch (error) {
+        console.error('[MAIN] Failed to restart Node instance:', error)
+      }
+    }
+  })
+}
