@@ -433,11 +433,17 @@ const aiHandlers = {
         return { success: false, error: 'Node not initialized' }
       }
 
-      // Get the default model ID (async method that loads from settings if needed)
-      const modelId = await nodeOneCore.aiAssistantModel.getDefaultModel()
-      if (!modelId) {
+      // Get the default model (returns model object, not just ID)
+      const model = await nodeOneCore.aiAssistantModel.getDefaultModel()
+      if (!model) {
         console.log('[AIHandler] No default model set')
         return { success: false, error: 'No default model set' }
+      }
+
+      // Extract model ID from model object
+      const modelId = typeof model === 'string' ? model : model.id
+      if (!modelId) {
+        throw new Error('Model object missing id property')
       }
 
       // Get the AI participant for this model
