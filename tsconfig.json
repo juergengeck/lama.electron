@@ -38,6 +38,7 @@
     "main/**/*.ts",
     "main/**/*.js",
     "lama-electron-shadcn.ts",
+    "electron-preload.ts",
     "@OneObjectInterfaces.d.ts",
     "@OneCoreTypes.d.ts"
   ],
@@ -49,7 +50,6 @@
     "packages/**/node_modules",
     "packages/**/*.ts",
     "OneDB",
-    "electron-preload.ts",
     "reference"
   ],
   "ts-node": {
