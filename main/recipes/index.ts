@@ -5,7 +5,10 @@
 
 import { addRecipeToRuntime } from '@refinio/one.core/lib/object-recipes.js'
 import { WordCloudSettingsRecipe } from '../core/one-ai/recipes/WordCloudSettingsRecipe.js'
-import TopicAnalysisRecipes from '../core/one-ai/recipes/ai-recipes.js'
+import { KeywordRecipe } from '../core/one-ai/recipes/KeywordRecipe.js'
+import { SubjectRecipe } from '../core/one-ai/recipes/SubjectRecipe.js'
+import { SummaryRecipe } from '../core/one-ai/recipes/SummaryRecipe.js'
+import { KeywordAccessStateRecipe } from '../core/one-ai/recipes/KeywordAccessState.js'
 // import { FeedForwardRecipes } from './feed-forward-recipes.js'
 
 // LLM Recipe - represents an AI model/assistant
@@ -140,7 +143,10 @@ const LamaRecipes = [
     LLMSettingsRecipe,
     GlobalLLMSettingsRecipe,
     WordCloudSettingsRecipe,
-    ...TopicAnalysisRecipes
+    SubjectRecipe,
+    KeywordRecipe,
+    SummaryRecipe,
+    KeywordAccessStateRecipe
     // ...FeedForwardRecipes
 ]
 

@@ -12,13 +12,9 @@ export const KeywordRecipe = {
             itemtype: { type: 'string', regexp: /^Keyword$/ }
         },
         {
-            itemprop: 'id',
+            itemprop: 'term',
             itemtype: { type: 'string' },
-            isId: true // This makes Keyword a versioned object
-        },
-        {
-            itemprop: 'text',
-            itemtype: { type: 'string' }
+            isId: true // Term IS the ID - deterministic lookup by term
         },
         {
             itemprop: 'frequency',

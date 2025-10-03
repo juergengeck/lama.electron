@@ -7,24 +7,23 @@ import type { OneUnversionedObjectTypes } from '@refinio/one.core/lib/recipes.js
 import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
 
 /**
- * Create a Keyword object using ONE.core unversioned storage
+ * Create a Keyword object using ONE.core versioned storage
  */
 export async function createKeyword(
   term: string,
-  category: string | null = null,
   frequency: number = 1,
-  score: number = 0,
-  subjects: any[] = []
+  score?: number,
+  subjects: string[] = []
 ) {
+  const now = Date.now();
   const keyword = {
     $type$: 'Keyword' as const,
     term: term.toLowerCase().trim(),
-    category,
     frequency,
+    subjects, // Array of subject ID strings
     score,
-    extractedAt: new Date().toISOString(),
-    lastSeen: new Date().toISOString(),
-    subjects: subjects as any // Array of SHA256Hash<Subject>
+    createdAt: now,
+    lastSeen: now
   };
 
   return await storeVersionedObject(keyword as any);
