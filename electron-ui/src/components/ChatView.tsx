@@ -24,7 +24,8 @@ export const ChatView = memo(function ChatView({
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
-  const { keywords } = useChatKeywords(conversationId, messages)
+  const { keywords, keywordsJustAppeared } = useChatKeywords(conversationId, messages)
+  const chatHeaderRef = useRef<HTMLDivElement>(null)
 
   // Debug: log messages received from hook
   console.log('[ChatView] Received from hook - messages:', messages?.length || 0, 'loading:', loading)
@@ -239,19 +240,21 @@ export const ChatView = memo(function ChatView({
 
   return (
     <Card className="h-full w-full flex flex-col">
-      <ChatHeader
-        conversationName={conversationName}
-        keywords={keywords}
-        messageCount={messages.length}
-        hasAI={hasAIParticipant}
-        showSummary={showSummary}
-        onToggleSummary={() => setShowSummary(!showSummary)}
-        onKeywordClick={(keyword) => {
-          console.log('[ChatView] Keyword clicked:', keyword)
-          setSelectedKeyword(keyword)
-          setShowKeywordDetail(true)
-        }}
-      />
+      <div ref={chatHeaderRef}>
+        <ChatHeader
+          conversationName={conversationName}
+          keywords={keywords}
+          messageCount={messages.length}
+          hasAI={hasAIParticipant}
+          showSummary={showSummary}
+          onToggleSummary={() => setShowSummary(!showSummary)}
+          onKeywordClick={(keyword) => {
+            console.log('[ChatView] Keyword clicked:', keyword)
+            setSelectedKeyword(keyword)
+            setShowKeywordDetail(true)
+          }}
+        />
+      </div>
 
       <CardContent className="flex-1 p-0 min-h-0 flex flex-col">
         {/* AI Summary Panel - Shows at top when visible */}
@@ -288,6 +291,8 @@ export const ChatView = memo(function ChatView({
           isAIProcessing={isAIProcessing}
           aiStreamingContent={aiStreamingContent}
           topicId={conversationId}
+          keywordsJustAppeared={keywordsJustAppeared}
+          chatHeaderRef={chatHeaderRef}
         />
       </CardContent>
     </Card>

@@ -28,6 +28,8 @@ interface MessageViewProps {
   isAIProcessing?: boolean // Show typing indicator when AI is processing
   aiStreamingContent?: string // Show partial AI response while streaming
   topicId?: string // Topic ID for context panel
+  keywordsJustAppeared?: boolean // Flag indicating keywords just appeared
+  chatHeaderRef?: React.RefObject<HTMLDivElement> // Ref to ChatHeader to measure height change
 }
 
 export function MessageView({
@@ -40,7 +42,9 @@ export function MessageView({
   participants = [],
   isAIProcessing = false,
   aiStreamingContent = '',
-  topicId
+  topicId,
+  keywordsJustAppeared = false,
+  chatHeaderRef
 }: MessageViewProps) {
   console.log('[MessageView] 🎨 Rendering with', messages.length, 'messages')
   if (messages.length > 0) {
@@ -94,6 +98,31 @@ export function MessageView({
     // Consider user at bottom if within 50px
     setIsUserScrolledUp(distanceFromBottom > 50)
   }
+
+  // Adjust scroll position when keywords appear to compensate for header height change
+  useEffect(() => {
+    if (keywordsJustAppeared && chatHeaderRef?.current && scrollAreaRef.current) {
+      console.log('[MessageView] Keywords just appeared, adjusting scroll position')
+
+      // Measure the height of the keyword line that just appeared
+      // We use requestAnimationFrame to wait for the DOM to update
+      requestAnimationFrame(() => {
+        if (!chatHeaderRef.current || !scrollAreaRef.current) return
+
+        // The keyword line is roughly 48px (py-2 + text height + border)
+        // But let's measure it to be precise
+        const headerHeight = chatHeaderRef.current.offsetHeight
+        console.log('[MessageView] Header height after keywords:', headerHeight)
+
+        // Adjust scroll to compensate for the header growth
+        // This keeps the visible content in the same position
+        const currentScroll = scrollAreaRef.current.scrollTop
+        // Approximate keyword line height is ~48px
+        const keywordLineHeight = 48
+        scrollAreaRef.current.scrollTop = currentScroll + keywordLineHeight
+      })
+    }
+  }, [keywordsJustAppeared, chatHeaderRef])
 
   // Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
   useEffect(() => {

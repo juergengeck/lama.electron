@@ -25,6 +25,9 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
   const requestCounter = useRef(0);
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
+  // Track previous keyword count for change detection
+  const prevKeywordCountRef = useRef(0);
+
   // Listen for keyword update events from backend
   useEffect(() => {
     if (!topicId || !window.electronAPI) return;
@@ -61,6 +64,10 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
       if (unsub) unsub();
     };
   }, [topicId]);
+
+  // Detect when keywords appear (0 -> N) and return flag
+  const keywordsJustAppeared = prevKeywordCountRef.current === 0 && keywords.length > 0;
+  prevKeywordCountRef.current = keywords.length;
 
   // Non-blocking keyword extraction
   useEffect(() => {
@@ -213,6 +220,7 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
     keywords,
     loading,
     error,
-    updateKeywordsForNewMessage
+    updateKeywordsForNewMessage,
+    keywordsJustAppeared
   };
 }
