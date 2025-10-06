@@ -758,42 +758,35 @@ Respond using the XML format described in the system prompt.`
 
       // Parse XML response and analysis
       const { parseXMLResponse } = await import('./xml-parser.js')
-      let userResponse = response // Fallback to full response if parsing fails
+      const parsed = parseXMLResponse(response)
+      const userResponse = parsed.text
       let analysis = null
       let xmlAttachmentHash = null
 
-      try {
-        const parsed = parseXMLResponse(response)
-        userResponse = parsed.text
-
-        // Convert parsed XML structure to the format expected by AI assistant
-        if (parsed.analysis.subjects.length > 0) {
-          const subject = parsed.analysis.subjects[0] // Take first subject for now
-          analysis = {
-            subject: {
-              name: subject.name,
-              description: subject.description,
-              keywords: subject.keywords.map(k => k.term),
-              isNew: subject.isNew
-            },
-            summaryUpdate: parsed.analysis.summaryUpdate || null
-          }
+      // Convert parsed XML structure to the format expected by AI assistant
+      if (parsed.analysis.subjects.length > 0) {
+        const subject = parsed.analysis.subjects[0] // Take first subject for now
+        analysis = {
+          subject: {
+            name: subject.name,
+            description: subject.description,
+            keywords: subject.keywords.map(k => k.term),
+            isNew: subject.isNew
+          },
+          summaryUpdate: parsed.analysis.summaryUpdate || null
         }
+      }
 
-        // Store XML response as attachment
-        if (topicId) {
-          const attachmentService = (await import('./attachment-service.js')).default
-          xmlAttachmentHash = await attachmentService.storeXMLAttachment(
-            topicId,
-            'temp-message-id', // Will be updated by caller
-            response,
-            'llm-response'
-          )
-          console.log(`[LLMManager] Stored XML response as attachment: ${xmlAttachmentHash}`)
-        }
-      } catch (error) {
-        console.warn('[LLMManager] XML parsing failed, using fallback:', error)
-        // Keep userResponse as the full response
+      // Store XML response as attachment
+      if (topicId) {
+        const attachmentService = (await import('./attachment-service.js')).default
+        xmlAttachmentHash = await attachmentService.storeXMLAttachment(
+          topicId,
+          'temp-message-id', // Will be updated by caller
+          response,
+          'llm-response'
+        )
+        console.log(`[LLMManager] Stored XML response as attachment: ${xmlAttachmentHash}`)
       }
 
       console.log(`[LLMManager] Chat with analysis completed in ${Date.now() - startTime}ms`)

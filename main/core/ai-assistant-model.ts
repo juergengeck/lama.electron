@@ -606,6 +606,15 @@ What can I help you with today?`
                   )
                   subjectId = subject?.id || null;
                   console.log(`[AIAssistantModel] Created new subject: ${name} with ID: ${subjectId}`)
+
+                  // Notify UI that a new subject was created
+                  for (const window of BrowserWindow.getAllWindows()) {
+                    window.webContents.send('subjects:updated', {
+                      topicId,
+                      subject: { id: subjectId, name, description, keywords }
+                    })
+                  }
+                  console.log(`[AIAssistantModel] Sent subjects:updated event to UI for topic ${topicId}`)
                 } else {
                   // Update existing subject or mark as active
                   const subjects = await (this.nodeOneCore as any).topicAnalysisModel.getSubjects(topicId)
@@ -615,6 +624,14 @@ What can I help you with today?`
                     if (existing.archived) {
                       await (this.nodeOneCore as any).topicAnalysisModel.unarchiveSubject(topicId, existing.id)
                       console.log(`[AIAssistantModel] Reactivated subject: ${name}`)
+
+                      // Notify UI that subject was reactivated
+                      for (const window of BrowserWindow.getAllWindows()) {
+                        window.webContents.send('subjects:updated', {
+                          topicId,
+                          subject: existing
+                        })
+                      }
                     }
                   }
                 }
@@ -626,6 +643,15 @@ What can I help you with today?`
                   await (this.nodeOneCore as any).topicAnalysisModel.addKeywordToSubject(topicId, keyword, subjectId)
                 }
                 console.log(`[AIAssistantModel] Added ${(result as any)?.analysis.subject.keywords?.length} keywords linked to subject ${subjectId}`)
+
+                // Notify UI that keywords have been updated
+                for (const window of BrowserWindow.getAllWindows()) {
+                  window.webContents.send('keywords:updated', {
+                    topicId,
+                    keywords: (result as any)?.analysis.subject.keywords
+                  })
+                }
+                console.log(`[AIAssistantModel] Sent keywords:updated event to UI for topic ${topicId}`)
               }
 
               // Process summary update if provided

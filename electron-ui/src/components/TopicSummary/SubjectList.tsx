@@ -35,6 +35,24 @@ export const SubjectList: React.FC<SubjectListProps> = ({
     loadSubjects();
   }, [topicId, showArchived]);
 
+  // Listen for subject update events from backend
+  useEffect(() => {
+    if (!topicId || !window.electronAPI) return;
+
+    const handleSubjectsUpdated = (data: any) => {
+      if (data.topicId === topicId) {
+        console.log('[SubjectList] Subjects updated event received for topic:', topicId);
+        // Re-fetch subjects
+        loadSubjects();
+      }
+    };
+
+    const unsub = window.electronAPI.on('subjects:updated', handleSubjectsUpdated);
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [topicId]);
+
   const loadSubjects = async () => {
     console.log('[SubjectList] 🔍 Loading subjects for topic:', topicId, showArchived ? '(including archived)' : '');
     setLoading(true);
