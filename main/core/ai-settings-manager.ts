@@ -13,14 +13,12 @@ import type { GlobalLLMSettings } from '../types/custom-objects.js'
 /**
  * Default AI settings
  */
-export const DEFAULT_AI_SETTINGS: GlobalLLMSettings = {
-  $type$: 'GlobalLLMSettings',
+export const DEFAULT_AI_SETTINGS = {
+  $type$: 'GlobalLLMSettings' as const,
   name: 'default', // Will be overridden with actual instance name
   defaultModelId: undefined,
   temperature: 0.7,
   maxTokens: 2048,
-  created: Date.now(),
-  modified: Date.now(),
   defaultProvider: 'ollama',
   autoSelectBestModel: false,
   preferredModelIds: [],
@@ -34,10 +32,9 @@ export const DEFAULT_AI_SETTINGS: GlobalLLMSettings = {
  * Create AI settings object
  * Uses versioned objects to maintain settings history
  */
-export function createAISettings(instanceName: string = 'default'): GlobalLLMSettings {
-  const now = Date.now()
+export function createAISettings(instanceName: string = 'default') {
   return {
-    $type$: 'GlobalLLMSettings',
+    $type$: 'GlobalLLMSettings' as const,
     name: instanceName,
     defaultProvider: 'ollama',
     autoSelectBestModel: false,
@@ -48,9 +45,7 @@ export function createAISettings(instanceName: string = 'default'): GlobalLLMSet
     systemPrompt: DEFAULT_AI_SETTINGS.systemPrompt,
     streamResponses: DEFAULT_AI_SETTINGS.streamResponses,
     autoSummarize: DEFAULT_AI_SETTINGS.autoSummarize,
-    enableMCP: DEFAULT_AI_SETTINGS.enableMCP,
-    created: now,
-    modified: now
+    enableMCP: DEFAULT_AI_SETTINGS.enableMCP
   }
 }
 
@@ -93,7 +88,7 @@ export class AISettingsManager {
         const result = await getObjectByIdHash(idHash)
         if (result && isAISettings(result.obj)) {
           console.log('[AISettingsManager] Found existing settings')
-          return result.obj
+          return result.obj as GlobalLLMSettings
         }
       } catch (error: unknown) {
         // Settings don't exist yet, will create below
@@ -106,12 +101,12 @@ export class AISettingsManager {
       const storeResult = await storeVersionedObject(defaultSettings)
 
       console.log('[AISettingsManager] Created default settings')
-      return storeResult.obj
+      return storeResult.obj as GlobalLLMSettings
     } catch (error: unknown) {
       console.error('[AISettingsManager] Error getting settings:', error)
       // Return defaults without storing
       const instanceName = this.nodeOneCore?.instanceName || 'default'
-      return createAISettings(instanceName)
+      return createAISettings(instanceName) as GlobalLLMSettings
     }
   }
 
@@ -133,8 +128,7 @@ export class AISettingsManager {
       // Create new version with updated model ID
       const updatedSettings = {
         ...settings,
-        defaultModelId: modelId ?? undefined,
-        modified: Date.now()
+        defaultModelId: modelId ?? undefined
       }
 
       // Remove metadata that shouldn't be in new version
@@ -177,8 +171,7 @@ export class AISettingsManager {
       // Create new version with updates
       const updatedSettings = {
         ...currentSettings,
-        ...updates,
-        modified: Date.now()
+        ...updates
       }
 
       // Remove metadata that shouldn't be in new version

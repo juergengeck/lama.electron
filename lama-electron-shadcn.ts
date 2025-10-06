@@ -107,7 +107,7 @@ function createWindow(): void {
     webPreferences: {
       nodeIntegration: false,  // Disable Node in renderer for cleaner browser environment
       contextIsolation: true,   // Enable context isolation for security
-      preload: path.join(__dirname, 'dist', 'electron-preload.js'),
+      preload: path.join(__dirname, 'electron-preload.js'),
       webSecurity: true,  // Must be true for preload to work
       partition: 'persist:lama'  // Use persistent partition for IndexedDB
     },
@@ -234,8 +234,10 @@ function startViteServer(): Promise<void> {
     }).on('error', () => {
       // Start Vite server
       console.log(`[Main-${process.pid}] Starting Vite dev server...`);
+      // __dirname is dist/ after compilation, go up one level to project root
+      const projectRoot = path.join(__dirname, '..');
       viteProcess = spawn('npm', ['run', 'dev'], {
-        cwd: path.join(__dirname, 'electron-ui'),
+        cwd: path.join(projectRoot, 'electron-ui'),
         shell: true,
         stdio: 'pipe',
         env: { ...process.env }

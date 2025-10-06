@@ -21,11 +21,13 @@ export interface Subject {
  * Keyword extracted from message content
  */
 export interface Keyword {
-  $type$: 'Keyword';
-  id: string;           // Hash of the keyword text
-  text: string;         // The actual keyword
-  frequency: number;    // How often it appears
-  subjects: string[];   // Subject IDs this keyword belongs to
+  $type$?: 'Keyword';
+  id?: string;          // Hash of the keyword text
+  term?: string;        // The actual keyword term (from backend)
+  text?: string;        // The actual keyword text (alternative field)
+  frequency?: number;   // How often it appears
+  subjects?: string[];  // Subject IDs this keyword belongs to
+  score?: number;       // Relevance score
 }
 
 /**

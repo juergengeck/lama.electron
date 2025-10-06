@@ -212,21 +212,7 @@ Return format: ["keyword1", "keyword2", ...]`;
       content: keywordPrompt
     }], modelId); // Use determined model
 
-    let keywords: string[] = [];
-    try {
-      keywords = JSON.parse(keywordResponse);
-    } catch (e) {
-      console.warn('[TopicAnalysis] Failed to parse keyword JSON, using fallback');
-      // Fallback: extract from text
-      keywords = String(keywordResponse).match(/"([^"]+)"/g)?.map(k => k.replace(/"/g, '')) || [];
-    }
-
-    // Store keywords in ONE.core
-    for (const keyword of keywords.slice(0, 15)) {
-      await model.createKeyword(topicId, keyword, null, 1, 0.8);
-    }
-
-    // Identify subjects using LLM
+    // Identify subjects using LLM (subjects contain keywords)
     console.log('[TopicAnalysis] Identifying subjects with LLM...');
     const subjectPrompt = `Analyze this conversation and identify the main subjects/themes being discussed.
 For each subject, provide:
@@ -248,22 +234,49 @@ ${String(conversationText).substring(0, 3000)}`;
     try {
       subjects = JSON.parse(subjectResponse);
     } catch (e) {
-      console.warn('[TopicAnalysis] Failed to parse subject JSON, creating default subject');
+      console.warn('[TopicAnalysis] Failed to parse subject JSON, extracting keywords for fallback');
+      // Extract keywords for fallback
+      let fallbackKeywords: string[] = [];
+      try {
+        fallbackKeywords = JSON.parse(keywordResponse);
+      } catch (e2) {
+        fallbackKeywords = String(keywordResponse).match(/"([^"]+)"/g)?.map(k => k.replace(/"/g, '')) || [];
+      }
       subjects = [{
-        keywords: keywords.slice(0, 3),
+        keywords: fallbackKeywords.slice(0, 3),
         description: 'Main conversation topic'
       }];
     }
 
-    // Store subjects in ONE.core
+    // Store subjects first, then create keywords with subject references
+    const createdSubjects = [];
     for (const subject of subjects.slice(0, 5)) {
+      const subjectId = subject.keywords.join('+');
       await model.createSubject(
         topicId,
         subject.keywords,
-        subject.keywords.join('+'),
+        subjectId,
         subject.description,
         0.8
       );
+      createdSubjects.push({ id: subjectId, keywords: subject.keywords });
+    }
+
+    // Now create keywords with subject references
+    const keywordToSubjects = new Map<string, string[]>();
+    for (const subject of createdSubjects) {
+      for (const keyword of subject.keywords) {
+        const normalizedKeyword = keyword.toLowerCase().trim();
+        if (!keywordToSubjects.has(normalizedKeyword)) {
+          keywordToSubjects.set(normalizedKeyword, []);
+        }
+        keywordToSubjects.get(normalizedKeyword)!.push(subject.id);
+      }
+    }
+
+    // Create each unique keyword with its subject references
+    for (const [keyword, subjectIds] of keywordToSubjects) {
+      await model.createKeywordWithSubjects(topicId, keyword, subjectIds, 1, 0.8);
     }
 
     // Generate summary using LLM
@@ -921,6 +934,53 @@ Example: ["blockchain", "ethereum", "smartcontract", "defi", "wallet"]`;
   }
 }
 
+/**
+ * Get all keywords for a topic
+ */
+async function getKeywords(event: IpcMainInvokeEvent, params: { topicId: string; limit?: number }): Promise<any> {
+  try {
+    console.log('[TopicAnalysis] 🔍 Getting keywords for topic:', params.topicId, 'limit:', params.limit);
+
+    const model: any = await initializeModel();
+    const keywords: any = await model.getKeywords(params.topicId);
+
+    console.log('[TopicAnalysis] 🔍 Raw keywords from model:', keywords.length, 'keywords');
+    if (keywords.length > 0) {
+      console.log('[TopicAnalysis] 🔍 First few keywords:', keywords.slice(0, 3).map((k: any) => k.term || k));
+    }
+
+    // Keywords come ONLY from LLM responses via chatWithAnalysis()
+    // Never extract keywords on-demand - that's wasteful and wrong
+    // If no keywords exist, return empty array
+
+    // Apply limit if specified
+    const limitedKeywords = params.limit ? keywords.slice(0, params.limit) : keywords;
+
+    console.log('[TopicAnalysis] ✅ Retrieved keywords:', {
+      topicId: params.topicId,
+      keywordCount: limitedKeywords.length,
+      limit: params.limit,
+      keywords: limitedKeywords.map((k: any) => k.term || k)
+    });
+
+    return {
+      success: true,
+      data: {
+        keywords: limitedKeywords
+      }
+    };
+  } catch (error) {
+    console.error('[TopicAnalysis] Error getting keywords:', error);
+    return {
+      success: false,
+      error: (error as Error).message,
+      data: {
+        keywords: []
+      }
+    };
+  }
+}
+
 // Export all handlers
 export default {
   analyzeMessages,
@@ -931,5 +991,6 @@ export default {
   mergeSubjects,
   getConversationRestartContext,
   extractRealtimeKeywords,
-  extractConversationKeywords
+  extractConversationKeywords,
+  getKeywords
 };

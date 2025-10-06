@@ -49,6 +49,7 @@ class LLMManager extends EventEmitter {
   mcpClients: Map<string, any>;
   mcpTools: Map<string, any>;
   isInitialized: boolean;
+  ollamaConfig: any; // Cached Ollama configuration
 
   constructor() {
 
@@ -58,9 +59,76 @@ class LLMManager extends EventEmitter {
     this.mcpClients = new Map()
     this.mcpTools = new Map()
     this.isInitialized = false
+    this.ollamaConfig = null
 
     // Methods are already bound as class methods, no need for explicit binding
 }
+
+  /**
+   * Load active Ollama configuration from ONE.core
+   */
+  async loadOllamaConfig(): Promise<any> {
+    try {
+      const { handleGetOllamaConfig } = await import('../ipc/handlers/llm-config.js')
+      const response: any = await handleGetOllamaConfig({} as any, {})
+
+      if (response.success && response.config) {
+        this.ollamaConfig = response.config
+        console.log('[LLMManager] Loaded Ollama config:', {
+          modelType: this.ollamaConfig.modelType,
+          baseUrl: this.ollamaConfig.baseUrl,
+          hasAuth: this.ollamaConfig.hasAuthToken
+        })
+        return this.ollamaConfig
+      } else {
+        // No config found, use localhost default
+        this.ollamaConfig = {
+          modelType: 'local',
+          baseUrl: 'http://localhost:11434',
+          authType: 'none',
+          hasAuthToken: false
+        }
+        console.log('[LLMManager] No Ollama config found, using localhost default')
+        return this.ollamaConfig
+      }
+    } catch (error: any) {
+      console.error('[LLMManager] Failed to load Ollama config:', error)
+      // Fallback to localhost
+      this.ollamaConfig = {
+        modelType: 'local',
+        baseUrl: 'http://localhost:11434',
+        authType: 'none',
+        hasAuthToken: false
+      }
+      return this.ollamaConfig
+    }
+  }
+
+  /**
+   * Get Ollama base URL from config
+   */
+  getOllamaBaseUrl(): string {
+    return this.ollamaConfig?.baseUrl || 'http://localhost:11434'
+  }
+
+  /**
+   * Get auth headers if authentication is configured
+   */
+  async getOllamaAuthHeaders(): Promise<Record<string, string> | undefined> {
+    if (!this.ollamaConfig?.hasAuthToken) {
+      return undefined
+    }
+
+    try {
+      // If auth is configured, we need to decrypt the token
+      // For now, return undefined - actual decryption would happen in the IPC handler
+      // This is handled by the ollama service when making requests
+      return undefined
+    } catch (error: any) {
+      console.error('[LLMManager] Failed to get auth headers:', error)
+      return undefined
+    }
+  }
 
   /**
    * Pre-warm the LLM connection to reduce cold start delays
@@ -68,12 +136,22 @@ class LLMManager extends EventEmitter {
   async preWarmConnection(): Promise<any> {
     console.log('[LLMManager] Pre-warming LLM connection...')
     try {
+      // Get Ollama base URL from config
+      const baseUrl = this.getOllamaBaseUrl()
+      const authHeaders = await this.getOllamaAuthHeaders()
+
       // Send a minimal ping to Ollama to establish connection
       // Use first available model for pre-warming
       const modelToWarm = Array.from(this.models.keys())[0] || 'llama3.2:latest'
-      const response: any = await fetch('http://localhost:11434/api/generate', {
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(authHeaders || {})
+      }
+
+      const response: any = await fetch(`${baseUrl}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           model: modelToWarm,
           prompt: 'Hi',
@@ -85,7 +163,7 @@ class LLMManager extends EventEmitter {
       })
 
       if (response.ok) {
-        console.log('[LLMManager] ✅ LLM connection pre-warmed successfully')
+        console.log('[LLMManager] ✅ LLM connection pre-warmed successfully to', baseUrl)
       } else {
         console.log('[LLMManager] Pre-warm response not OK:', response.status)
       }
@@ -107,13 +185,16 @@ class LLMManager extends EventEmitter {
       const { cancelAllOllamaRequests } = await import('./ollama.js')
       cancelAllOllamaRequests()
       console.log('[LLMManager] Cleared any pending Ollama requests')
-      
+
+      // Load Ollama network configuration
+      await this.loadOllamaConfig()
+
       // Load saved settings
       await this.loadSettings()
-      
+
       // Register available models
       await this.registerModels()
-      
+
       // Initialize MCP servers
       await this.initializeMCP()
 
@@ -124,7 +205,7 @@ class LLMManager extends EventEmitter {
       this.preWarmConnection().catch(err => {
         console.log('[LLMManager] Pre-warm failed (non-critical):', err.message)
       })
-      
+
       // Immediate verification after initialization
       console.log('[LLMManager] POST-INIT VERIFICATION:')
       console.log(`  - mcpTools.size: ${this.mcpTools.size}`)
@@ -580,7 +661,7 @@ class LLMManager extends EventEmitter {
    * Chat with response and topic analysis in a single LLM call
    * Returns response immediately and processes analysis in background
    */
-  async chatWithAnalysis(messages: any, modelId = null, options: any = {}): Promise<unknown> {
+  async chatWithAnalysis(messages: any, modelId = null, options: any = {}, topicId?: string): Promise<unknown> {
     const startTime = Date.now()
 
     try {
@@ -592,44 +673,61 @@ class LLMManager extends EventEmitter {
         throw new Error('No model available')
       }
 
-      console.log(`[LLMManager] Chat with analysis using ${model.id}`)
+      console.log(`[LLMManager] Chat with analysis using ${model.id}, topicId: ${topicId}`)
+
+      // Get XML system prompt for this model
+      const { getActiveSystemPrompt } = await import('./system-prompt-manager.js')
+      const xmlSystemPrompt = await getActiveSystemPrompt(modelId)
 
       // Build enhanced prompt that requests both response and analysis
-      const conversationContext: any[] = messages.slice(-10).map((m: any) =>
+      const conversationContext: string = messages.slice(-10).map((m: any) =>
         `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
       ).join('\n')
 
       const lastUserMessage = messages[messages.length - 1]?.content || ''
 
-      const analysisPrompt = `You are LAMA, a private AI assistant with access to all owner's conversations. Respond to the user naturally, then provide analysis.
+      const analysisPrompt = `${xmlSystemPrompt}
 
 Recent conversation:
 ${conversationContext}
 
-Provide your response in this exact format:
-[RESPONSE]
-Your natural response to the user here
-[/RESPONSE]
+User's latest message: ${lastUserMessage}
 
-[ANALYSIS]
-keywords: keyword1, keyword2, keyword3 (max 10 most relevant keywords)
-subject: subject-name | description of what this subject is about
-new_subject: yes/no (whether this is a new subject not previously discussed)
-summary_update: brief update about how this message changes the conversation summary (or "none" if no update needed)
-[/ANALYSIS]
-
-IMPORTANT:
-- Your response should be natural and helpful
-- Focus on keywords that capture the essence of the conversation
-- Even short messages can contain critical information
-- Identify the current subject being discussed
-- Provide summary updates for significant conversation developments`
+Respond using the XML format described in the system prompt.`
 
       // Replace the last message with our enhanced prompt
       const enhancedMessages = [
         ...messages.slice(0, -1),
         { role: 'user', content: analysisPrompt }
       ]
+
+      // Store the query as XML attachment
+      let queryAttachmentHash = null
+      if (topicId) {
+        try {
+          const attachmentService = (await import('./attachment-service.js')).default
+
+          // Format query as XML (escape special characters)
+          const escapeXML = (str: string) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+          const queryXML = `<llmQuery>
+  <userMessage>${escapeXML(lastUserMessage)}</userMessage>
+  <context topicId="${topicId}" messageCount="${messages.length}">
+    <conversationHistory>${escapeXML(conversationContext)}</conversationHistory>
+  </context>
+</llmQuery>`
+
+          queryAttachmentHash = await attachmentService.storeXMLAttachment(
+            topicId,
+            'temp-user-message-id', // Will be updated by caller
+            queryXML,
+            'llm-query'
+          )
+          console.log(`[LLMManager] Stored XML query as attachment: ${queryAttachmentHash}`)
+        } catch (error) {
+          console.warn('[LLMManager] Failed to store query attachment:', error)
+        }
+      }
 
       // Track what we've streamed to avoid duplicates
       let streamedLength = 0
@@ -641,16 +739,16 @@ IMPORTANT:
         onStream: options.onStream ? (chunk: any) => {
           fullResponse += chunk
 
-          // Extract just the response part for streaming
-          const responseMatch = String(fullResponse).match(/\[RESPONSE\]([\s\S]*?)(?:\[\/RESPONSE\]|$)/)
+          // Extract just the response part for streaming (XML format)
+          const responseMatch = String(fullResponse).match(/<response>([\s\S]*?)(?:<\/response>|$)/)
           if (responseMatch) {
             const responseText = responseMatch[1]
             // Only stream new content
             if (responseText.length > streamedLength) {
               const newContent = String(responseText).substring(streamedLength)
               streamedLength = responseText.length
-              // Stream the new content unless it contains analysis markers
-              if (!newContent.includes('[/RESPONSE]') && !newContent.includes('[ANALYSIS]')) {
+              // Stream the new content unless it contains XML closing tags
+              if (!newContent.includes('</response>') && !newContent.includes('<analysis>')) {
                 options.onStream(newContent)
               }
             }
@@ -658,45 +756,44 @@ IMPORTANT:
         } : undefined
       })
 
-      // Parse response and analysis
-      const responseMatch = String(response).match(/\[RESPONSE\]([\s\S]*?)\[\/RESPONSE\]/)
-      const analysisMatch = String(response).match(/\[ANALYSIS\]([\s\S]*?)\[\/ANALYSIS\]/)
-
+      // Parse XML response and analysis
+      const { parseXMLResponse } = await import('./xml-parser.js')
       let userResponse = response // Fallback to full response if parsing fails
       let analysis = null
+      let xmlAttachmentHash = null
 
-      if (responseMatch) {
-        userResponse = responseMatch[1].trim()
-      }
+      try {
+        const parsed = parseXMLResponse(response)
+        userResponse = parsed.text
 
-      if (analysisMatch) {
-        const analysisText = analysisMatch[1].trim()
-        const keywordsLine = String(analysisText).match(/keywords:\s*(.+)/)
-        const subjectLine = String(analysisText).match(/subject:\s*(.+)/)
-        const newSubjectLine = String(analysisText).match(/new_subject:\s*(.+)/)
-        const summaryUpdateLine = String(analysisText).match(/summary_update:\s*(.+)/)
-
-        analysis = {
-          keywords: keywordsLine ? keywordsLine[1].split(',').map(k => k.trim()).filter(k => k) : [],
-          subject: null,
-          summaryUpdate: null
-        }
-
-        if (subjectLine) {
-          const [name, ...descParts] = subjectLine[1].split('|')
-          analysis.subject = {
-            name: name.trim(),
-            description: descParts.join('|').trim(),
-            isNew: newSubjectLine ? newSubjectLine[1].trim().toLowerCase() === 'yes' : false
+        // Convert parsed XML structure to the format expected by AI assistant
+        if (parsed.analysis.subjects.length > 0) {
+          const subject = parsed.analysis.subjects[0] // Take first subject for now
+          analysis = {
+            subject: {
+              name: subject.name,
+              description: subject.description,
+              keywords: subject.keywords.map(k => k.term),
+              isNew: subject.isNew
+            },
+            summaryUpdate: parsed.analysis.summaryUpdate || null
           }
         }
 
-        if (summaryUpdateLine) {
-          const updateText = summaryUpdateLine[1].trim()
-          if (updateText.toLowerCase() !== 'none') {
-            analysis.summaryUpdate = updateText
-          }
+        // Store XML response as attachment
+        if (topicId) {
+          const attachmentService = (await import('./attachment-service.js')).default
+          xmlAttachmentHash = await attachmentService.storeXMLAttachment(
+            topicId,
+            'temp-message-id', // Will be updated by caller
+            response,
+            'llm-response'
+          )
+          console.log(`[LLMManager] Stored XML response as attachment: ${xmlAttachmentHash}`)
         }
+      } catch (error) {
+        console.warn('[LLMManager] XML parsing failed, using fallback:', error)
+        // Keep userResponse as the full response
       }
 
       console.log(`[LLMManager] Chat with analysis completed in ${Date.now() - startTime}ms`)
@@ -704,22 +801,27 @@ IMPORTANT:
       console.log(`[LLMManager] Raw LLM response preview: ${String(response).substring(0, 200)}...`)
       console.log(`[LLMManager] Extracted user response length: ${userResponse.length}`)
       console.log(`[LLMManager] Extracted user response preview: ${String(userResponse).substring(0, 100)}...`)
-      console.log(`[LLMManager] Response match found: ${responseMatch ? 'YES' : 'NO'}`)
-      console.log(`[LLMManager] Analysis match found: ${analysisMatch ? 'YES' : 'NO'}`)
-      if (analysis) {
-        console.log(`[LLMManager] Extracted ${analysis.keywords.length} keywords, subject: ${analysis.subject?.name || 'none'}, summaryUpdate: ${analysis.summaryUpdate ? 'YES' : 'NO'}`)
+      if (analysis?.subject) {
+        console.log(`[LLMManager] Subject: ${analysis.subject.name}, keywords: [${analysis.subject.keywords?.join(', ')}], isNew: ${analysis.subject.isNew}, summaryUpdate: ${analysis.summaryUpdate ? 'YES' : 'NO'}`)
+      }
+      if (queryAttachmentHash || xmlAttachmentHash) {
+        console.log(`[LLMManager] XML attachments - query: ${queryAttachmentHash}, response: ${xmlAttachmentHash}`)
       }
 
       return {
         response: userResponse,
-        analysis
+        analysis,
+        topicId, // Pass topicId through to the caller
+        queryAttachmentHash, // Hash of the XML query attachment
+        xmlAttachmentHash // Hash of the XML response attachment
       }
     } catch (error) {
       console.error('[LLMManager] Chat with analysis error:', error)
       // Fallback to regular chat if analysis fails
       return {
         response: await this.chat(messages, modelId, options),
-        analysis: null
+        analysis: null,
+        topicId
       }
     }
   }

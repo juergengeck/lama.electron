@@ -56,9 +56,24 @@ export async function createProfileAndSomeoneForPerson(personId: any, leuteModel
     const someone = await SomeoneModel.constructWithNewSomeone(someoneId, profile.idHash)
     console.log(`[ContactCreationProper]   ├─ Someone created: ${someone.idHash.toString().substring(0, 8)}`)
 
-    // 3. Add to contacts (idempotent)
+    // 3. Add to contacts (idempotent) - manual update to avoid frozen object error
     console.log('[ContactCreationProper]   ├─ Adding to contacts list...')
-    await leuteModel.addSomeoneElse(someone.idHash)
+    const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
+    const { getObjectByIdHash, storeVersionObjectAsChange } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+
+    const leuteIdHash = await calculateIdHashOfObj({
+      $type$: 'Leute',
+      appId: 'one.leute'
+    } as any)
+
+    const leuteResult: any = await getObjectByIdHash(leuteIdHash as any)
+    const updatedLeute = {
+      ...leuteResult.obj,
+      other: [...new Set([...leuteResult.obj.other, someone.idHash])]
+    }
+
+    await storeVersionObjectAsChange(updatedLeute as any)
+    await (leuteModel as any).loadLatestVersion()
     console.log('[ContactCreationProper]   └─ ✅ Contact creation complete!')
 
     return someone

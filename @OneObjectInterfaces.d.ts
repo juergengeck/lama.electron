@@ -9,6 +9,7 @@ declare module '@OneObjectInterfaces' {
     // Add our custom versioned object types
     export interface OneVersionedObjectInterfaces {
         GlobalLLMSettings: GlobalLLMSettings;
+        Keyword: Keyword;
     }
 
     // Add our custom ID object types
@@ -23,8 +24,6 @@ declare module '@OneObjectInterfaces' {
         defaultModelId?: string;
         temperature?: number;
         maxTokens?: number;
-        created: number;
-        modified: number;
         defaultProvider: string;
         autoSelectBestModel: boolean;
         preferredModelIds: string[];
@@ -44,6 +43,15 @@ declare module '@OneObjectInterfaces' {
         temperature?: number;
         maxTokens?: number;
         contextSize?: number;
-        isAI: boolean;
+    }
+
+    export interface Keyword {
+        $type$: 'Keyword';
+        term: string; // ID property - normalized keyword term
+        frequency: number;
+        subjects: string[]; // Array of subject IDs
+        score?: number;
+        createdAt: number; // Unix timestamp
+        lastSeen: number; // Unix timestamp
     }
 }

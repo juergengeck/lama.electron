@@ -25,9 +25,11 @@ import { registerContactHandlers } from './handlers/contacts.js';
 import * as topicHandlers from './handlers/topics.js';
 import topicAnalysisHandlers from './handlers/topic-analysis.js';
 import * as wordCloudSettingsHandlers from './handlers/word-cloud-settings.js';
+import keywordDetailHandlers from './handlers/keyword-detail.js';
 import auditHandlers from './handlers/audit.js';
 import exportHandlers from './handlers/export.js';
 import feedForwardHandlers from './handlers/feed-forward.js';
+import { registerLlmConfigHandlers } from './handlers/llm-config.js';
 
 // Node error type
 interface NodeError extends Error {
@@ -187,6 +189,9 @@ class IPCController {
     this.handle('ai:ensureDefaultChats', aiHandlers['ai:ensureDefaultChats']);
     this.handle('ai:getDefaultModel', aiHandlers['ai:getDefaultModel']);
 
+    // LLM Configuration handlers (network Ollama support)
+    registerLlmConfigHandlers();
+
     // Attachment handlers
     this.handle('attachment:store', attachmentHandlers.storeAttachment);
     this.handle('attachment:get', attachmentHandlers.getAttachment);
@@ -211,11 +216,16 @@ class IPCController {
     this.handle('topicAnalysis:mergeSubjects', topicAnalysisHandlers.mergeSubjects);
     this.handle('topicAnalysis:extractRealtimeKeywords', topicAnalysisHandlers.extractRealtimeKeywords);
     this.handle('topicAnalysis:extractConversationKeywords', topicAnalysisHandlers.extractConversationKeywords);
+    this.handle('topicAnalysis:getKeywords', topicAnalysisHandlers.getKeywords);
 
     // Word Cloud Settings handlers
     this.handle('wordCloudSettings:getSettings', wordCloudSettingsHandlers.getWordCloudSettings);
     this.handle('wordCloudSettings:updateSettings', wordCloudSettingsHandlers.updateWordCloudSettings);
     this.handle('wordCloudSettings:resetSettings', wordCloudSettingsHandlers.resetWordCloudSettings);
+
+    // Keyword Detail handlers
+    this.handle('keywordDetail:getKeywordDetails', keywordDetailHandlers.getKeywordDetails);
+    this.handle('keywordDetail:updateKeywordAccessState', keywordDetailHandlers.updateKeywordAccessState);
 
     // Export handlers
     this.handle('export:file', exportHandlers.exportFile);
@@ -234,6 +244,7 @@ class IPCController {
 
     // ONE.core handlers
     this.handle('onecore:initializeNode', oneCoreHandlers.initializeNode);
+    this.handle('onecore:restartNode', oneCoreHandlers.restartNode);
     this.handle('onecore:createLocalInvite', oneCoreHandlers.createLocalInvite);
     this.handle('onecore:createBrowserPairingInvite', oneCoreHandlers.createBrowserPairingInvite);
     this.handle('onecore:getBrowserPairingInvite', oneCoreHandlers.getBrowserPairingInvite);

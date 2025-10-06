@@ -14,7 +14,9 @@ interface Message {
 }
 
 export function useChatKeywords(topicId: string, messages: Message[] = []) {
-  const [keywords, setKeywords] = useState<string[]>([]);
+  console.log('[useChatKeywords] Hook called with topicId:', topicId, 'messages:', messages.length);
+
+  const [keywords, setKeywords] = useState<any[]>([]); // Changed from string[] to any[] to hold full keyword objects
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,6 +24,43 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
   const extractionInProgress = useRef(false);
   const requestCounter = useRef(0);
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Listen for keyword update events from backend
+  useEffect(() => {
+    if (!topicId || !window.electronAPI) return;
+
+    const handleKeywordsUpdated = (data: any) => {
+      if (data.topicId === topicId) {
+        console.log('[useChatKeywords] Keywords updated event received for topic:', topicId);
+        // Trigger a refresh by incrementing request counter
+        requestCounter.current++;
+        // Re-fetch keywords immediately
+        const fetchKeywords = async () => {
+          try {
+            const response = await window.electronAPI.invoke('topicAnalysis:getKeywords', {
+              topicId,
+              limit: 15
+            });
+            if (response.success && response.data?.keywords) {
+              // Keep full keyword objects with subjects array
+              const keywords = response.data.keywords;
+              const keywordTerms = keywords.map((k: any) => k.term || k);
+              console.log('[useChatKeywords] Refreshed keywords after update:', keywordTerms.length);
+              setKeywords(keywords);
+            }
+          } catch (err) {
+            console.error('[useChatKeywords] Error refreshing keywords:', err);
+          }
+        };
+        fetchKeywords();
+      }
+    };
+
+    const unsub = window.electronAPI.on('keywords:updated', handleKeywordsUpdated);
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [topicId]);
 
   // Non-blocking keyword extraction
   useEffect(() => {
@@ -68,10 +107,14 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
             // Only update if this is still the latest request
             if (currentRequest === requestCounter.current) {
               if (response.success && response.data?.keywords) {
-                const keywordTerms = response.data.keywords.map((k: any) => k.term || k);
-                console.log('[useChatKeywords] Keywords loaded from storage:', keywordTerms.length);
-                setKeywords(keywordTerms);
+                // Keep full keyword objects with subjects array
+                const keywords = response.data.keywords;
+                const keywordTerms = keywords.map((k: any) => k.term || k);
+                console.log('[useChatKeywords] ✅ Keywords loaded from storage:', keywordTerms.length, 'keywords:', keywordTerms);
+                setKeywords(keywords);
                 setError(null);
+              } else {
+                console.log('[useChatKeywords] ❌ No keywords in response:', response);
               }
             } else {
               console.log('[useChatKeywords] Ignoring stale response');

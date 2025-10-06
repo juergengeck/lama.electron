@@ -37,10 +37,10 @@ class AttachmentService {
   async storeAttachment(data: any, metadata: any): Promise<any> {
     try {
       // Load Node.js platform first
-      await import('../../node_modules/@refinio/one.core/lib/system/load-nodejs.js')
+      await import('@refinio/one.core/lib/system/load-nodejs.js')
       
       // Import ONE.core functions
-      const { storeArrayBufferAsBlob } = await import('../../node_modules/@refinio/one.core/lib/storage-blob.js')
+      const { storeArrayBufferAsBlob } = await import('@refinio/one.core/lib/storage-blob.js')
       
       // Convert Buffer to ArrayBuffer
       const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
@@ -79,10 +79,10 @@ class AttachmentService {
   async getAttachment(hash: any): Promise<any> {
     try {
       // Load Node.js platform first
-      await import('../../node_modules/@refinio/one.core/lib/system/load-nodejs.js')
+      await import('@refinio/one.core/lib/system/load-nodejs.js')
       
       // Import ONE.core functions
-      const { readBlobAsArrayBuffer } = await import('../../node_modules/@refinio/one.core/lib/storage-blob.js')
+      const { readBlobAsArrayBuffer } = await import('@refinio/one.core/lib/storage-blob.js')
       
       // Get metadata
       const metadata = this.attachments.get(hash)
@@ -136,11 +136,11 @@ class AttachmentService {
     try {
       const files = await fs.readdir(this.tempDir)
       const now = Date.now()
-      
+
       for (const file of files) {
         const filePath = path.join(this.tempDir, file)
         const stats = await fs.stat(filePath)
-        
+
         // Delete files older than 1 hour
         if (now - stats.mtimeMs > 3600000) {
           await fs.unlink(filePath)
@@ -149,6 +149,104 @@ class AttachmentService {
       }
     } catch (error) {
       console.error('[AttachmentService] Cleanup error:', error)
+    }
+  }
+
+  /**
+   * Store XML message as attachment (BLOB for >1KB, inline for ≤1KB)
+   * @param {string} topicId - Topic ID
+   * @param {string} messageId - Message ID
+   * @param {string} xmlString - XML content
+   * @param {string} format - 'llm-query' | 'llm-response'
+   * @returns {Promise<string>} Attachment hash (SHA256IdHash)
+   */
+  async storeXMLAttachment(
+    topicId: string,
+    messageId: string,
+    xmlString: string,
+    format: 'llm-query' | 'llm-response'
+  ): Promise<any> {
+    try {
+      // Load Node.js platform first
+      await import('@refinio/one.core/lib/system/load-nodejs.js')
+
+      // Import ONE.core functions
+      const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+      const { storeArrayBufferAsBlob } = await import('@refinio/one.core/lib/storage-blob.js')
+
+      const size = Buffer.byteLength(xmlString, 'utf8')
+
+      if (size <= 1024) {
+        // Inline storage for small XML
+        const attachment = {
+          $type$: 'XMLMessageAttachment' as const,
+          topicId,
+          messageId,
+          xmlContent: xmlString,
+          format,
+          version: 1,
+          createdAt: Date.now(),
+          size
+        }
+
+        const result = await storeVersionedObject(attachment)
+        return result.hash
+      } else {
+        // BLOB storage for large XML
+        const buffer = Buffer.from(xmlString, 'utf8')
+        const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+        const blobResult = await storeArrayBufferAsBlob(arrayBuffer)
+
+        const attachment = {
+          $type$: 'XMLMessageAttachment' as const,
+          topicId,
+          messageId,
+          xmlBlob: blobResult.hash,
+          format,
+          version: 1,
+          createdAt: Date.now(),
+          size
+        }
+
+        const result = await storeVersionedObject(attachment)
+        return result.hash
+      }
+    } catch (error) {
+      console.error('[AttachmentService] Failed to store XML attachment:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Retrieve XML attachment content
+   * @param {string} attachmentHash - Attachment hash
+   * @returns {Promise<string>} XML content
+   */
+  async retrieveXMLAttachment(attachmentHash: string): Promise<string> {
+    try {
+      // Load Node.js platform first
+      await import('@refinio/one.core/lib/system/load-nodejs.js')
+
+      // Import ONE.core functions
+      const { getObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
+      const { readBlobAsArrayBuffer } = await import('@refinio/one.core/lib/storage-blob.js')
+
+      const attachment = await getObject(attachmentHash as any) as any
+
+      if (attachment.xmlContent) {
+        // Inline storage
+        return attachment.xmlContent
+      } else if (attachment.xmlBlob) {
+        // BLOB storage
+        const arrayBuffer = await readBlobAsArrayBuffer(attachment.xmlBlob)
+        const buffer = Buffer.from(arrayBuffer)
+        return buffer.toString('utf8')
+      } else {
+        throw new Error('XMLMessageAttachment has no content (neither xmlContent nor xmlBlob)')
+      }
+    } catch (error) {
+      console.error(`[AttachmentService] Failed to retrieve XML attachment ${attachmentHash}:`, error)
+      throw error
     }
   }
 }

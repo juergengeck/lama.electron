@@ -354,15 +354,13 @@ const chatHandlers = {
         const senderId = msg.sender || msg.author || nodeOneCore.ownerId
 
         // Check if sender is an AI contact and get their name
+        // ALWAYS delegate to AIAssistantModel - it owns AI participant identification
         let isAI = false
         let senderName = 'Unknown'
 
-        console.log(`[ChatHandler] AI model check - aiAssistantModel: ${!!nodeOneCore.aiAssistantModel}`)
+        // AIAssistantModel is the ONLY source of truth for AI identification
         if (nodeOneCore.aiAssistantModel) {
-          console.log(`[ChatHandler] Checking if ${senderId?.toString().substring(0, 8)}... is AI`)
-          // Use AIAssistantModel as source of truth
           isAI = nodeOneCore.aiAssistantModel.isAIPerson(senderId)
-          console.log(`[ChatHandler] Result: isAI = ${isAI}`)
 
           if (isAI) {
             // Get the LLM object to find the name
@@ -378,7 +376,6 @@ const chatHandlers = {
             if (llmObject) {
               // LLM object uses 'name' field, not 'modelName'
               senderName = llmObject.name || llmObject.modelName || llmObject.modelId || 'AI Assistant'
-              console.log(`[ChatHandler] AI message from ${senderName} (${senderId?.toString().substring(0, 8)}...)`)
             }
           }
         }
@@ -535,23 +532,21 @@ const chatHandlers = {
         aiModelId: null
       }
 
-      // Check if any participants are AI persons and register the topic
+      // Mark conversation metadata if it has AI participants
+      // NOTE: Do NOT register AI topics here - that's AIAssistantModel's responsibility
+      // AIAssistantModel will register topics when it scans existing conversations
       if (nodeOneCore.aiAssistantModel) {
         const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
         for (const participant of participants) {
           const isAI = aiContacts.some((contact: any) => contact.personId === participant)
           if (isAI) {
             conversation.hasAIParticipant = true
-            conversation.isAITopic = true
-
-            // Find which model this AI person belongs to
+            // isAITopic will be determined by AIAssistantModel during scan
             const aiContact = aiContacts.find((contact: any) => contact.personId === participant)
             if (aiContact) {
-              console.log(`[ChatHandler] Registering AI topic ${topicId} for model ${aiContact.modelId}`)
-              nodeOneCore.aiAssistantModel.registerAITopic(topicId, aiContact.modelId)
               conversation.aiModelId = aiContact.modelId
             }
-            break // Only need to register once
+            break
           }
         }
       }

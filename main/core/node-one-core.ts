@@ -10,6 +10,7 @@ global.WebSocket = WebSocket as any;
 import path from 'path';
 import { fileURLToPath } from 'url';
 import AIAssistantModel from './ai-assistant-model.js';
+import TopicAnalysisModel from './one-ai/models/TopicAnalysisModel.js';
 // QuicVC API server temporarily disabled during TS migration
 // import RefinioApiServer from '../api/refinio-api-server.js';
 import TopicGroupManager from './topic-group-manager.js';
@@ -73,7 +74,7 @@ class NodeOneCore implements INodeOneCore {
   instanceId?: string
   localInstanceId?: string
   models?: any
-  topicAnalysisModel?: any
+  topicAnalysisModel?: TopicAnalysisModel
   commServerModel?: any
   llmManager?: any
   llmObjectManager?: any
@@ -281,14 +282,14 @@ class NodeOneCore implements INodeOneCore {
     // Import SingleUserNoAuth - same as browser and one.leute
     const { default: SingleUserNoAuth } = await import('@refinio/one.models/lib/models/Authenticator/SingleUserNoAuth.js')
     const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
-    
+
     // Use DIFFERENT email from browser to enable federation
     // ConnectionsModel won't connect instances with the same person ID
     const instanceName = `lama-node-${username}`
     const email = `node-${username}@lama.local`  // Different email for federation to work
-    
+
     console.log('[NodeOneCore] Using SingleUserNoAuth pattern for Node instance:', email)
-    
+
     // Import recipes following one.leute pattern
     const RecipesStable = (await import('@refinio/one.models/lib/recipes/recipes-stable.js')).default
     const RecipesExperimental = (await import('@refinio/one.models/lib/recipes/recipes-experimental.js')).default
@@ -299,7 +300,7 @@ class NodeOneCore implements INodeOneCore {
     const { ReverseMapsStable, ReverseMapsForIdObjectsStable } = await import('@refinio/one.models/lib/recipes/reversemaps-stable.js')
     const { ReverseMapsExperimental, ReverseMapsForIdObjectsExperimental } = await import('@refinio/one.models/lib/recipes/reversemaps-experimental.js')
 
-    // Create SingleUserNoAuth instance - same pattern as one.leute
+    // Create recipe list - DON'T serialize regexp objects
     const allRecipes = [
       ...RecipesStable,
       ...RecipesExperimental,
@@ -307,28 +308,11 @@ class NodeOneCore implements INodeOneCore {
       StateEntryRecipe,
       AppStateJournalRecipe
     ] as Recipe[]
-    
-    console.log('[NodeOneCore] Creating SingleUserNoAuth with', (allRecipes as any)?.length, 'recipes')
-    console.log('[NodeOneCore] First 5 recipe names:', allRecipes.slice(0, 5).map(r => r.name))
-    
-    // Check specifically for Person recipe
-    const personRecipe = allRecipes.find(r => r.name === 'Person')
-    console.log('[NodeOneCore] Person recipe found:', !!personRecipe)
-    
-    // Debug: Check for LLM recipe and its structure
-    const llmRecipes = allRecipes.filter(r => r.name === 'LLM')
-    console.log('[NodeOneCore] Found', (llmRecipes as any)?.length, 'LLM recipe(s)')
-    if ((llmRecipes as any)?.length > 0) {
-      llmRecipes.forEach((recipe, index) => {
-        const rules = recipe.rule as RecipeRule[] | undefined
-        const idField = rules?.find((r: any) => r.isId === true)
-        console.log(`[NodeOneCore] LLM Recipe #${index + 1} ID field:`, idField?.itemprop || 'NO ID FIELD')
-        console.log(`[NodeOneCore] LLM Recipe #${index + 1} has ${rules?.length || 0} rules`)
-      })
-    }
-    console.log('[NodeOneCore] LamaRecipes:', LamaRecipes?.map(r => r.name).join(', '))
-    
+
+    console.log('[NodeOneCore] Creating SingleUserNoAuth with', allRecipes.length, 'recipes')
+
     this.oneAuth = new SingleUserNoAuth({
+      directory: oneDbPath,
       recipes: allRecipes,
       reverseMaps: new Map([
         ...(ReverseMapsStable || []),
@@ -582,7 +566,8 @@ class NodeOneCore implements INodeOneCore {
           })
 
           // Update the Someone object with this Profile using proper APIs
-          if (this.leuteModel) {
+          // Only process if LeuteModel is initialized (state machine check)
+          if (this.leuteModel && this.leuteModel.state?.currentState === 'Initialised') {
             try {
               const { handleReceivedProfile } = await import('./contact-creation-proper.js')
               await handleReceivedProfile(obj.personId, obj, this.leuteModel)
@@ -590,6 +575,8 @@ class NodeOneCore implements INodeOneCore {
             } catch (error) {
               console.error('[NodeOneCore] Failed to handle received Profile:', error)
             }
+          } else {
+            console.log('[NodeOneCore] ⏸️  Skipping Profile - LeuteModel not yet initialized')
           }
         }
 
@@ -733,6 +720,51 @@ class NodeOneCore implements INodeOneCore {
           }
 
           return group
+        } else {
+          throw error
+        }
+      }
+    }.bind(this.leuteModel)
+
+    // Patch LeuteModel's addSomeoneElse to handle frozen arrays
+    const originalAddSomeoneElse = (this.leuteModel as any).addSomeoneElse.bind(this.leuteModel)
+    leuteModelInstance.addSomeoneElse = async function(this: any, someoneHash: any): Promise<void> {
+      try {
+        // Try the original method first
+        await originalAddSomeoneElse(someoneHash)
+      } catch (error) {
+        if ((error as Error).message.includes('read only property') ||
+            (error as Error).message.includes('not extensible')) {
+          console.log('[NodeOneCore] Working around frozen contacts array for someone:', someoneHash?.toString().substring(0, 8))
+
+          const currentLeute = this.leute
+          if (currentLeute) {
+            // Create a new Leute object with the updated contacts array
+            const existingOthers = (currentLeute.other || []).filter((o: any) => o && typeof o === 'string')
+            const newOthers = [...existingOthers]
+
+            // Only add if not already present
+            if (!newOthers.includes(someoneHash)) {
+              newOthers.push(someoneHash)
+            }
+
+            const newLeute = {
+              $type$: currentLeute.$type$ as 'Leute',
+              appId: currentLeute.appId || 'one.leute',
+              me: currentLeute.me,
+              other: newOthers,
+              group: currentLeute.group || []
+            }
+
+            // Store the new version
+            const result = await storeVersionObjectAsChange(newLeute as any)
+
+            // Update the model's internal references
+            this.leute = (result as any)?.obj
+            this.pLoadedVersion = (result as any)?.hash
+
+            console.log('[NodeOneCore] ✅ Added contact via workaround:', someoneHash?.toString().substring(0, 8))
+          }
         } else {
           throw error
         }
@@ -1130,9 +1162,10 @@ class NodeOneCore implements INodeOneCore {
     
     // ConnectionsModel should automatically handle socket listener startup
     // Add debug listeners for incoming connections
-    if (this.connectionsModel["leuteConnectionsModule" as keyof ConnectionsModel]) {
-      const originalAcceptConnection: any = (this.connectionsModel["leuteConnectionsModule" as keyof ConnectionsModel] as any).acceptConnection.bind(this.connectionsModel["leuteConnectionsModule" as keyof ConnectionsModel])
-      (this.connectionsModel as any).leuteConnectionsModule.acceptConnection = async (...args: any) => {
+    const leuteModule = (this.connectionsModel as any).leuteConnectionsModule
+    if (leuteModule && typeof leuteModule.acceptConnection === 'function') {
+      const originalAcceptConnection: any = leuteModule.acceptConnection.bind(leuteModule)
+      leuteModule.acceptConnection = async (...args: any) => {
         console.log('[NodeOneCore] 🔌 DEBUG: Incoming connection being accepted')
         console.log('[NodeOneCore] 🔌 DEBUG: Connection args:', (args as any)?.length)
         if (args[0]) {
@@ -1429,6 +1462,13 @@ class NodeOneCore implements INodeOneCore {
       console.log('[NodeOneCore] ✅ Topic Group Manager initialized')
     }
     
+    // Initialize Topic Analysis Model for keyword/subject extraction
+    if (!this.topicAnalysisModel) {
+      this.topicAnalysisModel = new TopicAnalysisModel(this.channelManager, this.topicModel)
+      await this.topicAnalysisModel.init()
+      console.log('[NodeOneCore] ✅ Topic Analysis Model initialized')
+    }
+
     // Initialize AI Assistant Model to orchestrate everything
     if (!this.aiAssistantModel) {
       this.aiAssistantModel = new AIAssistantModel(this)

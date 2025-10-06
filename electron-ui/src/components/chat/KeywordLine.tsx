@@ -31,15 +31,19 @@ export const KeywordLine: React.FC<KeywordLineProps> = ({
       style={{ maxHeight: `${maxHeight}rem` }}
     >
       <div className="flex gap-2 overflow-x-auto overflow-y-hidden whitespace-nowrap scrollbar-thin scrollbar-thumb-gray-300">
-        {keywords.map((keyword, index) => (
-          <Badge
-            key={index}
-            variant="secondary"
-            className="flex-shrink-0 text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-100"
-          >
-            {keyword}
-          </Badge>
-        ))}
+        {keywords.map((keyword, index) => {
+          const keywordText = typeof keyword === 'string' ? keyword : (keyword.term || keyword.text || '');
+          return (
+            <Badge
+              key={index}
+              variant="secondary"
+              className="flex-shrink-0 text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-100"
+              title={typeof keyword === 'object' && keyword.subjects?.length > 0 ? `Subjects: ${keyword.subjects.length}` : undefined}
+            >
+              {keywordText}
+            </Badge>
+          );
+        })}
       </div>
     </div>
   );

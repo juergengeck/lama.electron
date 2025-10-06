@@ -10,41 +10,47 @@ import type { Person } from '@refinio/one.core/lib/recipes.js';
 
 declare module '@OneObjectInterfaces' {
     // Subject represents a distinct discussion topic within a conversation
+    // Tracks temporal ranges when the subject was discussed
     export interface Subject {
         $type$: 'Subject';
-        topicId: string;
+        id: string; // keyword combination (e.g., "pizza+baker+career")
+        topic: string; // reference to parent topic (channel ID)
         keywords: string[];
-        keywordCombination: string;
-        description: string;
-        confidence: number;
+        timeRanges: Array<{
+            start: number;
+            end: number;
+        }>;
         messageCount: number;
-        firstSeen: string;
-        lastSeen: string;
-        archived: boolean;
+        createdAt: number;
+        lastSeenAt: number;
+        archived?: boolean;
     }
 
     // Keyword extracted from message content
     export interface Keyword {
         $type$: 'Keyword';
-        term: string;
-        category?: string;
+        term: string; // ID field - deterministic lookup
         frequency: number;
-        score: number;
-        extractedAt: string;
-        lastSeen: string;
-        subjects: SHA256Hash<Subject>[];
+        subjects: string[]; // Subject IDs (keyword combinations)
+        score?: number;
+        createdAt: number;
+        lastSeen: number;
     }
 
     // Summary of a topic conversation with versioning support
     export interface Summary {
         $type$: 'Summary';
-        topicId: string;
-        version: number;
+        id: string; // format: ${topicId}-v${version}
+        topic: string; // reference to parent topic
         content: string;
-        generatedAt: string;
+        subjects: string[]; // Subject IDs
+        keywords: string[]; // All keywords from all subjects
+        version: number;
+        previousVersion?: string; // Hash of previous summary
+        createdAt: number;
+        updatedAt: number;
         changeReason?: string;
-        previousVersion?: string;
-        subjects: SHA256Hash<Subject>[];
+        hash?: string;
     }
 
     // WordCloudSettings for visualization preferences
@@ -82,8 +88,8 @@ declare module '@OneObjectInterfaces' {
 
         // Required LLM identification fields
         modelId: string;
-        isAI: boolean;
 
+        // personId being present = this is an AI contact
         personId?: SHA256IdHash<Person>;
         capabilities?: Array<'chat' | 'inference'>;
 
@@ -113,21 +119,13 @@ declare module '@OneObjectInterfaces' {
         defaultProvider: string;
         autoSelectBestModel: boolean;
         preferredModelIds: string[];
-        defaultModelId: string | null;
-        temperature: number;
-        maxTokens: number;
-        systemPrompt: string;
-        streamResponses: boolean;
-        autoSummarize: boolean;
-        enableMCP: boolean;
-        created: number;
-        modified: number;
-    }
-
-    // Extend ONE.core's ID object interfaces (for objects that can be retrieved by ID)
-    interface OneIdObjectInterfaces {
-        LLM: Pick<LLM, '$type$' | 'name'>;
-        GlobalLLMSettings: GlobalLLMSettings;
+        defaultModelId?: string;
+        temperature?: number;
+        maxTokens?: number;
+        systemPrompt?: string;
+        streamResponses?: boolean;
+        autoSummarize?: boolean;
+        enableMCP?: boolean;
     }
 
     // MessageAssertion for verifiable message credentials
@@ -146,7 +144,39 @@ declare module '@OneObjectInterfaces' {
         assertionVersion: string;
     }
 
+    // XMLMessageAttachment - stores XML-formatted LLM messages
+    export interface XMLMessageAttachment {
+        $type$: 'XMLMessageAttachment';
+        topicId: string;
+        messageId: string;
+        xmlContent?: string; // Inline XML if ≤1KB
+        xmlBlob?: string; // BLOB hash if >1KB (stored as string)
+        format: string; // 'llm-query' | 'llm-response'
+        version: number; // Schema version (1)
+        createdAt: number; // Unix timestamp
+        size: number; // Byte size
+    }
+
+    // SystemPromptTemplate - per-model system prompts with XML format instructions
+    export interface SystemPromptTemplate {
+        $type$: 'SystemPromptTemplate';
+        modelId: string; // ID field - FK to LLM
+        promptText: string;
+        xmlSchemaVersion: number;
+        version: number;
+        active: boolean;
+        createdAt: number;
+        updatedAt: number;
+    }
+
     // Import AffirmationCertificate from ONE.models - it's already defined there
+
+    // Extend ONE.core's ID object interfaces (for objects that can be retrieved by ID)
+    interface OneIdObjectInterfaces {
+        LLM: Pick<LLM, '$type$' | 'name'>;
+        GlobalLLMSettings: GlobalLLMSettings;
+        SystemPromptTemplate: Pick<SystemPromptTemplate, '$type$' | 'modelId'>;
+    }
 
     // Extend ONE.core's versioned object interfaces with our types
     interface OneVersionedObjectInterfaces {
@@ -157,5 +187,7 @@ declare module '@OneObjectInterfaces' {
         LLM: LLM;
         GlobalLLMSettings: GlobalLLMSettings;
         MessageAssertion: MessageAssertion;
+        XMLMessageAttachment: XMLMessageAttachment;
+        SystemPromptTemplate: SystemPromptTemplate;
     }
 }

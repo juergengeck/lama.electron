@@ -135,10 +135,18 @@ const SummaryRecipe = {
     ]
 };
 
+import { KeywordAccessStateRecipe } from './KeywordAccessState.js';
+import { XMLMessageAttachmentRecipe } from './xml-message-attachment.js';
+import { SystemPromptTemplateRecipe } from './system-prompt-template.js';
+
 const TopicAnalysisRecipes = [
     SubjectRecipe,
     KeywordRecipe,
-    SummaryRecipe
+    SummaryRecipe,
+    KeywordAccessStateRecipe,
+    XMLMessageAttachmentRecipe,
+    SystemPromptTemplateRecipe
 ];
 
 export default TopicAnalysisRecipes;
+export { KeywordAccessStateRecipe, XMLMessageAttachmentRecipe, SystemPromptTemplateRecipe };

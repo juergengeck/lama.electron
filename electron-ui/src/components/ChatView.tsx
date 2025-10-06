@@ -9,6 +9,7 @@ import { topicAnalysisService } from '@/services/topic-analysis-service'
 import { useChatKeywords } from '@/hooks/useChatKeywords'
 import { ChatHeader } from './chat/ChatHeader'
 import { ChatContext } from './chat/ChatContext'
+import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
 
 export const ChatView = memo(function ChatView({
   conversationId = 'lama',
@@ -48,6 +49,8 @@ export const ChatView = memo(function ChatView({
   const [aiStreamingContent, setAiStreamingContent] = useState('')
   const [lastAnalysisMessageCount, setLastAnalysisMessageCount] = useState(0)
   const [showSummary, setShowSummary] = useState(false)
+  const [showKeywordDetail, setShowKeywordDetail] = useState(false)
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null)
 
   // Check if this is an AI conversation
   const hasAIParticipant = messages.some(m => m.isAI) ||
@@ -55,51 +58,9 @@ export const ChatView = memo(function ChatView({
                            conversationId === 'ai-chat'
 
 
-  // Auto-trigger topic analysis after 5 messages
-  // Debounced to avoid concurrent LLM calls
-  useEffect(() => {
-    const triggerAnalysis = async () => {
-      if (topicAnalysisService.shouldAnalyze(messages.length, lastAnalysisMessageCount)) {
-        console.log('[ChatView] 🤖 Triggering AI topic analysis for', conversationId)
-        console.log('[ChatView] 📊 Message count:', messages.length, 'Last analysis at:', lastAnalysisMessageCount)
-
-        const analysisRequest = {
-          topicId: conversationId,
-          messages: messages.map(m => ({
-            id: m.id,
-            text: m.content,
-            sender: m.sender || 'unknown',
-            timestamp: m.timestamp || Date.now()
-          }))
-        }
-
-        console.log('[ChatView] 📤 Sending analysis request with', analysisRequest.messages.length, 'messages')
-
-        const result = await topicAnalysisService.analyzeMessages(analysisRequest)
-
-        if (result.success) {
-          console.log('[ChatView] ✅ Analysis successful:', {
-            subjects: result.data?.subjects?.length || 0,
-            keywords: result.data?.keywords?.length || 0,
-            summaryId: result.data?.summaryId
-          })
-        } else {
-          console.error('[ChatView] ❌ Analysis failed:', result.error)
-        }
-
-        setLastAnalysisMessageCount(messages.length)
-      } else {
-        console.log('[ChatView] ⏸️ Skipping analysis - not needed yet. Messages:', messages.length, 'Threshold: 5')
-      }
-    }
-
-    if (messages.length >= 5) {
-      console.log('[ChatView] 🎯 Message threshold reached, checking if analysis needed...')
-      // Debounce to avoid running immediately on page load
-      const timeoutId = setTimeout(triggerAnalysis, 2000)
-      return () => clearTimeout(timeoutId)
-    }
-  }, [messages.length, conversationId, lastAnalysisMessageCount])
+  // Analysis is handled automatically by chatWithAnalysis() in ai-assistant-model.ts
+  // Keywords and subjects are extracted from each AI response in the background
+  // No need for separate analysis trigger from UI
 
   // Check if welcome message is still being generated on mount
   useEffect(() => {
@@ -287,8 +248,8 @@ export const ChatView = memo(function ChatView({
         onToggleSummary={() => setShowSummary(!showSummary)}
         onKeywordClick={(keyword) => {
           console.log('[ChatView] Keyword clicked:', keyword)
-          // TODO: Implement keyword search/filtering
-          alert(`Search for #${keyword} - Feature coming soon!`)
+          setSelectedKeyword(keyword)
+          setShowKeywordDetail(true)
         }}
       />
 
@@ -301,6 +262,17 @@ export const ChatView = memo(function ChatView({
               messages={messages}
               messageCount={messages.length}
               className="border-0"
+            />
+          </div>
+        )}
+
+        {/* Keyword Detail Panel - Shows at top when visible (same space as summary) */}
+        {showKeywordDetail && selectedKeyword && (
+          <div className="border-b bg-muted/30">
+            <KeywordDetailPanel
+              keyword={selectedKeyword}
+              topicId={conversationId}
+              onClose={() => setShowKeywordDetail(false)}
             />
           </div>
         )}

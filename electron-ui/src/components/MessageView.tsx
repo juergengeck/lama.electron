@@ -1,17 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Send, Loader2, Copy, Edit, Trash2, MoreVertical, Check, CheckCheck } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { type Message, lamaBridge } from '@/bridge/lama-bridge'
-// ReactMarkdown is now handled by FormattedMessageContent component
-import { FormattedMessageContent } from './chat/FormattedMessageContent'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import './MessageView.css'
 
 // Import enhanced components
@@ -23,6 +13,10 @@ import { attachmentService } from '@/services/attachments/AttachmentService'
 import { createAttachmentView } from '@/components/attachments/AttachmentViewFactory'
 import type { MessageAttachment, BlobDescriptor } from '@/types/attachments'
 
+// Import keyword detail panel
+import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+
 interface MessageViewProps {
   messages: Message[]
   currentUserId?: string
@@ -31,7 +25,6 @@ interface MessageViewProps {
   showSender?: boolean
   loading?: boolean
   participants?: string[] // List of participant IDs to determine if multiple people
-  useEnhancedUI?: boolean // Toggle for enhanced UI components
   isAIProcessing?: boolean // Show typing indicator when AI is processing
   aiStreamingContent?: string // Show partial AI response while streaming
   topicId?: string // Topic ID for context panel
@@ -45,7 +38,6 @@ export function MessageView({
   showSender = true,
   loading = false,
   participants = [],
-  useEnhancedUI = true, // Enable enhanced UI for attachments
   isAIProcessing = false,
   aiStreamingContent = '',
   topicId
@@ -55,14 +47,17 @@ export function MessageView({
     console.log('[MessageView] First message:', messages[0])
     console.log('[MessageView] Last message:', messages[messages.length - 1])
   }
-  const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  
+  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false)
+
   // Store attachment descriptors for display
   const [attachmentDescriptors, setAttachmentDescriptors] = useState<Map<string, BlobDescriptor>>(new Map())
+
+  // Keyword detail dialog state
+  const [showKeywordDetail, setShowKeywordDetail] = useState(false)
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null)
   
   // Load contact names
   useEffect(() => {
@@ -89,55 +84,30 @@ export function MessageView({
     loadContactNames()
   }, [currentUserId])
   
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    // Use multiple techniques to ensure scrolling works
-    const scrollToBottom = () => {
-      if (scrollAreaRef.current) {
-        // Method 1: Direct scroll
-        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
-        
-        // Method 2: Scroll into view for the end marker
-        if (messagesEndRef.current) {
-          messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
-        }
-      }
-    }
-    
-    // Immediate scroll
-    scrollToBottom()
-    
-    // Delayed scroll to catch any layout changes
-    const timer1 = setTimeout(scrollToBottom, 50)
-    const timer2 = setTimeout(scrollToBottom, 100)
-    const timer3 = setTimeout(scrollToBottom, 200)
-    
-    return () => {
-      clearTimeout(timer1)
-      clearTimeout(timer2)
-      clearTimeout(timer3)
-    }
-  }, [messages, aiStreamingContent, sending])
+  // Track user scroll position
+  const handleScroll = () => {
+    if (!scrollAreaRef.current) return
 
+    const { scrollTop, scrollHeight, clientHeight } = scrollAreaRef.current
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
 
-
-  const handleSend = async () => {
-    if (!input.trim() || sending) return
-
-    try {
-      setSending(true)
-      console.log('[MessageView] 🎯 Starting message send with:', input)
-      const startTime = performance.now()
-      await onSendMessage(input)
-      const elapsed = performance.now() - startTime
-      console.log(`[MessageView] ✅ Message sent in ${elapsed.toFixed(2)}ms`)
-      setInput('')
-    } catch (error) {
-      console.error('Failed to send message:', error)
-    } finally {
-      setSending(false)
-    }
+    // Consider user at bottom if within 50px
+    setIsUserScrolledUp(distanceFromBottom > 50)
   }
+
+  // Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
+  useEffect(() => {
+    if (isUserScrolledUp) return
+
+    // Use requestAnimationFrame to ensure DOM has finished rendering before scrolling
+    requestAnimationFrame(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      }
+    })
+  }, [messages, aiStreamingContent, isUserScrolledUp])
+
+
 
   // Enhanced send handler with proper attachment storage
   const handleEnhancedSend = async (text: string, attachments?: EnhancedAttachment[]) => {
@@ -145,23 +115,22 @@ export function MessageView({
       console.log('[MessageView] Empty message, not sending')
       return
     }
-    
+
     try {
-      setSending(true)
       console.log('[MessageView] 🎯 Enhanced send with:', text, attachments?.length, 'attachments')
-      
+
       // Extract hashtags from text
       const hashtagRegex = /#[\w-]+/g
       const hashtags = text.match(hashtagRegex) || []
       console.log('[MessageView] Extracted hashtags:', hashtags)
-      
+
       let messageContent = text
       const messageAttachments: MessageAttachment[] = []
-      
+
       // Process and store attachments using AttachmentService
       if (attachments && attachments.length > 0) {
         console.log('[MessageView] Processing attachments with AttachmentService')
-        
+
         for (const attachment of attachments) {
           try {
             // Convert File to ArrayBuffer first
@@ -176,7 +145,7 @@ export function MessageView({
 
             // Extract hash from result
             const hash = result.hash || result.id || result
-            
+
             // Create message attachment reference
             const messageAttachment: MessageAttachment = {
               hash,
@@ -186,7 +155,7 @@ export function MessageView({
               size: attachment.file.size
             }
             messageAttachments.push(messageAttachment)
-            
+
             // Cache the descriptor for immediate display
             const descriptor: BlobDescriptor = {
               data: await attachment.file.arrayBuffer(),
@@ -200,30 +169,40 @@ export function MessageView({
               newMap.set(hash, descriptor)
               return newMap
             })
-            
+
             console.log(`[MessageView] Stored attachment ${attachment.file.name} with hash: ${hash}`)
           } catch (error) {
             console.error(`[MessageView] Failed to store attachment ${attachment.file.name}:`, error)
           }
         }
       }
-      
+
       // Send the message with attachments
-      // Pass attachments directly to onSendMessage
       await onSendMessage(messageContent, messageAttachments.length > 0 ? messageAttachments : undefined)
-      
+
     } catch (error) {
       console.error('Failed to send enhanced message:', error)
-    } finally {
-      setSending(false)
     }
   }
 
-  // Handle hashtag clicks
+  // Handle hashtag clicks - open keyword detail dialog
   const handleHashtagClick = (hashtag: string) => {
-    console.log('[MessageView] Hashtag clicked:', hashtag)
-    // TODO: Implement hashtag search/filtering
-    alert(`Search for #${hashtag} - Feature coming soon!`)
+    console.log('[MessageView] Hashtag/keyword clicked:', hashtag, '| topicId:', topicId)
+
+    if (topicId) {
+      // Open keyword detail dialog
+      setSelectedKeyword(hashtag)
+      setShowKeywordDetail(true)
+    } else {
+      // No topicId available - can't show context-specific details
+      console.warn('[MessageView] Cannot show keyword detail - no topicId available')
+      alert(`Search for #${hashtag} - Feature coming soon!`)
+    }
+  }
+
+  const handleCloseKeywordDetail = () => {
+    setShowKeywordDetail(false)
+    setSelectedKeyword(null)
   }
 
   // Handle attachment clicks
@@ -238,12 +217,6 @@ export function MessageView({
     // TODO: Implement attachment download
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
 
   if (loading) {
     return (
@@ -259,7 +232,7 @@ export function MessageView({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-1 px-4 py-2 overflow-y-auto" ref={scrollAreaRef} style={{ minHeight: 0 }}>
+      <div className="flex-1 px-4 py-2 overflow-y-auto" ref={scrollAreaRef} onScroll={handleScroll} style={{ minHeight: 0 }}>
         <div className="space-y-4">
           {messages.length === 0 && !loading && !isAIProcessing && !aiStreamingContent && (
             <div className="text-center py-8 text-muted-foreground">
@@ -363,39 +336,25 @@ export function MessageView({
       </div>
 
 
-      {/* Message input - Use enhanced or classic based on prop */}
-      {useEnhancedUI ? (
-        <EnhancedMessageInput
-          onSendMessage={handleEnhancedSend}
-          onHashtagClick={handleHashtagClick}
-          placeholder={placeholder}
-          disabled={sending}
-          theme="dark"
-        />
-      ) : (
-        <div className="p-4 border-t">
-          <div className="flex space-x-2">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={sending}
-              className="flex-1"
+      {/* Message input */}
+      <EnhancedMessageInput
+        onSendMessage={handleEnhancedSend}
+        onHashtagClick={handleHashtagClick}
+        placeholder={placeholder}
+        theme="dark"
+      />
+
+      {/* Keyword Detail Dialog */}
+      {showKeywordDetail && selectedKeyword && topicId && (
+        <Dialog open={showKeywordDetail} onOpenChange={handleCloseKeywordDetail}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <KeywordDetailPanel
+              keyword={selectedKeyword}
+              topicId={topicId}
+              onClose={handleCloseKeywordDetail}
             />
-            <Button
-              onClick={handleSend}
-              disabled={!input.trim() || sending}
-              size="icon"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )

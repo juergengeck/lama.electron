@@ -34,12 +34,13 @@ export function cancelAllOllamaRequests(): any {
 /**
  * Check if Ollama is running
  */
-async function isOllamaRunning(): Promise<any> {
+async function isOllamaRunning(baseUrl: string = 'http://localhost:11434', authHeaders?: Record<string, string>): Promise<any> {
   try {
-    const response: any = await fetch('http://localhost:11434/api/tags')
+    const headers = authHeaders || {};
+    const response: any = await fetch(`${baseUrl}/api/tags`, { headers })
     return response.ok
   } catch (error) {
-    console.log('[Ollama] Service not running on localhost:11434')
+    console.log(`[Ollama] Service not running on ${baseUrl}`)
     return false
   }
 }
@@ -47,11 +48,16 @@ async function isOllamaRunning(): Promise<any> {
 /**
  * Test if a specific Ollama model is available
  */
-async function testOllamaModel(modelName: any): Promise<any> {
+async function testOllamaModel(modelName: any, baseUrl: string = 'http://localhost:11434', authHeaders?: Record<string, string>): Promise<any> {
   try {
-    const response: any = await fetch('http://localhost:11434/api/generate', {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(authHeaders || {})
+    };
+
+    const response: any = await fetch(`${baseUrl}/api/generate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         model: modelName,
         prompt: 'test',
@@ -61,7 +67,7 @@ async function testOllamaModel(modelName: any): Promise<any> {
         }
       })
     })
-    
+
     return response.ok
   } catch (error) {
     console.error(`[Ollama] Model ${modelName} test failed:`, error)
@@ -72,13 +78,19 @@ async function testOllamaModel(modelName: any): Promise<any> {
 /**
  * Chat with Ollama using the /api/chat endpoint
  */
-async function chatWithOllama(modelName: any, messages: any, options = {}): Promise<any> {
+async function chatWithOllama(
+  modelName: any,
+  messages: any,
+  options: any = {},
+  baseUrl: string = 'http://localhost:11434',
+  authHeaders?: Record<string, string>
+): Promise<any> {
   const requestId = getRequestId()
   const controller = new AbortController()
 
   // Track this request
   activeRequests.set(requestId, controller)
-  console.log(`[Ollama] Starting request ${requestId}`)
+  console.log(`[Ollama] Starting request ${requestId} to ${baseUrl}`)
 
   try {
     console.log(`[Ollama] Chatting with ${modelName}, ${messages.length} messages`)
@@ -97,18 +109,24 @@ async function chatWithOllama(modelName: any, messages: any, options = {}): Prom
     const startTime = Date.now()
     console.log(`[Ollama] ⏱️ Starting API call at ${new Date().toISOString()} with streaming`)
 
+    // Prepare headers with auth if provided
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(authHeaders || {})
+    };
+
     // Use the chat endpoint for proper conversation handling
-    const response: any = await fetch('http://localhost:11434/api/chat', {
+    const response: any = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       signal: controller.signal,
       body: JSON.stringify({
         model: modelName,
         messages: formattedMessages,
         stream: true,  // Enable streaming
         options: {
-          temperature: (options as any).temperature || 0.7,
-          num_predict: (options as any).max_tokens || 2048,
+          temperature: options.temperature || 0.7,
+          num_predict: options.max_tokens || 2048,
           top_k: 40,
           top_p: 0.95
         }
@@ -220,8 +238,14 @@ async function chatWithOllama(modelName: any, messages: any, options = {}): Prom
 /**
  * Generate completion with Ollama
  */
-async function generateWithOllama(modelName: any, prompt: any, options = {}): Promise<any> {
-  return chatWithOllama(modelName, [{ role: 'user', content: prompt }], options)
+async function generateWithOllama(
+  modelName: any,
+  prompt: any,
+  options: any = {},
+  baseUrl: string = 'http://localhost:11434',
+  authHeaders?: Record<string, string>
+): Promise<any> {
+  return chatWithOllama(modelName, [{ role: 'user', content: prompt }], options, baseUrl, authHeaders)
 }
 
 export {

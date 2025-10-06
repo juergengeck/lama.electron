@@ -17,6 +17,7 @@ interface ChatParams {
   messages: ChatMessage[];
   modelId?: string;
   stream?: boolean;
+  topicId?: string;
 }
 
 interface SetDefaultModelParams {
@@ -50,8 +51,8 @@ interface IpcResponse<T = any> {
 }
 
 const aiHandlers = {
-  async chat(event: IpcMainInvokeEvent, { messages, modelId, stream = false }: ChatParams): Promise<IpcResponse> {
-    console.log('[AIHandler] Chat request with', messages.length, 'messages, streaming:', stream)
+  async chat(event: IpcMainInvokeEvent, { messages, modelId, stream = false, topicId }: ChatParams): Promise<IpcResponse> {
+    console.log('[AIHandler] Chat request with', messages.length, 'messages, streaming:', stream, 'topicId:', topicId)
 
     try {
       // Ensure LLM manager is initialized
@@ -60,9 +61,9 @@ const aiHandlers = {
       }
 
       if (stream) {
-        // Streaming mode - send chunks via IPC events
+        // Streaming mode - send chunks via IPC events with analysis
         let fullResponse = ''
-        const response = await llmManager.chat(messages, modelId, {
+        const result: any = await llmManager.chatWithAnalysis(messages, modelId, {
           onStream: (chunk: string) => {
             fullResponse += chunk
             // Send streaming chunk to renderer
@@ -73,23 +74,48 @@ const aiHandlers = {
           }
         })
 
+        // Process analysis in background if available
+        if (result.analysis && nodeOneCore.topicAnalysisModel && topicId) {
+          setImmediate(async () => {
+            try {
+              console.log('[AIHandler] Processing analysis in background for topic:', topicId)
+
+              // Create subject if identified
+              if (result.analysis.subject && result.analysis.subject.isNew) {
+                const { name, keywords } = result.analysis.subject
+                await nodeOneCore.topicAnalysisModel.createSubject(
+                  topicId,
+                  keywords,
+                  name,
+                  result.analysis.subject.description,
+                  0.8
+                )
+                console.log(`[AIHandler] Created new subject: ${name}`)
+              }
+            } catch (error) {
+              console.error('[AIHandler] Error processing analysis:', error)
+            }
+          })
+        }
+
         // Send final complete message
         event.sender.send('ai:stream-complete', {
-          response,
+          response: result.response,
           modelId: modelId || (llmManager as any).defaultModelId
         })
 
         return {
           success: true,
           data: {
-            response,
+            response: result.response,
             modelId: modelId || (llmManager as any).defaultModelId,
             streamed: true
           }
         }
       } else {
-        // Non-streaming mode - wait for full response
-        const response = await llmManager.chat(messages, modelId)
+        // Non-streaming mode - wait for full response with analysis
+        const chatResult: any = await llmManager.chatWithAnalysis(messages, modelId)
+        const response = chatResult.response
         const responseStr = String(response || '');
         console.log('[AIHandler] Got response:', responseStr.substring(0, 100) + '...')
 
@@ -423,202 +449,28 @@ const aiHandlers = {
   /**
    * Ensure default AI chats exist when user navigates to chat view
    * This is called lazily when the chat view is accessed, not during model selection
+   * DELEGATES to AIAssistantModel - we do NOT create chats here
    */
   'ai:ensureDefaultChats': async (event: IpcMainInvokeEvent): Promise<IpcResponse> => {
     try {
-      // Use the imported nodeOneCore instance
-
       if (!nodeOneCore?.initialized) {
         console.log('[AIHandler] Node not initialized')
         return { success: false, error: 'Node not initialized' }
       }
 
-      // Get the default model ID (async method that loads from settings if needed)
-      const modelId = await nodeOneCore.aiAssistantModel.getDefaultModel()
-      if (!modelId) {
-        console.log('[AIHandler] No default model set')
-        return { success: false, error: 'No default model set' }
+      if (!nodeOneCore.aiAssistantModel) {
+        console.log('[AIHandler] AIAssistantModel not initialized')
+        return { success: false, error: 'AIAssistantModel not initialized' }
       }
 
-      // Get the AI participant for this model
-      const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
-      const aiParticipant = aiContacts.find((c: any) => c.modelId === modelId)
-      if (!aiParticipant) {
-        console.error('[AIHandler] No AI contact found for model:', modelId)
-        return {
-          success: false,
-          error: 'No AI contact found for model: ' + modelId
-        }
-      }
-      const aiParticipantId = aiParticipant.personId
-      console.log('[AIHandler] AI participant ID:', String(aiParticipantId).substring(0, 8))
+      // DELEGATE to AIAssistantModel - it owns default chat creation
+      console.log('[AIHandler] Delegating default chat creation to AIAssistantModel')
+      await nodeOneCore.aiAssistantModel.ensureDefaultChats()
 
-      // Helper function to ensure topic exists with proper participants
-      const ensureTopicWithParticipants = async (name: string, topicId: string, participants: string[]) => {
-        let isNewTopic = false
-
-        try {
-          const existing = await nodeOneCore.topicModel.topics.queryById(topicId)
-          if (existing) {
-            console.log(`[AIHandler] ${name} topic already exists`)
-
-            // Check if topic has messages
-            console.log(`[AIHandler] Entering topic room for ${name} (${topicId}) to check messages...`)
-            const topicRoom = await nodeOneCore.topicModel.enterTopicRoom(topicId)
-            console.log(`[AIHandler] Retrieving all messages for ${name}...`)
-            const messages = await topicRoom.retrieveAllMessages()
-            console.log(`[AIHandler] Found ${messages.length} messages in ${name} topic`)
-
-            if ((messages as any)?.length === 0) {
-              console.log(`[AIHandler] ${name} topic exists but is empty, will send welcome`)
-              // For Hi topic, return 'empty' to indicate it needs static welcome
-              // For LAMA topic, return true for AI welcome
-              return topicId === 'hi' ? 'empty' : true
-            }
-
-            console.log(`[AIHandler] ${name} topic has ${messages.length} messages, no welcome needed`)
-            return false // Has messages, no welcome needed
-          }
-        } catch (e) {
-          // Topic doesn't exist, create it
-          isNewTopic = true
-        }
-
-        console.log(`[AIHandler] Creating ${name} topic with AI participant`)
-        await nodeOneCore.topicGroupManager.createGroupTopic(name, topicId, participants)
-        console.log(`[AIHandler] ${name} topic created with AI participant`)
-
-        // For Hi topic, we need to track if it was newly created for static message
-        if (topicId === 'hi') {
-          return 'new' // Always return 'new' when we just created it
-        }
-        return true // LAMA new topic needs welcome
-      }
-
-      // Create/ensure Hi chat
-      const hiNeedsWelcome = await ensureTopicWithParticipants('Hi', 'hi', [aiParticipantId])
-
-      // Create/ensure LAMA chat
-      const lamaNeedsWelcome = await ensureTopicWithParticipants('LAMA', 'lama', [aiParticipantId])
-
-      // Send Hi welcome immediately if needed (static, no LLM required)
-      if (hiNeedsWelcome === 'new' || hiNeedsWelcome === 'empty') {
-        try {
-          console.log(`[AIHandler] Sending static welcome message to Hi chat (${hiNeedsWelcome})`)
-          const hiTopicRoom = await nodeOneCore.topicModel.enterTopicRoom('hi')
-
-          // Register Hi as an AI topic so it can respond to messages
-          nodeOneCore.aiAssistantModel.registerAITopic('hi', modelId)
-          console.log('[AIHandler] Registered Hi as an AI topic with model:', modelId)
-
-          // Send static welcome message immediately (not LLM-generated)
-          const staticWelcome = `Hi! I'm LAMA, your local AI assistant.
-
-You can make me your own, give me a name of your choice, give me a persistent identity.
-
-We treat LLM as first-class citizens - they're communication peers just like people - and I will manage their learnings for you.
-You can immediately start using the app right here in this chat, or create new conversations with LLM or your friends and other contacts.
-
-The LAMA chat below is my memory. You can configure its visibility in Settings. All I learn from your conversations gets stored there for context, and is fully transparent for you. Nobody else can see this content.
-
-You can also access, share, or delete what I know in Settings, in the Data section.
-
-What can I help you with today?`
-
-          // Send message with AI participant as sender
-          await hiTopicRoom.sendMessage(staticWelcome, aiParticipantId)
-          console.log('[AIHandler] Static Hi welcome sent immediately')
-
-          // Verify the message was sent
-          const hiMessages = await hiTopicRoom.retrieveAllMessages()
-          console.log(`[AIHandler] After sending welcome, Hi chat has ${hiMessages.length} messages`)
-        } catch (error) {
-          console.error('[AIHandler] Failed to send Hi welcome:', error)
-        }
-      } else if (hiNeedsWelcome === false) {
-        // Hi topic exists with messages, but ensure it's registered as an AI topic
-        console.log('[AIHandler] Hi topic exists with messages, ensuring AI registration')
-        nodeOneCore.aiAssistantModel.registerAITopic('hi', modelId)
-      }
-
-      // Generate LAMA welcome asynchronously (requires LLM)
-      let lamaWelcomePromise: Promise<boolean> | null = null
-      if (lamaNeedsWelcome) {
-        // Send thinking indicator immediately for LAMA chat
-        const { BrowserWindow } = await import('electron')
-        const windows = BrowserWindow.getAllWindows()
-        const lamaMessageId = `ai-lama-welcome-${Date.now()}`
-
-        console.log('[AIHandler] Sending thinking indicator for LAMA welcome')
-        for (const window of windows) {
-          window.webContents.send('message:thinking', {
-            conversationId: 'lama',
-            messageId: lamaMessageId,
-            isAI: true
-          })
-        }
-
-        // Pre-warm LLM connection for LAMA welcome
-        console.log('[AIHandler] Pre-warming LLM connection for LAMA welcome...')
-        lamaWelcomePromise = (async (): Promise<boolean> => {
-          try {
-            await llmManager.preWarmConnection()
-            console.log('[AIHandler] Generating AI welcome message for LAMA chat')
-            const lamaTopicRoom = await nodeOneCore.topicModel.enterTopicRoom('lama')
-            nodeOneCore.aiAssistantModel.registerAITopic('lama', modelId)
-
-            // handleNewTopic will send its own thinking event, but that's OK - it will update the existing one
-            await nodeOneCore.aiAssistantModel.handleNewTopic('lama', lamaTopicRoom)
-
-            // Verify the message was sent
-            const lamaMessages = await lamaTopicRoom.retrieveAllMessages()
-            console.log(`[AIHandler] After sending welcome, LAMA chat has ${lamaMessages.length} messages`)
-            return true
-          } catch (error) {
-            console.error('[AIHandler] Failed to send LAMA welcome:', error)
-
-            // Send error/complete event to remove spinner
-            for (const window of windows) {
-              window.webContents.send('message:updated', {
-                conversationId: 'lama',
-                error: true
-              })
-            }
-            return false
-          }
-        })()
-
-        // Don't await here - let it run in parallel
-        console.log('[AIHandler] LAMA welcome generation started in background with spinner')
-      }
-
-      // Return immediately with Hi chat ready, LAMA will complete in background
-      const result = {
+      return {
         success: true,
-        topics: {
-          hi: 'hi',
-          lama: 'lama'
-        },
-        created: {
-          hi: hiNeedsWelcome === 'new',
-          lama: lamaNeedsWelcome
-        }
+        message: 'Default chats ensured by AIAssistantModel'
       }
-
-      // If we started LAMA welcome generation, optionally wait for it
-      // But we can return immediately since Hi is ready
-      if (lamaWelcomePromise) {
-        // Fire and forget - LAMA welcome will complete in background
-        lamaWelcomePromise.then(success => {
-          if (success) {
-            console.log('[AIHandler] LAMA welcome completed successfully in background')
-          }
-        }).catch(err => {
-          console.error('[AIHandler] LAMA welcome background error:', err)
-        })
-      }
-
-      return result
     } catch (error) {
       console.error('[AIHandler] Ensure default chats error:', error)
       return {

@@ -44,26 +44,32 @@ class AIMessageListener {
    * Start listening for messages in AI topics
    */
   async start(): Promise<any> {
+    // Prevent multiple starts
+    if (this.unsubscribe || this.pollInterval) {
+      console.log('[AIMessageListener] Already started - skipping')
+      return
+    }
+
     console.log('[AIMessageListener] Starting message listener...')
-    
+
     if (!this.channelManager) {
       console.error('[AIMessageListener] Cannot start - channelManager is undefined')
       return
     }
-    
+
     if (!this.channelManager.onUpdated) {
       console.error('[AIMessageListener] Cannot start - channelManager.onUpdated is undefined')
       console.log('[AIMessageListener] Available channelManager methods:', Object.keys(this.channelManager))
       return
     }
-    
+
     console.log('[AIMessageListener] Setting up channel update listener...')
-    
+
     // No need to join - channel manager listener handles messages
-    
+
     // Set up channel update listener - onUpdated is a function that takes a callback
     console.log('[AIMessageListener] 🎯🎯🎯 NODE: Registering channelManager.onUpdated callback')
-    
+
     // Get instance to check our owner ID
     let ownerId: string | undefined;
     try {
@@ -73,7 +79,7 @@ class AIMessageListener {
       console.log('[AIMessageListener] Could not get owner ID:', e.message)
     }
     console.log(`[AIMessageListener] Node owner ID: ${ownerId?.substring(0, 8)}`)
-    
+
     // Check what channels we know about
     try {
       const channels = await this.channelManager.getMatchingChannelInfos({})
@@ -82,7 +88,7 @@ class AIMessageListener {
         owner: c.owner?.substring(0, 8),
         isOurChannel: c.owner === ownerId
       })))
-      
+
       // Check if ChannelManager is properly subscribed
       console.log('[AIMessageListener] 🔍 Checking ChannelManager subscription state...')
       if ((channels as any)?.length === 0) {
@@ -91,9 +97,9 @@ class AIMessageListener {
     } catch (err: any) {
       console.log('[AIMessageListener] Could not get channels:', err)
     }
-    
-    // Add periodic check for channels
-    setInterval(async () => {
+
+    // Add periodic check for channels - save to this.pollInterval for cleanup
+    this.pollInterval = setInterval(async () => {
       try {
         const channels = await this.channelManager.getMatchingChannelInfos({})
         console.log(`[AIMessageListener] 📊 Periodic channel check - found ${(channels as any)?.length} channels`)
@@ -295,7 +301,7 @@ class AIMessageListener {
         // 3. It's recent (within last few seconds to avoid old messages)
         const messageAge = Date.now() - new Date(lastMessage.creationTime).getTime()
         const isRecent = messageAge < 10000 // 10 seconds
-        
+
         const isFromAI = this.isAIMessage(lastMessage)
         console.log(`[AIMessageListener] Last message from ${messageSender?.toString().substring(0, 8)}...: isAI=${isFromAI}, text="${messageText?.substring(0, 50)}..."`)
         
@@ -319,16 +325,16 @@ class AIMessageListener {
   /**
    * Check if a message is from an AI
    */
-  isAIMessage(message: any): any {
+  isAIMessage(message: any): boolean {
     // Check if the sender is an AI contact
     const sender = message.data?.sender || message.author
     if (!sender) return false
-    
+
     // Use AI Assistant Model's isAIPerson method
     if (this.aiAssistantModel) {
       return this.aiAssistantModel.isAIPerson(sender)
     }
-    
+
     throw new Error('AIAssistantModel not available - cannot determine if person is AI')
   }
   
