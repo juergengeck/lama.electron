@@ -67,7 +67,8 @@ export async function getKeywordDetails(
   event: IpcMainInvokeEvent,
   { keyword, topicId }: { keyword: string; topicId?: string }
 ): Promise<any> {
-  console.log('[KeywordDetail] Getting keyword details:', { keyword, topicId });
+  const startTime = Date.now();
+  console.log('[KeywordDetail] ⏱️ Getting keyword details:', { keyword, topicId });
 
   try {
     // Validate inputs
@@ -82,65 +83,82 @@ export async function getKeywordDetails(
     const cacheKey = `${normalizedKeyword}:${topicId || 'all'}`;
     const cached = detailsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      console.log('[KeywordDetail] Returning cached data for:', cacheKey);
+      console.log('[KeywordDetail] ⚡ Returning cached data for:', cacheKey, `(${Date.now() - startTime}ms)`);
       return { success: true, data: cached.data };
     }
 
+    // topicId is required - we can't search across all topics without it
+    if (!topicId) {
+      throw new Error('topicId is required');
+    }
+
     // Initialize model
+    let t = Date.now();
     const model = await initializeModel();
+    console.log('[KeywordDetail] ⏱️ Model init:', `${Date.now() - t}ms`);
     const channelManager = nodeOneCoreInstance.channelManager;
 
-    // Get all keywords from all topics first
-    const allKeywords: any = await (model as any).getAllKeywords();
+    // Get the specific keyword using ID hash lookup (O(1))
+    t = Date.now();
+    const keywordObj = await model.getKeywordByTerm(topicId, normalizedKeyword);
+    console.log('[KeywordDetail] ⏱️ getKeywordByTerm:', `${Date.now() - t}ms`);
 
-    // Find keyword by term
-    const keywordObj = allKeywords.find((k: any) => k.term === normalizedKeyword);
     if (!keywordObj) {
       throw new Error(`Keyword not found: ${keyword}`);
     }
 
-    // Get all subjects
-    const allSubjects: any = await (model as any).getAllSubjects();
+    // Get subject ID hashes from keyword.subjects array
+    // NOTE: keyword.subjects now contains Subject ID hashes (not raw ID strings)
+    t = Date.now();
+    const subjectIdHashes = keywordObj.subjects || [];
+    console.log('[KeywordDetail] ⏱️ Got subject ID hashes from keyword:', `${Date.now() - t}ms`, `(${subjectIdHashes.length} subjects)`);
 
-    // Filter subjects containing this keyword
-    let subjects = allSubjects.filter((subject: any) => {
-      // Check if subject contains keyword (by term match)
-      const subjectKeywordTerms = subject.keywords
-        .map((k: any) => {
-          const kw = allKeywords.find((kw: any) => kw.id === k);
-          return kw ? kw.term : null;
-        })
-        .filter(Boolean);
+    // Load ONLY the subjects referenced by this keyword using their ID hashes
+    t = Date.now();
+    const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+    const subjects = [];
 
-      return subjectKeywordTerms.includes(normalizedKeyword);
-    });
-
-    // Filter by topicId if provided
-    if (topicId) {
-      subjects = subjects.filter((s: any) => s.topicId === topicId);
+    for (const subjectIdHash of subjectIdHashes) {
+      try {
+        const result = await getObjectByIdHash(subjectIdHash);
+        if (result?.obj) {
+          subjects.push(result.obj);
+        }
+      } catch (error) {
+        console.warn('[KeywordDetail] Could not load subject with ID hash:', subjectIdHash, error);
+      }
     }
+    console.log('[KeywordDetail] ⏱️ Loaded specific subjects:', `${Date.now() - t}ms`, `(${subjects.length} loaded)`);
 
     // Enrich keyword with topic references
+    t = Date.now();
     const enrichedKeyword = await keywordEnrichment.enrichKeywordWithTopicReferences(
       keywordObj,
       subjects,
       channelManager
     );
+    console.log('[KeywordDetail] ⏱️ enrichKeywordWithTopicReferences:', `${Date.now() - t}ms`);
 
     // Enrich subjects with metadata
+    t = Date.now();
     const enrichedSubjects = await keywordEnrichment.enrichSubjectsWithMetadata(
       subjects,
-      allSubjects
+      subjects  // We only have the subjects for this keyword now
     );
+    console.log('[KeywordDetail] ⏱️ enrichSubjectsWithMetadata:', `${Date.now() - t}ms`);
 
     // Sort subjects by relevanceScore descending
+    t = Date.now();
     const sortedSubjects = keywordEnrichment.sortByRelevance(enrichedSubjects);
+    console.log('[KeywordDetail] ⏱️ sortByRelevance:', `${Date.now() - t}ms`);
 
     // Get access states for this keyword
+    t = Date.now();
     const accessStates = await keywordAccessStorage.getAccessStatesByKeyword(
       channelManager,
       normalizedKeyword
     );
+    console.log('[KeywordDetail] ⏱️ getAccessStatesByKeyword:', `${Date.now() - t}ms`);
 
     const result = {
       keyword: enrichedKeyword,
@@ -154,7 +172,7 @@ export async function getKeywordDetails(
       timestamp: Date.now()
     });
 
-    console.log('[KeywordDetail] Retrieved keyword details:', {
+    console.log('[KeywordDetail] ⏱️ TOTAL TIME:', `${Date.now() - startTime}ms`, {
       keyword: normalizedKeyword,
       subjectCount: sortedSubjects.length,
       accessStateCount: accessStates.length
@@ -165,7 +183,7 @@ export async function getKeywordDetails(
       data: result
     };
   } catch (error) {
-    console.error('[KeywordDetail] Error getting keyword details:', error);
+    console.error('[KeywordDetail] ❌ Error getting keyword details:', error, `(${Date.now() - startTime}ms)`);
     return {
       success: false,
       error: (error as Error).message,
@@ -187,11 +205,13 @@ export async function updateKeywordAccessState(
   event: IpcMainInvokeEvent,
   {
     keyword,
+    topicId,
     principalId,
     principalType,
     state
   }: {
     keyword: string;
+    topicId: string;
     principalId: string;
     principalType: 'user' | 'group';
     state: 'allow' | 'deny' | 'none';
@@ -199,6 +219,7 @@ export async function updateKeywordAccessState(
 ): Promise<any> {
   console.log('[KeywordDetail] Updating access state:', {
     keyword,
+    topicId,
     principalId,
     principalType,
     state
@@ -208,6 +229,9 @@ export async function updateKeywordAccessState(
     // Validate inputs
     if (!keyword || typeof keyword !== 'string') {
       throw new Error('Invalid keyword: must be non-empty string');
+    }
+    if (!topicId) {
+      throw new Error('Invalid topicId: required');
     }
     if (!principalId) {
       throw new Error('Invalid principalId: required');
@@ -226,8 +250,8 @@ export async function updateKeywordAccessState(
     const model = await initializeModel();
     const channelManager = nodeOneCoreInstance.channelManager;
 
-    // Verify keyword exists
-    const allKeywords: any = await (model as any).getAllKeywords();
+    // Verify keyword exists in this topic
+    const allKeywords: any = await model.getKeywords(topicId);
     const keywordExists = allKeywords.some((k: any) => k.term === keywordTerm);
     if (!keywordExists) {
       throw new Error(`Keyword not found: ${keyword}`);

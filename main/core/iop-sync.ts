@@ -50,9 +50,9 @@ class IoPSyncManager {
   async grantMutualAccess(): Promise<any> {
     console.log('[IoPSync] Granting mutual access rights...')
     
-    const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-    const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-    const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+    const { createAccess } = await import('@refinio/one.core/lib/access.js')
+    const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+    const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
     
     // 1. Grant Browser access to Node's Leute object
     await this.grantAccessToLeute(this.browserPersonId, createAccess, SET_ACCESS_MODE, calculateIdHashOfObj)
@@ -176,9 +176,9 @@ class IoPSyncManager {
     if (this.nodeOneCore.channelManager) {
       this.nodeOneCore.channelManager.onChannelCreated(async (channel: any) => {
         console.log(`[IoPSync] New channel created: ${channel.id}, granting access...`)
-        const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-        const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-        const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+        const { createAccess } = await import('@refinio/one.core/lib/access.js')
+        const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+        const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
         
         const channelInfoId = await calculateIdHashOfObj({
           $type$: 'ChannelInfo',
@@ -203,8 +203,8 @@ class IoPSyncManager {
     if (this.nodeOneCore.leuteModel) {
       this.nodeOneCore.leuteModel.onSomeoneAdded(async (someoneId: any) => {
         console.log(`[IoPSync] New contact added: ${String(someoneId).substring(0, 8)}..., granting access...`)
-        const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-        const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
+        const { createAccess } = await import('@refinio/one.core/lib/access.js')
+        const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
         
         if (this.browserPersonId) {
           await createAccess([{

@@ -201,16 +201,18 @@ class LLMObjectManager {
   }
   
   /**
-   * Get LLM object by model ID
+   * Get LLM object by model ID (from cache)
    */
   getLLMObject(modelId: any): any {
     return this.llmObjects.get(modelId);
   }
-  
+
   /**
    * Check if a personId belongs to an LLM
+   * Only checks the in-memory cache - does NOT search storage
+   * AIAssistantModel is responsible for loading all AI contacts into cache
    */
-  isLLMPerson(personId: any): any {
+  isLLMPerson(personId: any): boolean {
     if (!personId) return false;
     const personIdStr = personId.toString();
 

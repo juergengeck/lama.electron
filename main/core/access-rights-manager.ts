@@ -35,9 +35,8 @@ class NodeAccessRightsManager {
           // For private channels, only grant federation access (browser only)
           if (isPrivateChannel) {
             try {
-              const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-              const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-
+              const { createAccess } = await import('@refinio/one.core/lib/access.js')
+              const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
               const { ensureIdHash } = await import('@refinio/one.core/lib/util/type-checks.js')
               await createAccess([{
                 id: ensureIdHash(channelInfoIdHash),
@@ -58,8 +57,8 @@ class NodeAccessRightsManager {
 
         // For other channels, grant broader access (but not to everyone)
         try {
-          const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-          const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
+          const { createAccess } = await import('@refinio/one.core/lib/access.js')
+          const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
 
           const { ensureIdHash } = await import('@refinio/one.core/lib/util/type-checks.js')
           await createAccess([{
@@ -232,9 +231,9 @@ class NodeAccessRightsManager {
    */
   async grantChannelAccess(channelId: any, owner: any): Promise<any> {
     try {
-      const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-      const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-      const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+      const { createAccess } = await import('@refinio/one.core/lib/access.js')
+      const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+      const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
       
       const channelIdHash = await calculateIdHashOfObj({
         $type$: 'ChannelInfo',

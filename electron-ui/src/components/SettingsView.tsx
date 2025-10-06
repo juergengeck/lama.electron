@@ -71,6 +71,8 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
   const [claudeApiKey, setClaudeApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'unconfigured' | 'testing' | 'valid' | 'invalid'>('unconfigured')
+  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
+  const [ollamaStatus, setOllamaStatus] = useState<'unconfigured' | 'testing' | 'valid' | 'invalid'>('unconfigured')
   
   // System objects state
   const [systemObjects, setSystemObjects] = useState<{
@@ -133,6 +135,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
   useEffect(() => {
     loadModels()
     loadClaudeApiKey()
+    loadOllamaConfig()
     loadSystemObjects()
     loadDataStats()
 
@@ -431,10 +434,15 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
             // Update total objects
             stats.totalObjects = stats.messages + stats.files + stats.contacts + stats.conversations
 
-            // Try to get more detailed stats from main process
-            const detailedStats = await window.electronAPI.invoke('lama:getDataStats')
-            if (detailedStats?.success && detailedStats.data) {
-              stats = { ...stats, ...detailedStats.data }
+            // Try to get more detailed stats from main process (optional)
+            try {
+              const detailedStats = await window.electronAPI.invoke('lama:getDataStats')
+              if (detailedStats?.success && detailedStats.data) {
+                stats = { ...stats, ...detailedStats.data }
+              }
+            } catch (e) {
+              // Handler not implemented yet, use estimated stats
+              console.debug('Detailed stats not available, using estimates')
             }
           } catch (e) {
             console.error('Error getting data stats from IPC:', e)
@@ -496,7 +504,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
       const result = await window.electronAPI?.invoke('onecore:secureRetrieve', {
         key: 'claude_api_key'
       })
-      
+
       if (result?.success && result.value) {
         setClaudeApiKey(result.value)
         setApiKeyStatus('valid')
@@ -505,13 +513,29 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
       console.error('Failed to load Claude API key:', error)
     }
   }
+
+  const loadOllamaConfig = async () => {
+    try {
+      // Get Ollama configuration from IPC
+      const result = await window.electronAPI?.invoke('llm:getConfig', {
+        provider: 'ollama'
+      })
+
+      if (result?.success && result.config) {
+        setOllamaUrl(result.config.baseUrl || 'http://localhost:11434')
+        setOllamaStatus('valid')
+      }
+    } catch (error) {
+      console.error('Failed to load Ollama config:', error)
+    }
+  }
   
   const handleSaveClaudeApiKey = async () => {
     if (!claudeApiKey) {
       setApiKeyStatus('invalid')
       return
     }
-    
+
     setApiKeyStatus('testing')
     try {
       // Store API key securely in ONE.core's encrypted storage via IPC
@@ -520,14 +544,14 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
         value: claudeApiKey,
         encrypted: true
       })
-      
+
       if (result?.success) {
         // Test the API key with Claude
         const testResult = await window.electronAPI?.invoke('llm:testApiKey', {
           provider: 'anthropic',
           apiKey: claudeApiKey
         })
-        
+
         if (testResult?.success) {
           setApiKeyStatus('valid')
           await loadModels()
@@ -540,6 +564,34 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
     } catch (error) {
       console.error('Failed to save Claude API key:', error)
       setApiKeyStatus('invalid')
+    }
+  }
+
+  const handleSaveOllamaConfig = async () => {
+    if (!ollamaUrl) {
+      setOllamaStatus('invalid')
+      return
+    }
+
+    setOllamaStatus('testing')
+    try {
+      // Save Ollama configuration via IPC
+      const result = await window.electronAPI?.invoke('llm:updateConfig', {
+        provider: 'ollama',
+        config: {
+          baseUrl: ollamaUrl
+        }
+      })
+
+      if (result?.success) {
+        setOllamaStatus('valid')
+        await loadModels()
+      } else {
+        setOllamaStatus('invalid')
+      }
+    } catch (error) {
+      console.error('Failed to save Ollama config:', error)
+      setOllamaStatus('invalid')
     }
   }
 
@@ -717,24 +769,55 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
               <CardDescription>Configure AI assistants as contacts</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Ollama Configuration */}
+              <div className="space-y-2">
+                <Label>Ollama Service URL</Label>
+                <div className="flex items-center space-x-2">
+                  <Input
+                    type="text"
+                    value={ollamaUrl}
+                    onChange={(e) => setOllamaUrl(e.target.value)}
+                    placeholder="http://localhost:11434"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleSaveOllamaConfig}
+                    disabled={ollamaStatus === 'testing'}
+                  >
+                    {ollamaStatus === 'testing' ? 'Testing...' : 'Save'}
+                  </Button>
+                </div>
+                {ollamaStatus === 'valid' && (
+                  <p className="text-xs text-green-500">✓ Ollama service configured</p>
+                )}
+                {ollamaStatus === 'invalid' && (
+                  <p className="text-xs text-red-500">✗ Failed to configure Ollama service</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  URL of your Ollama service (local or remote). Default: http://localhost:11434
+                </p>
+              </div>
+
+              <Separator />
+
               {/* Claude API Key Configuration */}
               <div className="space-y-2">
                 <Label>Claude API Key</Label>
                 <div className="flex items-center space-x-2">
-                  <Input 
+                  <Input
                     type={showApiKey ? "text" : "password"}
                     value={claudeApiKey}
                     onChange={(e) => setClaudeApiKey(e.target.value)}
                     placeholder="sk-ant-..."
                   />
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     size="sm"
                     onClick={() => setShowApiKey(!showApiKey)}
                   >
                     {showApiKey ? 'Hide' : 'Show'}
                   </Button>
-                  <Button 
+                  <Button
                     size="sm"
                     onClick={handleSaveClaudeApiKey}
                     disabled={apiKeyStatus === 'testing'}

@@ -145,15 +145,17 @@ export const AccessControlList: React.FC<AccessControlListProps> = ({
   const users = userPrincipals.length > 0 ? userPrincipals : derivedUsers;
   const groups = groupPrincipals.length > 0 ? groupPrincipals : derivedGroups;
 
-  // Empty state
+  // Empty state - compact version
   if (users.length === 0 && groups.length === 0) {
     return (
-      <div className={`access-control-list-empty text-center p-8 ${className}`}>
-        <Shield className="w-8 h-8 mx-auto text-gray-400 mb-3" />
-        <p className="text-gray-500">No users or groups available</p>
-        <p className="text-sm text-gray-400 mt-2">
-          Access control will be available once users or groups are created
-        </p>
+      <div className={`access-control-list-empty ${className}`}>
+        <div className="mb-2">
+          <h3 className="text-sm font-medium text-gray-700">Access Control</h3>
+        </div>
+        <div className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm text-gray-500">
+          <Shield className="w-4 h-4 text-gray-400" />
+          <span>No access rules configured</span>
+        </div>
       </div>
     );
   }

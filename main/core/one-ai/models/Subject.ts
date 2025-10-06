@@ -16,18 +16,22 @@ export async function createSubject(
   confidence: any,
   keywords = []
 ) {
+  const now = Date.now();
   const subject = {
     $type$: 'Subject' as const,
-    topicId,
-    keywordCombination,
-    description,
-    confidence,
-    extractedAt: Date.now(),
-    firstSeen: new Date().toISOString(),
-    lastSeen: new Date().toISOString(),
-    messageCount: 0,
-    archived: false,
-    keywords // Array of SHA256Hash<Keyword>
+    id: keywordCombination, // Required: Use keyword combination as ID
+    topic: topicId, // Required: Parent topic reference
+    keywords, // Required: Array of SHA256Hash<Keyword>
+    timeRanges: [
+      {
+        start: now,
+        end: now // Initially start = end, will be updated when subject is seen again
+      }
+    ], // Required: Temporal ranges when subject was discussed
+    messageCount: 0, // Required: Message count
+    createdAt: now, // Required: Creation timestamp
+    lastSeenAt: now, // Required: Last seen timestamp
+    archived: false // Optional: Archive flag
   };
 
   return await storeVersionedObject(subject);

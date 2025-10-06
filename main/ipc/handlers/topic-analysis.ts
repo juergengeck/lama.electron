@@ -926,18 +926,28 @@ Example: ["blockchain", "ethereum", "smartcontract", "defi", "wallet"]`;
  */
 async function getKeywords(event: IpcMainInvokeEvent, params: { topicId: string; limit?: number }): Promise<any> {
   try {
-    console.log('[TopicAnalysis] Getting keywords for topic:', params.topicId);
+    console.log('[TopicAnalysis] 🔍 Getting keywords for topic:', params.topicId, 'limit:', params.limit);
 
     const model: any = await initializeModel();
     const keywords: any = await model.getKeywords(params.topicId);
 
+    console.log('[TopicAnalysis] 🔍 Raw keywords from model:', keywords.length, 'keywords');
+    if (keywords.length > 0) {
+      console.log('[TopicAnalysis] 🔍 First few keywords:', keywords.slice(0, 3).map((k: any) => k.term || k));
+    }
+
+    // Keywords come ONLY from LLM responses via chatWithAnalysis()
+    // Never extract keywords on-demand - that's wasteful and wrong
+    // If no keywords exist, return empty array
+
     // Apply limit if specified
     const limitedKeywords = params.limit ? keywords.slice(0, params.limit) : keywords;
 
-    console.log('[TopicAnalysis] Retrieved keywords:', {
+    console.log('[TopicAnalysis] ✅ Retrieved keywords:', {
       topicId: params.topicId,
       keywordCount: limitedKeywords.length,
-      limit: params.limit
+      limit: params.limit,
+      keywords: limitedKeywords.map((k: any) => k.term || k)
     });
 
     return {

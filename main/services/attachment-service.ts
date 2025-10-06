@@ -37,10 +37,10 @@ class AttachmentService {
   async storeAttachment(data: any, metadata: any): Promise<any> {
     try {
       // Load Node.js platform first
-      await import('../../node_modules/@refinio/one.core/lib/system/load-nodejs.js')
+      await import('@refinio/one.core/lib/system/load-nodejs.js')
       
       // Import ONE.core functions
-      const { storeArrayBufferAsBlob } = await import('../../node_modules/@refinio/one.core/lib/storage-blob.js')
+      const { storeArrayBufferAsBlob } = await import('@refinio/one.core/lib/storage-blob.js')
       
       // Convert Buffer to ArrayBuffer
       const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
@@ -79,10 +79,10 @@ class AttachmentService {
   async getAttachment(hash: any): Promise<any> {
     try {
       // Load Node.js platform first
-      await import('../../node_modules/@refinio/one.core/lib/system/load-nodejs.js')
+      await import('@refinio/one.core/lib/system/load-nodejs.js')
       
       // Import ONE.core functions
-      const { readBlobAsArrayBuffer } = await import('../../node_modules/@refinio/one.core/lib/storage-blob.js')
+      const { readBlobAsArrayBuffer } = await import('@refinio/one.core/lib/storage-blob.js')
       
       // Get metadata
       const metadata = this.attachments.get(hash)

@@ -24,20 +24,21 @@ export class LLMProxy {
     }
   }
 
-  async chat(messages: ChatMessage[], modelId?: string): Promise<string> {
-    console.log('[LLMProxy] Sending chat to main process, messages:', messages.length)
-    
+  async chat(messages: ChatMessage[], modelId?: string, topicId?: string): Promise<string> {
+    console.log('[LLMProxy] Sending chat to main process, messages:', messages.length, 'topicId:', topicId)
+
     const result = await this.ipcRenderer.invoke('ai:chat', {
       messages,
-      modelId
+      modelId,
+      topicId
     })
-    
+
     console.log('[LLMProxy] Got result from main process:', result)
-    
+
     if (!result.success) {
       throw new Error(result.error || 'Chat failed')
     }
-    
+
     const response = result.data.response
     console.log('[LLMProxy] Returning response:', response?.substring(0, 100) + '...')
     return response

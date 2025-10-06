@@ -432,23 +432,28 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
       console.log('[EnhancedMessageInput] Empty message, not sending');
       return;
     }
-    
+
     try {
       console.log('[EnhancedMessageInput] Setting upload state and calling onSendMessage');
       setIsUploading(true);
-      await onSendMessage(messageText, attachments);
-      console.log('[EnhancedMessageInput] onSendMessage completed successfully');
-      
-      // Clear input
+
+      // Capture message and attachments before clearing
+      const textToSend = messageText;
+      const attachmentsToSend = attachments;
+
+      // Clear input BEFORE sending
       setMessageText('');
       setAttachments([]);
       setShowSuggestions(false);
-      
+
       // Reset textarea height and restore focus
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
         textareaRef.current.focus();
       }
+
+      await onSendMessage(textToSend, attachmentsToSend);
+      console.log('[EnhancedMessageInput] onSendMessage completed successfully');
     } catch (error) {
       console.error('[EnhancedMessageInput] Send failed:', error);
       alert('Failed to send message: ' + (error instanceof Error ? error.message : 'Unknown error'));

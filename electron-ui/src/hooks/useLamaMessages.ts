@@ -73,8 +73,30 @@ export function useLamaMessages(conversationId: string) {
 
   // Send message
   const sendMessage = async (topicId: string, content: string, attachments?: any[]) => {
+    // Get current user for optimistic update
+    const currentUser = await lamaBridge.getCurrentUser()
+
+    // Optimistically add message to UI immediately
+    const optimisticMessage: Message = {
+      id: `temp-${Date.now()}`,
+      senderId: currentUser?.id || 'me',
+      senderName: currentUser?.name || 'You',
+      content,
+      timestamp: new Date(),
+      encrypted: false,
+      isAI: false,
+      topicId,
+      attachments
+    }
+
+    setMessages(prev => [...prev, optimisticMessage])
+
+    // Send message to backend
     const messageId = await lamaBridge.sendMessage(topicId, content, attachments)
-    await loadMessages() // Reload after sending
+
+    // Replace optimistic message with real one from backend
+    await loadMessages()
+
     return messageId
   }
 

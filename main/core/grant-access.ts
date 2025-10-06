@@ -7,9 +7,9 @@ import type { ChannelManager } from '@refinio/one.models/lib/models/index.js';
 async function grantAccessRights(nodeOneCore: any, targetPersonId: any): Promise<any> {
   console.log('[GrantAccess] Granting access rights to:', targetPersonId?.substring(0, 8) + '...')
   
-  const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-  const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-  const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+  const { createAccess } = await import('@refinio/one.core/lib/access.js')
+  const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+  const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
   
   // 1. Grant access to the Leute object itself
   try {

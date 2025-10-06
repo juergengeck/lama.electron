@@ -30,6 +30,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   showSummary = false,
   className = ''
 }) => {
+  console.log('[ChatHeader] Rendering with:', { conversationName, keywords: keywords.length, hasAI, messageCount })
+
   const [showLeftChevron, setShowLeftChevron] = useState(false)
   const [showRightChevron, setShowRightChevron] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)

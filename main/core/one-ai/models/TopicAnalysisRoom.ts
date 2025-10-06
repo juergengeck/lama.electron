@@ -16,6 +16,7 @@ export default class TopicAnalysisRoom {
 
     /**
      * Retrieve all keywords for this topic
+     * Keywords are now stored IN Subject objects, so we extract them from subjects
      */
     async retrieveAllKeywords(): Promise<any> {
         try {
@@ -23,17 +24,64 @@ export default class TopicAnalysisRoom {
                 channelId: this.topicId
             });
 
+            console.log('[TopicAnalysisRoom] retrieveAllKeywords - topicId:', this.topicId);
+            console.log('[TopicAnalysisRoom] Found channels:', channelInfos?.length || 0);
+
             if (!channelInfos || channelInfos.length === 0) {
                 console.log('[TopicAnalysisRoom] No channels found for topic:', this.topicId);
                 return [];
             }
 
-            // Use multiChannelObjectIterator to get all objects from all channels with this topic ID
-            const keywords = [];
+            // Extract keywords from Subject objects
+            const keywordMap = new Map(); // Deduplicate by term
+            let totalObjects = 0;
+            let subjectsFound = 0;
+
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
-                if (entry.data && entry.data.$type$ === 'Keyword' && entry.data.topicId === this.topicId) {
-                    keywords.push(entry.data);
+                totalObjects++;
+
+                // Keywords are embedded in Subject objects
+                if (entry.data && entry.data.$type$ === 'Subject') {
+                    subjectsFound++;
+                    const subject = entry.data;
+
+                    // Extract keywords from subject
+                    if (subject.keywords && Array.isArray(subject.keywords)) {
+                        for (const keyword of subject.keywords) {
+                            // Create a keyword object with metadata
+                            const keywordObj = {
+                                term: keyword,
+                                score: subject.confidence || 0.8,
+                                lastSeen: subject.lastDiscussed || Date.now(),
+                                fromSubject: subject.keywordCombination || subject.keywords.join('+')
+                            };
+
+                            // Keep the most recent/relevant version
+                            if (!keywordMap.has(keyword) || keywordObj.lastSeen > keywordMap.get(keyword).lastSeen) {
+                                keywordMap.set(keyword, keywordObj);
+                            }
+                        }
+                    }
                 }
+            }
+
+            const keywords = Array.from(keywordMap.values());
+
+            // Sort by: 1) score (relevance) descending, 2) lastSeen (recency) descending
+            keywords.sort((a, b) => {
+                const scoreA = a.score || 0;
+                const scoreB = b.score || 0;
+                if (scoreA !== scoreB) {
+                    return scoreB - scoreA;
+                }
+                return b.lastSeen - a.lastSeen;
+            });
+
+            console.log('[TopicAnalysisRoom] Total objects scanned:', totalObjects);
+            console.log('[TopicAnalysisRoom] Subjects found:', subjectsFound);
+            console.log('[TopicAnalysisRoom] Keywords extracted:', keywords.length, '(deduplicated and sorted)');
+            if (keywords.length > 0) {
+                console.log('[TopicAnalysisRoom] Sample keywords:', keywords.slice(0, 5).map(k => k.term));
             }
 
             return keywords;
@@ -59,7 +107,7 @@ export default class TopicAnalysisRoom {
 
             const subjects = [];
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
-                if (entry.data && entry.data.$type$ === 'Subject' && entry.data.topicId === this.topicId) {
+                if (entry.data && entry.data.$type$ === 'Subject') {
                     subjects.push(entry.data);
                 }
             }
@@ -87,7 +135,7 @@ export default class TopicAnalysisRoom {
 
             const summaries = [];
             for await (const entry of this.channelManager.multiChannelObjectIterator(channelInfos)) {
-                if (entry.data && entry.data.$type$ === 'Summary' && entry.data.topicId === this.topicId) {
+                if (entry.data && entry.data.$type$ === 'Summary') {
                     summaries.push(entry.data);
                 }
             }
@@ -137,19 +185,13 @@ export default class TopicAnalysisRoom {
 
                 switch (entry.data.$type$) {
                     case 'Keyword':
-                        if (entry.data.topicId === this.topicId) {
-                            keywords.push(entry.data);
-                        }
+                        keywords.push(entry.data);
                         break;
                     case 'Subject':
-                        if (entry.data.topicId === this.topicId) {
-                            subjects.push(entry.data);
-                        }
+                        subjects.push(entry.data);
                         break;
                     case 'Summary':
-                        if (entry.data.topicId === this.topicId) {
-                            summaries.push(entry.data);
-                        }
+                        summaries.push(entry.data);
                         break;
                 }
             }

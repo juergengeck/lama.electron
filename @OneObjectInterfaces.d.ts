@@ -24,8 +24,6 @@ declare module '@OneObjectInterfaces' {
         defaultModelId?: string;
         temperature?: number;
         maxTokens?: number;
-        created: number;
-        modified: number;
         defaultProvider: string;
         autoSelectBestModel: boolean;
         preferredModelIds: string[];
@@ -45,7 +43,6 @@ declare module '@OneObjectInterfaces' {
         temperature?: number;
         maxTokens?: number;
         contextSize?: number;
-        isAI: boolean;
     }
 
     export interface Keyword {

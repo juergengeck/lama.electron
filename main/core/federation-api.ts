@@ -32,8 +32,8 @@ class FederationAPI {
    * This is the proper way to register federated instances
    */
   async createContactWithEndpoint(personId: any, instanceId: any, instanceName: any, urls: any = []): Promise<any> {
-    const { storeUnversionedObject } = await import('../../node_modules/@refinio/one.core/lib/storage-unversioned-objects.js')
-    const { getDefaultKeys } = await import('../../node_modules/@refinio/one.core/lib/keychain/keychain.js')
+    const { storeUnversionedObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
+    const { getDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
     
     console.log(`[FederationAPI] Creating contact for ${instanceName}...`)
     
@@ -82,8 +82,8 @@ class FederationAPI {
       throw new Error('Node not initialized')
     }
     
-    const { getInstanceIdHash } = await import('../../node_modules/@refinio/one.core/lib/instance.js')
-    const { getDefaultKeys } = await import('../../node_modules/@refinio/one.core/lib/keychain/keychain.js')
+    const { getInstanceIdHash } = await import('@refinio/one.core/lib/instance.js')
+    const { getDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
     
     const instanceId = getInstanceIdHash()
     const personId = this.nodeOneCore.ownerId

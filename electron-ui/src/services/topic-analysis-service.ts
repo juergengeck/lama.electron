@@ -232,12 +232,16 @@ class TopicAnalysisService {
    * Returns true if analysis should be triggered based on message count
    */
   shouldAnalyze(messageCount: number, lastAnalysisMessageCount?: number): boolean {
-    // Analyze after every 5 messages or if it's the first analysis
-    const shouldAnalyze = !lastAnalysisMessageCount || (messageCount - lastAnalysisMessageCount) >= 5;
+    // Analyze after 3 messages for first analysis, then every 5 messages
+    const threshold = !lastAnalysisMessageCount ? 3 : 5;
+    const shouldAnalyze = !lastAnalysisMessageCount
+      ? messageCount >= threshold
+      : (messageCount - lastAnalysisMessageCount) >= threshold;
 
     console.log('[TopicAnalysisService] 🤔 Should analyze?', {
       messageCount,
       lastAnalysisMessageCount,
+      threshold,
       difference: lastAnalysisMessageCount ? messageCount - lastAnalysisMessageCount : 'N/A',
       decision: shouldAnalyze
     });

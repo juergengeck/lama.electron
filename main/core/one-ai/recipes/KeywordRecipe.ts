@@ -23,9 +23,13 @@ export const KeywordRecipe = {
         {
             itemprop: 'subjects',
             itemtype: {
-                type: 'array',
-                item: { type: 'string' } // Subject IDs this keyword belongs to
+                type: 'bag',
+                item: {
+                    type: 'referenceToId',
+                    allowedTypes: new Set(['Subject'])
+                }
             }
+            // NOT optional - keywords must be linked to subjects
         },
         {
             itemprop: 'score',

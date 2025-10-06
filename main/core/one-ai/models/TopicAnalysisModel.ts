@@ -44,17 +44,26 @@ export default class TopicAnalysisModel extends Model {
 
     /**
      * Create a Subject object
+     * Subjects track temporal ranges when they were discussed
      */
     async createSubject(topicId: any, keywords: any, keywordCombination: any, description: any, confidence: any): Promise<any> {
         this.state.assertCurrentState('Initialised');
 
+        const now = Date.now();
         const subjectObj = {
-            $type$: 'Subject',
+            $type$: 'Subject' as const,
             id: keywordCombination, // Use keyword combination as ID
             topic: topicId,
             keywords: keywords || [],
-            messageCount: 0,
-            timestamp: Date.now(),
+            timeRanges: [
+                {
+                    start: now,
+                    end: now // Initially start = end, will be updated when subject is seen again
+                }
+            ],
+            messageCount: 1,
+            createdAt: now,
+            lastSeenAt: now,
             archived: false
         };
 
@@ -119,9 +128,16 @@ export default class TopicAnalysisModel extends Model {
     /**
      * Add or update a keyword linked to a specific subject
      * This enforces the rule: all keywords must belong to a subject
+     * @param topicId - Topic ID
+     * @param term - Keyword term
+     * @param subjectIdHash - SHA256IdHash of the Subject this keyword belongs to
      */
-    async addKeywordToSubject(topicId: any, term: any, subjectKeywordCombination: any): Promise<any> {
+    async addKeywordToSubject(topicId: any, term: any, subjectIdHash: any): Promise<any> {
         this.state.assertCurrentState('Initialised');
+
+        if (!subjectIdHash) {
+            throw new Error('Subject ID hash is required - keywords must be linked to subjects');
+        }
 
         // Check if keyword already exists
         const room = new TopicAnalysisRoom(topicId, this.channelManager);
@@ -132,28 +148,28 @@ export default class TopicAnalysisModel extends Model {
         if (existing) {
             // Update frequency and link to subject if not already linked
             existing.frequency = (existing.frequency || 0) + 1;
-            existing.lastSeen = new Date().toISOString();
+            existing.lastSeen = Date.now();
             if (!existing.subjects) {
                 existing.subjects = [];
             }
-            if (!existing.subjects.includes(subjectKeywordCombination)) {
-                existing.subjects.push(subjectKeywordCombination);
+            if (!existing.subjects.includes(subjectIdHash)) {
+                existing.subjects.push(subjectIdHash);
             }
             await this.channelManager.postToChannel(topicId, existing);
             return existing;
         }
 
         // Create new keyword linked to subject
+        // IMPORTANT: subjects field is a bag of SHA256IdHash references
+        const now = Date.now();
         const keywordObj = {
-            $type$: 'Keyword',
-            topicId,
+            $type$: 'Keyword' as const,
             term: normalizedTerm,
-            category: 'subject-keyword',
             frequency: 1,
+            subjects: [subjectIdHash], // Bag of Subject ID hashes
             score: 1.0,
-            extractedAt: new Date().toISOString(),
-            lastSeen: new Date().toISOString(),
-            subjects: [subjectKeywordCombination] // Link to subject
+            createdAt: now,
+            lastSeen: now
         };
 
         await this.channelManager.postToChannel(topicId, keywordObj);
@@ -250,6 +266,8 @@ export default class TopicAnalysisModel extends Model {
     async getKeywords(topicId: any, queryOptions = {}): Promise<unknown> {
         this.state.assertCurrentState('Initialised');
 
+        console.log('[TopicAnalysisModel] getKeywords called for:', topicId);
+
         // Check cache
         const cached = this.keywordsCache.get(topicId);
         if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
@@ -261,8 +279,11 @@ export default class TopicAnalysisModel extends Model {
         }
 
         // Use TopicAnalysisRoom to retrieve keywords
+        console.log('[TopicAnalysisModel] Creating TopicAnalysisRoom for:', topicId);
         const analysisRoom = new TopicAnalysisRoom(topicId, this.channelManager);
+        console.log('[TopicAnalysisModel] Calling retrieveAllKeywords...');
         const keywords: any = await (analysisRoom as any).retrieveAllKeywords();
+        console.log('[TopicAnalysisModel] retrieveAllKeywords returned:', keywords?.length || 0, 'keywords');
 
         // Cache the result
         this.keywordsCache.set(topicId, {
@@ -279,47 +300,29 @@ export default class TopicAnalysisModel extends Model {
     }
 
     /**
-     * Get a single keyword by term (optimized - uses ID hash lookup)
+     * Get a single keyword by term
+     * Uses proper ONE.core channel retrieval instead of direct storage access
      */
     async getKeywordByTerm(topicId: any, term: string): Promise<any | null> {
         this.state.assertCurrentState('Initialised');
 
         const normalizedTerm = term.toLowerCase().trim();
 
-        // Use ONE.core's getObjectByIdHash for O(1) lookup
-        // Since term is marked as isId in the recipe, we can look up by term directly
-        const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
-        const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js');
+        // Use ONE.core's channel-based retrieval - same path as storage
+        const room = new TopicAnalysisRoom(topicId, this.channelManager);
+        const allKeywords: any = await (room as any).retrieveAllKeywords();
 
-        try {
-            // Calculate the ID hash from the term (which is the ID)
-            // Since term is the ID field, we can use it directly to calculate the ID hash
-            // Note: Only the ID field (term) is used for the hash, but we need valid values for all required fields
-            const idHash = await calculateIdHashOfObj({
-                $type$: 'Keyword' as const,
-                term: normalizedTerm,
-                frequency: 0,
-                subjects: [],
-                createdAt: 0,
-                lastSeen: 0
-            } as any);
-            const result = await getObjectByIdHash(idHash as any);
+        // Find the keyword by term
+        const keyword = allKeywords.find((k: any) => k.term === normalizedTerm);
 
-            console.log('[TopicAnalysisModel] ⚡ Retrieved keyword by ID hash:', {
-                topicId,
-                term: normalizedTerm,
-                found: !!result?.obj
-            });
+        console.log('[TopicAnalysisModel] Keyword lookup via channel:', {
+            term: normalizedTerm,
+            totalKeywords: allKeywords.length,
+            sampleKeywords: allKeywords.slice(0, 3).map((k: any) => k.term),
+            found: !!keyword
+        });
 
-            return result?.obj || null;
-        } catch (error) {
-            console.log('[TopicAnalysisModel] Keyword not found:', {
-                topicId,
-                term: normalizedTerm,
-                error: (error as Error).message
-            });
-            return null;
-        }
+        return keyword || null;
     }
 
     /**

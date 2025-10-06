@@ -3,6 +3,8 @@
  *
  * Subject represents a distinct discussion topic within a conversation
  * Identified by topic + keyword combination
+ *
+ * Tracks temporal spans when the subject was discussed via timeRanges array
  */
 export const SubjectRecipe = {
     $type$: 'Recipe',
@@ -29,11 +31,34 @@ export const SubjectRecipe = {
             }
         },
         {
+            itemprop: 'timeRanges',
+            itemtype: {
+                type: 'array',
+                item: {
+                    type: 'object',
+                    rules: [
+                        {
+                            itemprop: 'start',
+                            itemtype: { type: 'integer' }
+                        },
+                        {
+                            itemprop: 'end',
+                            itemtype: { type: 'integer' }
+                        }
+                    ]
+                }
+            }
+        },
+        {
             itemprop: 'messageCount',
             itemtype: { type: 'integer' }
         },
         {
-            itemprop: 'timestamp',
+            itemprop: 'createdAt',
+            itemtype: { type: 'integer' }
+        },
+        {
+            itemprop: 'lastSeenAt',
             itemtype: { type: 'integer' }
         },
         {

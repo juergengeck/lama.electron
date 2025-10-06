@@ -29,6 +29,7 @@ import keywordDetailHandlers from './handlers/keyword-detail.js';
 import auditHandlers from './handlers/audit.js';
 import exportHandlers from './handlers/export.js';
 import feedForwardHandlers from './handlers/feed-forward.js';
+import { registerLlmConfigHandlers } from './handlers/llm-config.js';
 
 // Node error type
 interface NodeError extends Error {
@@ -187,6 +188,9 @@ class IPCController {
     this.handle('llm:testApiKey', aiHandlers.testApiKey);
     this.handle('ai:ensureDefaultChats', aiHandlers['ai:ensureDefaultChats']);
     this.handle('ai:getDefaultModel', aiHandlers['ai:getDefaultModel']);
+
+    // LLM Configuration handlers (network Ollama support)
+    registerLlmConfigHandlers();
 
     // Attachment handlers
     this.handle('attachment:store', attachmentHandlers.storeAttachment);

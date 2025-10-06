@@ -23,9 +23,9 @@ class InstanceManager {
       throw new Error('Node instance not initialized')
     }
 
-    const { storeUnversionedObject } = await import('../../node_modules/@refinio/one.core/lib/storage-unversioned-objects.js')
-    const { getInstanceIdHash } = await import('../../node_modules/@refinio/one.core/lib/instance.js')
-    const { getDefaultKeys } = await import('../../node_modules/@refinio/one.core/lib/keychain/keychain.js')
+    const { storeUnversionedObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
+    const { getInstanceIdHash } = await import('@refinio/one.core/lib/instance.js')
+    const { getDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
     
     // Get instance and person keys using the proper helpers
     const instanceId = getInstanceIdHash()

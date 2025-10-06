@@ -61,8 +61,8 @@ class ContentSharingManager {
   async grantAccessToExistingContent(): Promise<any> {
     console.log('[ContentSharing] Granting access to existing content...')
     
-    const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-    const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
+    const { createAccess } = await import('@refinio/one.core/lib/access.js')
+    const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
     
     // 1. Grant access to Someone objects (contacts)
     await this.grantAccessToContacts(createAccess, SET_ACCESS_MODE)
@@ -133,7 +133,7 @@ class ContentSharingManager {
       return
     }
     
-    const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+    const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
     
     try {
       // Get all channels
@@ -192,8 +192,8 @@ class ContentSharingManager {
       this.nodeOneCore.leuteModel.onSomeoneAdded.listen(async (someoneId: any) => {
         console.log(`[ContentSharing] New contact added: ${String(someoneId).substring(0, 8)}...`)
         
-        const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-        const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
+        const { createAccess } = await import('@refinio/one.core/lib/access.js')
+        const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
         
         // Grant access to the new Someone object
         if (this.browserPersonId) {
@@ -220,9 +220,9 @@ class ContentSharingManager {
       this.nodeOneCore.channelManager.onChannelCreated.listen(async (channelInfo: any) => {
         console.log(`[ContentSharing] New channel created: ${channelInfo.id}`)
         
-        const { createAccess } = await import('../../node_modules/@refinio/one.core/lib/access.js')
-        const { SET_ACCESS_MODE } = await import('../../node_modules/@refinio/one.core/lib/storage-base-common.js')
-        const { calculateIdHashOfObj } = await import('../../node_modules/@refinio/one.core/lib/util/object.js')
+        const { createAccess } = await import('@refinio/one.core/lib/access.js')
+        const { SET_ACCESS_MODE } = await import('@refinio/one.core/lib/storage-base-common.js')
+        const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
         
         // Calculate channel info ID
         const channelInfoId = await calculateIdHashOfObj({

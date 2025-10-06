@@ -17,6 +17,11 @@ export const LLMRecipe = {
             isId: true
         },
         {
+            itemprop: 'modelId',
+            itemtype: { type: 'string' },
+            optional: true
+        },
+        {
             itemprop: 'filename',
             itemtype: { type: 'string' }
         },
@@ -159,6 +164,25 @@ export const LLMRecipe = {
         },
         {
             itemprop: 'downloadUrl',
+            itemtype: { type: 'string' },
+            optional: true
+        },
+        // Network configuration fields (for remote Ollama)
+        {
+            itemprop: 'baseUrl',
+            itemtype: { type: 'string' },
+            optional: true
+        },
+        {
+            itemprop: 'authType',
+            itemtype: {
+                type: 'string',
+                regexp: /^(none|bearer)$/
+            },
+            optional: true
+        },
+        {
+            itemprop: 'encryptedAuthToken',
             itemtype: { type: 'string' },
             optional: true
         }
