@@ -20,6 +20,7 @@ interface CloudKeyword {
   size: number;
   frequency?: number;
   score?: number;
+  subjects?: string[]; // Array of subject IDs
 }
 
 export const KeywordCloud: React.FC<KeywordCloudProps> = ({
@@ -57,10 +58,11 @@ export const KeywordCloud: React.FC<KeywordCloudProps> = ({
       const maxFreq = Math.max(...filteredKeywords.map(k => k.frequency || 1));
 
       cloudKeywords = filteredKeywords.slice(0, effectiveMaxDisplay).map(keyword => ({
-        text: keyword.text,
+        text: keyword.text || keyword.term || '',
         size: Math.ceil(((keyword.frequency || 1) / maxFreq) * 10),
         frequency: keyword.frequency,
-        score: keyword.score
+        score: keyword.score,
+        subjects: keyword.subjects || []
       }));
     }
 
@@ -181,6 +183,10 @@ export const KeywordCloud: React.FC<KeywordCloudProps> = ({
                 keyword.frequency
                   ? `Frequency: ${keyword.frequency}${
                       keyword.score ? `, Score: ${keyword.score.toFixed(2)}` : ''
+                    }${
+                      keyword.subjects && keyword.subjects.length > 0
+                        ? `\nSubjects: ${keyword.subjects.length}`
+                        : ''
                     }`
                   : undefined
               }

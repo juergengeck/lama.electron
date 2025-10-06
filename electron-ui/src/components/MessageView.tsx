@@ -99,11 +99,12 @@ export function MessageView({
   useEffect(() => {
     if (isUserScrolledUp) return
 
-    if (messagesEndRef.current) {
-      // Use instant scroll during streaming for better UX, smooth scroll otherwise
-      const behavior = aiStreamingContent ? 'instant' : 'smooth'
-      messagesEndRef.current.scrollIntoView({ behavior, block: 'end' })
-    }
+    // Use requestAnimationFrame to ensure DOM has finished rendering before scrolling
+    requestAnimationFrame(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      }
+    })
   }, [messages, aiStreamingContent, isUserScrolledUp])
 
 

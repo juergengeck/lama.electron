@@ -268,16 +268,20 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                   WebkitScrollbar: { display: 'none' }
                 }}
               >
-                {keywords.map((keyword, idx) => (
-                  <Badge
-                    key={idx}
-                    variant="secondary"
-                    className="cursor-pointer hover:bg-secondary/80 transition-colors text-xs whitespace-nowrap flex-shrink-0"
-                    onClick={() => onKeywordClick?.(keyword)}
-                  >
-                    #{keyword}
-                  </Badge>
-                ))}
+                {keywords.map((keyword, idx) => {
+                  const keywordText = typeof keyword === 'string' ? keyword : (keyword.term || keyword.text || '');
+                  return (
+                    <Badge
+                      key={idx}
+                      variant="secondary"
+                      className="cursor-pointer hover:bg-secondary/80 transition-colors text-xs whitespace-nowrap flex-shrink-0"
+                      onClick={() => onKeywordClick?.(keywordText)}
+                      title={typeof keyword === 'object' && keyword.subjects?.length > 0 ? `Subjects: ${keyword.subjects.length}` : undefined}
+                    >
+                      #{keywordText}
+                    </Badge>
+                  );
+                })}
               </div>
 
               {/* Right Gradient Fade */}

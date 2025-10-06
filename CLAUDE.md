@@ -56,6 +56,94 @@ This file provides guidance to Claude Code when working with LAMA Electron.
 - **Structured Output**: LLM returns formatted response with [RESPONSE] and [ANALYSIS] sections
 - **Automatic Processing**: Keywords and subjects are created/updated without blocking user interaction
 
+## XML-Based LLM Communication (Feature 018 - IN DEVELOPMENT)
+
+**Status**: Planning complete, ready for implementation
+
+### Overview
+Structured XML protocol for LLM queries and responses, replacing text-based [RESPONSE]/[ANALYSIS] format. Enables reliable extraction of keywords, subjects, and summaries with full traceability.
+
+### XML Format
+
+**Query Format**:
+```xml
+<llmQuery>
+  <userMessage>[User's message]</userMessage>
+  <context topicId="..." messageCount="...">
+    <activeSubjects>subject1, subject2</activeSubjects>
+    <recentKeywords>keyword1, keyword2</recentKeywords>
+  </context>
+</llmQuery>
+```
+
+**Response Format**:
+```xml
+<llmResponse>
+  <response>[Human-readable text]</response>
+  <analysis>
+    <subject name="topic-name" description="..." isNew="true|false">
+      <keyword term="keyword" confidence="0.8" />
+    </subject>
+    <summaryUpdate>[Incremental summary]</summaryUpdate>
+  </analysis>
+</llmResponse>
+```
+
+### New Data Models
+
+**XMLMessageAttachment**:
+- Stores complete XML messages as BLOB (>1KB) or inline (≤1KB)
+- Fields: `topicId`, `messageId`, `xmlContent`/`xmlBlob`, `format`, `version`, `size`
+- Enables verification and debugging of LLM extractions
+
+**SystemPromptTemplate**:
+- Per-model system prompts with XML format instructions
+- Fields: `modelId`, `promptText`, `xmlSchemaVersion`, `version`, `active`
+- Templates teach LLMs the expected XML structure
+
+**Enhanced Models** (added `sourceXmlHash` field):
+- Keyword: Links to XMLMessageAttachment that extracted it
+- Subject: Links to XMLMessageAttachment that created it
+- Summary: Links to XMLMessageAttachment that triggered update
+
+### Implementation Files
+
+**New**:
+- `/main/core/one-ai/models/XMLMessageAttachment.ts` - BLOB/inline storage model
+- `/main/core/one-ai/models/SystemPromptTemplate.ts` - System prompt management
+- `/main/core/one-ai/recipes/xml-message-attachment.ts` - Recipe definition
+- `/main/core/one-ai/recipes/system-prompt-template.ts` - Recipe definition
+
+**Modified**:
+- `/main/services/llm-manager.ts` - Add `formatQueryAsXML()`, `parseXMLResponse()`
+- `/main/services/attachment-service.ts` - Add `storeXMLAttachment()`, `retrieveXMLAttachment()`
+- `/main/core/ai-assistant-model.ts` - Use XML protocol, set `sourceXmlHash` on objects
+- `/main/ipc/handlers/llm.ts` - Return `{text, xmlAttachmentId, analysis}`
+
+### Key Principles
+
+- **Fail Fast**: Malformed XML throws error, no fallback to text
+- **No Legacy Migration**: Old conversations stay as-is, new use XML
+- **Real-time Processing**: Extraction during chat with `setImmediate()` for non-blocking
+- **Traceability**: Every extracted object links back to source XML via `sourceXmlHash`
+- **Performance**: <100ms parsing overhead, <1MB average attachment size
+
+### Technical Decisions
+
+- **Parser**: fast-xml-parser v4.x (3-5ms for 10KB)
+- **System Prompt**: One-shot learning, ~400 tokens, temperature=0
+- **Storage**: BLOB for >1KB, inline for ≤1KB
+- **Schema**: 3-level max depth, camelCase tags, attributes for metadata
+
+### Documentation
+
+- Spec: `/specs/018-we-must-create/spec.md`
+- Plan: `/specs/018-we-must-create/plan.md`
+- Research: `/specs/018-we-must-create/research.md`
+- Contracts: `/specs/018-we-must-create/contracts/xml-schema.md`
+- Data Model: `/specs/018-we-must-create/data-model.md`
+- Quickstart: `/specs/018-we-must-create/quickstart.md`
+
 ### Topic ID Determinism
 - **Name-based IDs**: Topics use cleaned conversation names as IDs (e.g., "pizza-discussion" not "topic-1758610172370")
 - **Duplicate Prevention**: System checks for existing topics and appends counter if needed

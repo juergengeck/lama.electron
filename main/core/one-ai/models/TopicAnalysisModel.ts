@@ -103,6 +103,32 @@ export default class TopicAnalysisModel extends Model {
     }
 
     /**
+     * Create a Keyword with subject references
+     */
+    async createKeywordWithSubjects(topicId: any, term: any, subjectIds: string[], frequency: any, score: any): Promise<any> {
+        this.state.assertCurrentState('Initialised');
+
+        const now = Date.now();
+        const keywordObj = {
+            $type$: 'Keyword',
+            term: term.toLowerCase().trim(),
+            frequency: frequency || 1,
+            subjects: subjectIds || [],
+            score: score || undefined,
+            createdAt: now,
+            lastSeen: now
+        };
+
+        // Post to the conversation's channel
+        await this.channelManager.postToChannel(
+            topicId,
+            keywordObj
+        );
+
+        return keywordObj;
+    }
+
+    /**
      * Add or update a keyword for a topic
      */
     async addKeyword(topicId: any, term: any): Promise<any> {

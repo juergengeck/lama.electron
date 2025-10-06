@@ -577,6 +577,13 @@ What can I help you with today?`
           })
         }
 
+        // Debug: Log what we got from chatWithAnalysis
+        console.log('[AIAssistantModel] chatWithAnalysis result:', {
+          hasResponse: !!(result as any)?.response,
+          hasAnalysis: !!(result as any)?.analysis,
+          analysisKeys: (result as any)?.analysis ? Object.keys((result as any).analysis) : []
+        })
+
         // Process analysis in background (non-blocking)
         if ((result as any)?.analysis) {
           setImmediate(async () => {

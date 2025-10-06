@@ -128,12 +128,6 @@ declare module '@OneObjectInterfaces' {
         enableMCP?: boolean;
     }
 
-    // Extend ONE.core's ID object interfaces (for objects that can be retrieved by ID)
-    interface OneIdObjectInterfaces {
-        LLM: Pick<LLM, '$type$' | 'name'>;
-        GlobalLLMSettings: GlobalLLMSettings;
-    }
-
     // MessageAssertion for verifiable message credentials
     export interface MessageAssertion {
         $type$: 'MessageAssertion';
@@ -150,7 +144,39 @@ declare module '@OneObjectInterfaces' {
         assertionVersion: string;
     }
 
+    // XMLMessageAttachment - stores XML-formatted LLM messages
+    export interface XMLMessageAttachment {
+        $type$: 'XMLMessageAttachment';
+        topicId: string;
+        messageId: string;
+        xmlContent?: string; // Inline XML if ≤1KB
+        xmlBlob?: string; // BLOB hash if >1KB (stored as string)
+        format: string; // 'llm-query' | 'llm-response'
+        version: number; // Schema version (1)
+        createdAt: number; // Unix timestamp
+        size: number; // Byte size
+    }
+
+    // SystemPromptTemplate - per-model system prompts with XML format instructions
+    export interface SystemPromptTemplate {
+        $type$: 'SystemPromptTemplate';
+        modelId: string; // ID field - FK to LLM
+        promptText: string;
+        xmlSchemaVersion: number;
+        version: number;
+        active: boolean;
+        createdAt: number;
+        updatedAt: number;
+    }
+
     // Import AffirmationCertificate from ONE.models - it's already defined there
+
+    // Extend ONE.core's ID object interfaces (for objects that can be retrieved by ID)
+    interface OneIdObjectInterfaces {
+        LLM: Pick<LLM, '$type$' | 'name'>;
+        GlobalLLMSettings: GlobalLLMSettings;
+        SystemPromptTemplate: Pick<SystemPromptTemplate, '$type$' | 'modelId'>;
+    }
 
     // Extend ONE.core's versioned object interfaces with our types
     interface OneVersionedObjectInterfaces {
@@ -161,5 +187,7 @@ declare module '@OneObjectInterfaces' {
         LLM: LLM;
         GlobalLLMSettings: GlobalLLMSettings;
         MessageAssertion: MessageAssertion;
+        XMLMessageAttachment: XMLMessageAttachment;
+        SystemPromptTemplate: SystemPromptTemplate;
     }
 }

@@ -675,44 +675,59 @@ class LLMManager extends EventEmitter {
 
       console.log(`[LLMManager] Chat with analysis using ${model.id}, topicId: ${topicId}`)
 
+      // Get XML system prompt for this model
+      const { getActiveSystemPrompt } = await import('./system-prompt-manager.js')
+      const xmlSystemPrompt = await getActiveSystemPrompt(modelId)
+
       // Build enhanced prompt that requests both response and analysis
-      const conversationContext: any[] = messages.slice(-10).map((m: any) =>
+      const conversationContext: string = messages.slice(-10).map((m: any) =>
         `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
       ).join('\n')
 
       const lastUserMessage = messages[messages.length - 1]?.content || ''
 
-      const analysisPrompt = `You are LAMA, a private AI assistant with access to all owner's conversations. Respond to the user naturally, then provide analysis.
+      const analysisPrompt = `${xmlSystemPrompt}
 
 Recent conversation:
 ${conversationContext}
 
-Provide your response in this exact format:
-[RESPONSE]
-Your natural response to the user here
-[/RESPONSE]
+User's latest message: ${lastUserMessage}
 
-[ANALYSIS]
-subject: subject-name | description of what this subject is about
-subject_keywords: keyword1, keyword2, keyword3 (2-5 keywords that DEFINE this subject)
-is_new_subject: yes/no (whether this is a new subject not previously discussed)
-summary_update: brief update about how this message changes the conversation summary (or "none" if no update needed)
-[/ANALYSIS]
-
-IMPORTANT RULES:
-- Every message MUST relate to a subject
-- The subject_keywords are the ONLY keywords - they define what this subject is about
-- Keywords can ONLY exist as part of a subject - no orphan keywords
-- If the message is about the same subject as recent replies, use the same subject name and keywords
-- Even short messages have a subject (e.g., "ok" continues the current subject)
-- Your response should be natural and helpful
-- Identify which subject this reply is discussing (same as before or new)`
+Respond using the XML format described in the system prompt.`
 
       // Replace the last message with our enhanced prompt
       const enhancedMessages = [
         ...messages.slice(0, -1),
         { role: 'user', content: analysisPrompt }
       ]
+
+      // Store the query as XML attachment
+      let queryAttachmentHash = null
+      if (topicId) {
+        try {
+          const attachmentService = (await import('./attachment-service.js')).default
+
+          // Format query as XML (escape special characters)
+          const escapeXML = (str: string) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+          const queryXML = `<llmQuery>
+  <userMessage>${escapeXML(lastUserMessage)}</userMessage>
+  <context topicId="${topicId}" messageCount="${messages.length}">
+    <conversationHistory>${escapeXML(conversationContext)}</conversationHistory>
+  </context>
+</llmQuery>`
+
+          queryAttachmentHash = await attachmentService.storeXMLAttachment(
+            topicId,
+            'temp-user-message-id', // Will be updated by caller
+            queryXML,
+            'llm-query'
+          )
+          console.log(`[LLMManager] Stored XML query as attachment: ${queryAttachmentHash}`)
+        } catch (error) {
+          console.warn('[LLMManager] Failed to store query attachment:', error)
+        }
+      }
 
       // Track what we've streamed to avoid duplicates
       let streamedLength = 0
@@ -724,16 +739,16 @@ IMPORTANT RULES:
         onStream: options.onStream ? (chunk: any) => {
           fullResponse += chunk
 
-          // Extract just the response part for streaming
-          const responseMatch = String(fullResponse).match(/\[RESPONSE\]([\s\S]*?)(?:\[\/RESPONSE\]|$)/)
+          // Extract just the response part for streaming (XML format)
+          const responseMatch = String(fullResponse).match(/<response>([\s\S]*?)(?:<\/response>|$)/)
           if (responseMatch) {
             const responseText = responseMatch[1]
             // Only stream new content
             if (responseText.length > streamedLength) {
               const newContent = String(responseText).substring(streamedLength)
               streamedLength = responseText.length
-              // Stream the new content unless it contains analysis markers
-              if (!newContent.includes('[/RESPONSE]') && !newContent.includes('[ANALYSIS]')) {
+              // Stream the new content unless it contains XML closing tags
+              if (!newContent.includes('</response>') && !newContent.includes('<analysis>')) {
                 options.onStream(newContent)
               }
             }
@@ -741,49 +756,44 @@ IMPORTANT RULES:
         } : undefined
       })
 
-      // Parse response and analysis
-      const responseMatch = String(response).match(/\[RESPONSE\]([\s\S]*?)\[\/RESPONSE\]/)
-      const analysisMatch = String(response).match(/\[ANALYSIS\]([\s\S]*?)\[\/ANALYSIS\]/)
-
+      // Parse XML response and analysis
+      const { parseXMLResponse } = await import('./xml-parser.js')
       let userResponse = response // Fallback to full response if parsing fails
       let analysis = null
+      let xmlAttachmentHash = null
 
-      if (responseMatch) {
-        userResponse = responseMatch[1].trim()
-      }
+      try {
+        const parsed = parseXMLResponse(response)
+        userResponse = parsed.text
 
-      if (analysisMatch) {
-        const analysisText = analysisMatch[1].trim()
-        const subjectLine = String(analysisText).match(/subject:\s*(.+)/)
-        const keywordsLine = String(analysisText).match(/subject_keywords:\s*(.+)/)
-        const newSubjectLine = String(analysisText).match(/is_new_subject:\s*(.+)/)
-        const summaryUpdateLine = String(analysisText).match(/summary_update:\s*(.+)/)
-
-        analysis = {
-          subject: null,
-          summaryUpdate: null
-        }
-
-        if (subjectLine) {
-          const [name, ...descParts] = subjectLine[1].split('|')
-          const keywords = keywordsLine
-            ? keywordsLine[1].split(',').map(k => k.trim()).filter(k => k && !k.includes('(')) // Remove "(2-5 keywords...)" if LLM included it
-            : []
-
-          analysis.subject = {
-            name: name.trim(),
-            description: descParts.join('|').trim(),
-            keywords: keywords, // Keywords now part of subject
-            isNew: newSubjectLine ? newSubjectLine[1].trim().toLowerCase() === 'yes' : false
+        // Convert parsed XML structure to the format expected by AI assistant
+        if (parsed.analysis.subjects.length > 0) {
+          const subject = parsed.analysis.subjects[0] // Take first subject for now
+          analysis = {
+            subject: {
+              name: subject.name,
+              description: subject.description,
+              keywords: subject.keywords.map(k => k.term),
+              isNew: subject.isNew
+            },
+            summaryUpdate: parsed.analysis.summaryUpdate || null
           }
         }
 
-        if (summaryUpdateLine) {
-          const updateText = summaryUpdateLine[1].trim()
-          if (updateText.toLowerCase() !== 'none') {
-            analysis.summaryUpdate = updateText
-          }
+        // Store XML response as attachment
+        if (topicId) {
+          const attachmentService = (await import('./attachment-service.js')).default
+          xmlAttachmentHash = await attachmentService.storeXMLAttachment(
+            topicId,
+            'temp-message-id', // Will be updated by caller
+            response,
+            'llm-response'
+          )
+          console.log(`[LLMManager] Stored XML response as attachment: ${xmlAttachmentHash}`)
         }
+      } catch (error) {
+        console.warn('[LLMManager] XML parsing failed, using fallback:', error)
+        // Keep userResponse as the full response
       }
 
       console.log(`[LLMManager] Chat with analysis completed in ${Date.now() - startTime}ms`)
@@ -791,16 +801,19 @@ IMPORTANT RULES:
       console.log(`[LLMManager] Raw LLM response preview: ${String(response).substring(0, 200)}...`)
       console.log(`[LLMManager] Extracted user response length: ${userResponse.length}`)
       console.log(`[LLMManager] Extracted user response preview: ${String(userResponse).substring(0, 100)}...`)
-      console.log(`[LLMManager] Response match found: ${responseMatch ? 'YES' : 'NO'}`)
-      console.log(`[LLMManager] Analysis match found: ${analysisMatch ? 'YES' : 'NO'}`)
       if (analysis?.subject) {
         console.log(`[LLMManager] Subject: ${analysis.subject.name}, keywords: [${analysis.subject.keywords?.join(', ')}], isNew: ${analysis.subject.isNew}, summaryUpdate: ${analysis.summaryUpdate ? 'YES' : 'NO'}`)
+      }
+      if (queryAttachmentHash || xmlAttachmentHash) {
+        console.log(`[LLMManager] XML attachments - query: ${queryAttachmentHash}, response: ${xmlAttachmentHash}`)
       }
 
       return {
         response: userResponse,
         analysis,
-        topicId // Pass topicId through to the caller
+        topicId, // Pass topicId through to the caller
+        queryAttachmentHash, // Hash of the XML query attachment
+        xmlAttachmentHash // Hash of the XML response attachment
       }
     } catch (error) {
       console.error('[LLMManager] Chat with analysis error:', error)

@@ -16,7 +16,7 @@ interface Message {
 export function useChatKeywords(topicId: string, messages: Message[] = []) {
   console.log('[useChatKeywords] Hook called with topicId:', topicId, 'messages:', messages.length);
 
-  const [keywords, setKeywords] = useState<string[]>([]);
+  const [keywords, setKeywords] = useState<any[]>([]); // Changed from string[] to any[] to hold full keyword objects
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,9 +42,11 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
               limit: 15
             });
             if (response.success && response.data?.keywords) {
-              const keywordTerms = response.data.keywords.map((k: any) => k.term || k);
+              // Keep full keyword objects with subjects array
+              const keywords = response.data.keywords;
+              const keywordTerms = keywords.map((k: any) => k.term || k);
               console.log('[useChatKeywords] Refreshed keywords after update:', keywordTerms.length);
-              setKeywords(keywordTerms);
+              setKeywords(keywords);
             }
           } catch (err) {
             console.error('[useChatKeywords] Error refreshing keywords:', err);
@@ -105,9 +107,11 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
             // Only update if this is still the latest request
             if (currentRequest === requestCounter.current) {
               if (response.success && response.data?.keywords) {
-                const keywordTerms = response.data.keywords.map((k: any) => k.term || k);
+                // Keep full keyword objects with subjects array
+                const keywords = response.data.keywords;
+                const keywordTerms = keywords.map((k: any) => k.term || k);
                 console.log('[useChatKeywords] ✅ Keywords loaded from storage:', keywordTerms.length, 'keywords:', keywordTerms);
-                setKeywords(keywordTerms);
+                setKeywords(keywords);
                 setError(null);
               } else {
                 console.log('[useChatKeywords] ❌ No keywords in response:', response);
