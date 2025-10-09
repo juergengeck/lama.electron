@@ -395,24 +395,30 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
     if (full) {
       return date.toLocaleString();
     }
-    
+
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    
+
     if (minutes < 1) return 'now';
     if (minutes < 60) return `${minutes}m`;
     if (hours < 24) return `${hours}h`;
     if (days < 7) return `${days}d`;
     return date.toLocaleDateString();
   };
-  
+
+  // Check if message contains tables or code blocks (for wide layout)
+  const hasWideContent = message.text && (
+    message.text.includes('```') || // Code blocks
+    message.text.includes('|') // Likely a table
+  );
+
   return (
     <>
       <div
-        className={`enhanced-message-bubble ${message.isOwn ? 'own' : 'other'} ${theme}`}
+        className={`enhanced-message-bubble ${message.isOwn ? 'own' : 'other'} ${theme} ${hasWideContent ? 'has-wide-content' : ''}`}
         onContextMenu={handleContextMenu}
       >
         <div className="message-header">

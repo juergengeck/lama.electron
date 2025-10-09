@@ -14,10 +14,7 @@
 }
 
 /* When message contains a pre block or table, allow it to expand */
-/* Using :has() selector for automatic detection */
-.enhanced-message-bubble:has(pre),
-.enhanced-message-bubble:has(table),
-.enhanced-message-bubble.has-pre {
+.enhanced-message-bubble.has-wide-content {
   max-width: min(95%, 1200px);
 }
 
