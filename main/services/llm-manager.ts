@@ -645,21 +645,22 @@ class LLMManager extends EventEmitter {
 
   async chatWithOllama(model: any, messages: any, options: any = {}): Promise<unknown> {
     const { chatWithOllama } = await import('./ollama.js')
-    
+
     return await chatWithOllama(
       model.parameters.modelName,
       messages,
       {
         temperature: model.parameters.temperature,
         max_tokens: model.parameters.maxTokens,
-        onStream: options.onStream
+        onStream: options.onStream,
+        format: options.format  // Pass through structured output schema
       }
     )
   }
   
   /**
    * Chat with response and topic analysis in a single LLM call
-   * Returns response immediately and processes analysis in background
+   * Streams response in real-time, then parses JSON for analysis
    */
   async chatWithAnalysis(messages: any, modelId = null, options: any = {}, topicId?: string): Promise<unknown> {
     const startTime = Date.now()
@@ -675,147 +676,181 @@ class LLMManager extends EventEmitter {
 
       console.log(`[LLMManager] Chat with analysis using ${model.id}, topicId: ${topicId}`)
 
-      // Get XML system prompt for this model
-      const { getActiveSystemPrompt } = await import('./system-prompt-manager.js')
-      const xmlSystemPrompt = await getActiveSystemPrompt(modelId)
+      // Import structured output schema
+      const { LLM_RESPONSE_SCHEMA } = await import('../schemas/llm-response.schema.js')
 
-      // Build enhanced prompt that requests both response and analysis
-      const conversationContext: string = messages.slice(-10).map((m: any) =>
-        `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
-      ).join('\n')
+      // STREAMING STRATEGY:
+      // Stream natural response FIRST (no structured output in user-facing response)
+      // Then extract analysis SEPARATELY using structured output
 
-      const lastUserMessage = messages[messages.length - 1]?.content || ''
-
-      const analysisPrompt = `${xmlSystemPrompt}
-
-Recent conversation:
-${conversationContext}
-
-User's latest message: ${lastUserMessage}
-
-Respond using the XML format described in the system prompt.`
-
-      // Replace the last message with our enhanced prompt
-      const enhancedMessages = [
-        ...messages.slice(0, -1),
-        { role: 'user', content: analysisPrompt }
-      ]
-
-      // Store the query as XML attachment
-      let queryAttachmentHash = null
-      if (topicId) {
-        try {
-          const attachmentService = (await import('./attachment-service.js')).default
-
-          // Format query as XML (escape special characters)
-          const escapeXML = (str: string) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
-          const queryXML = `<llmQuery>
-  <userMessage>${escapeXML(lastUserMessage)}</userMessage>
-  <context topicId="${topicId}" messageCount="${messages.length}">
-    <conversationHistory>${escapeXML(conversationContext)}</conversationHistory>
-  </context>
-</llmQuery>`
-
-          queryAttachmentHash = await attachmentService.storeXMLAttachment(
-            topicId,
-            'temp-user-message-id', // Will be updated by caller
-            queryXML,
-            'llm-query'
-          )
-          console.log(`[LLMManager] Stored XML query as attachment: ${queryAttachmentHash}`)
-        } catch (error) {
-          console.warn('[LLMManager] Failed to store query attachment:', error)
-        }
-      }
-
-      // Track what we've streamed to avoid duplicates
-      let streamedLength = 0
+      // Generate response with streaming
       let fullResponse = ''
+      let cleanResponse = ''  // Response without JSON blocks
+      console.log('[LLMManager] Streaming response to user...')
 
-      // Get response with streaming if requested
-      const response: any = await this.chat(enhancedMessages, modelId, {
+      await this.chat(messages, modelId, {
         ...options,
-        onStream: options.onStream ? (chunk: any) => {
+        onStream: (chunk: string) => {
           fullResponse += chunk
 
-          // Extract just the response part for streaming (XML format)
-          const responseMatch = String(fullResponse).match(/<response>([\s\S]*?)(?:<\/response>|$)/)
-          if (responseMatch) {
-            const responseText = responseMatch[1]
-            // Only stream new content
-            if (responseText.length > streamedLength) {
-              const newContent = String(responseText).substring(streamedLength)
-              streamedLength = responseText.length
-              // Stream the new content unless it contains XML closing tags
-              if (!newContent.includes('</response>') && !newContent.includes('<analysis>')) {
-                options.onStream(newContent)
-              }
+          // Filter out JSON blocks before streaming to UI
+          // Remove anything that looks like JSON (both with and without code fences)
+          let filteredChunk = chunk
+
+          // Only pass through non-JSON content to UI
+          if (options.onStream && !chunk.includes('{') && !chunk.includes('}')) {
+            options.onStream(chunk)
+            cleanResponse += chunk
+          } else if (options.onStream) {
+            // Check if we're in the middle of JSON - if so, don't stream
+            const tempResponse = fullResponse
+            const jsonMatch = tempResponse.match(/\{[\s\S]*$/);
+            if (!jsonMatch) {
+              // Not in JSON block yet, stream the clean part
+              options.onStream(chunk)
+              cleanResponse += chunk
             }
+            // Otherwise skip streaming this chunk (it's JSON)
           }
-        } : undefined
+        }
       })
 
-      // Parse XML response and analysis
-      const { parseXMLResponse } = await import('./xml-parser.js')
-      const parsed = parseXMLResponse(response)
-      const userResponse = parsed.text
-      let analysis = null
-      let xmlAttachmentHash = null
+      // Extract the clean response (everything before JSON block)
+      const jsonBlockMatch = fullResponse.match(/\n*\{[\s\S]*\}\s*$/);
+      if (jsonBlockMatch) {
+        cleanResponse = fullResponse.substring(0, jsonBlockMatch.index).trim()
+        console.log('[LLMManager] Filtered out embedded JSON from response')
+      } else {
+        cleanResponse = fullResponse
+      }
 
-      // Convert parsed XML structure to the format expected by AI assistant
-      if (parsed.analysis.subjects.length > 0) {
-        const subject = parsed.analysis.subjects[0] // Take first subject for now
-        analysis = {
-          subject: {
-            name: subject.name,
-            description: subject.description,
-            keywords: subject.keywords.map(k => k.term),
-            isNew: subject.isNew
-          },
-          summaryUpdate: parsed.analysis.summaryUpdate || null
+      console.log('[LLMManager] Response streaming complete, now extracting analysis...')
+
+      // First, try to extract JSON from the embedded response
+      let embeddedAnalysis = null
+      const embeddedJsonMatch = fullResponse.match(/\{[\s\S]*"subjects"[\s\S]*\}/);
+      if (embeddedJsonMatch) {
+        try {
+          const jsonStr = embeddedJsonMatch[0]
+          embeddedAnalysis = JSON.parse(jsonStr)
+          console.log('[LLMManager] Found embedded analysis JSON in response')
+        } catch (e) {
+          console.warn('[LLMManager] Failed to parse embedded JSON:', e)
         }
       }
 
-      // Store XML response as attachment
-      if (topicId) {
-        const attachmentService = (await import('./attachment-service.js')).default
-        xmlAttachmentHash = await attachmentService.storeXMLAttachment(
-          topicId,
-          'temp-message-id', // Will be updated by caller
-          response,
-          'llm-response'
-        )
-        console.log(`[LLMManager] Stored XML response as attachment: ${xmlAttachmentHash}`)
+      // If we have embedded analysis, use it; otherwise, make a separate call
+      let analysisJson: string
+      let parsed: { subjects: any[], summary: string }
+
+      if (embeddedAnalysis) {
+        // Use the embedded analysis
+        parsed = embeddedAnalysis
+        console.log('[LLMManager] Using embedded analysis from response')
+      } else {
+        // Make a separate structured output call
+        const analysisMessages = [
+          {
+            role: 'system',
+            content: `Extract subjects and concepts from this conversation. Return ONLY JSON:
+{
+  "subjects": [{"name": "subject-name", "concepts": ["concept1", "concept2"]}],
+  "summary": "brief summary"
+}`
+          },
+          ...messages,
+          {
+            role: 'assistant',
+            content: cleanResponse
+          },
+          {
+            role: 'user',
+            content: 'Extract the subjects, keywords, and summary from the above conversation.'
+          }
+        ]
+
+        try {
+          // Use qwen2.5:7b for structured analysis (supports format parameter)
+          // Fallback to user's model if qwen2.5:7b not available
+          const analysisModelId = this.models.has('qwen2.5:7b') ? 'qwen2.5:7b' : modelId
+          console.log(`[LLMManager] Using ${analysisModelId} for analysis extraction`)
+
+          analysisJson = await this.chat(analysisMessages, analysisModelId, {
+            format: LLM_RESPONSE_SCHEMA,
+            temperature: 0
+          }) as string
+
+          // Parse analysis
+          let cleanJson = analysisJson.trim()
+          if (cleanJson.startsWith('```')) {
+            cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+          }
+          parsed = JSON.parse(cleanJson)
+        } catch (error) {
+          console.warn('[LLMManager] Structured analysis failed:', (error as Error).message)
+          parsed = { subjects: [], summary: '' }
+        }
       }
 
+      // Convert to internal format, handling both embedded and structured output formats
+      const analysis = {
+        subjects: (parsed.subjects || []).map((subject: any) => {
+          // Handle both formats:
+          // Embedded: { name, isNew, key_concepts: [{concept, confidence}] }
+          // Structured: { name, concepts: ["term1", "term2"] }
+          let keywords = []
+
+          // Try all possible field names: key_concepts, keyConcepts, concepts
+          const conceptsArray = subject.key_concepts || subject.keyConcepts || subject.concepts
+
+          if (conceptsArray && Array.isArray(conceptsArray)) {
+            keywords = conceptsArray.map((item: any) => {
+              // Handle various formats:
+              // 1. {keyword: "term", confidence: 0.9} - LLM sometimes uses "keyword" instead of "term"
+              // 2. {term: "term", confidence: 0.9} - Schema format
+              // 3. {concept: "term", confidence: 0.9} - Legacy format
+              // 4. "term" - String format
+              if (typeof item === 'object' && item !== null) {
+                const term = item.keyword || item.term || item.concept
+                if (term) {
+                  return {
+                    term: String(term),
+                    confidence: item.confidence || 0.8
+                  }
+                }
+              }
+              // Fallback: treat as string
+              return {
+                term: String(item),
+                confidence: 0.8
+              }
+            })
+          }
+
+          return {
+            name: subject.name,
+            description: subject.description || `Subject: ${subject.name}`,
+            isNew: subject.isNew !== undefined ? subject.isNew : true,
+            keywords
+          }
+        }),
+        summaryUpdate: parsed.summary || ''
+      }
+
+      console.log('[LLMManager] Analysis extraction complete')
+      console.log('[LLMManager] - Subjects count:', analysis.subjects.length)
+      console.log('[LLMManager] - Summary:', analysis.summaryUpdate?.substring(0, 100))
       console.log(`[LLMManager] Chat with analysis completed in ${Date.now() - startTime}ms`)
-      console.log(`[LLMManager] Raw LLM response length: ${response.length}`)
-      console.log(`[LLMManager] Raw LLM response preview: ${String(response).substring(0, 200)}...`)
-      console.log(`[LLMManager] Extracted user response length: ${userResponse.length}`)
-      console.log(`[LLMManager] Extracted user response preview: ${String(userResponse).substring(0, 100)}...`)
-      if (analysis?.subject) {
-        console.log(`[LLMManager] Subject: ${analysis.subject.name}, keywords: [${analysis.subject.keywords?.join(', ')}], isNew: ${analysis.subject.isNew}, summaryUpdate: ${analysis.summaryUpdate ? 'YES' : 'NO'}`)
-      }
-      if (queryAttachmentHash || xmlAttachmentHash) {
-        console.log(`[LLMManager] XML attachments - query: ${queryAttachmentHash}, response: ${xmlAttachmentHash}`)
-      }
 
       return {
-        response: userResponse,
+        response: cleanResponse,  // Return clean response without JSON
         analysis,
-        topicId, // Pass topicId through to the caller
-        queryAttachmentHash, // Hash of the XML query attachment
-        xmlAttachmentHash // Hash of the XML response attachment
-      }
-    } catch (error) {
-      console.error('[LLMManager] Chat with analysis error:', error)
-      // Fallback to regular chat if analysis fails
-      return {
-        response: await this.chat(messages, modelId, options),
-        analysis: null,
         topicId
       }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error('[LLMManager] Chat with analysis error:', error)
+      throw new Error(`Chat with analysis failed: ${errorMessage}`)
     }
   }
 

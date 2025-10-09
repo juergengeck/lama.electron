@@ -41,6 +41,280 @@ This file provides guidance to Claude Code when working with LAMA Electron.
 3. Create type guards that preserve type information
 4. Avoid `as any` - use proper type assertions or guards
 
+## ONE.core Fundamentals
+
+### Everything is a Hash
+
+**CRITICAL PRINCIPLE**: In ONE, everything is content-addressed by its SHA-256 hash. This drives all architecture decisions:
+
+- All objects are stored using their hash as the filename
+- References between objects are hashes, not pointers
+- Objects are **immutable** once created
+- Identical objects naturally deduplicate
+
+### Object Categories
+
+1. **Unversioned Objects** - Immutable, no version tracking
+   - `Keys` - Encryption/signing keypairs
+   - `VersionNode*` - Version graph nodes
+
+2. **Versioned Objects** - Have ID properties (`isId: true`), support versioning
+   - `Person` - Identity (ID: email)
+   - `Instance` - App instance (ID: name + owner)
+   - `Group` - Named groups (ID: name)
+   - `Recipe` - Type definitions (ID: name)
+   - `Access`/`IdAccess` - Access control
+   - Custom app objects with ID properties
+
+3. **Virtual Types**
+   - `BLOB` - Binary data
+   - `CLOB` - UTF-8 text data
+
+### Hash Types
+
+**Object Hash** (`SHA256Hash<T>`): Hash of the complete object
+```typescript
+const objectHash = await calculateHashOfObj(person);
+```
+
+**ID Hash** (`SHA256IdHash<T>`): Hash of only ID properties
+```typescript
+const idHash = await calculateIdHashOfObj(person);
+```
+
+**Key Difference**: ID hashes reference ALL versions of an object, object hashes reference ONE specific version.
+
+### Microdata Format
+
+ONE objects are serialized as HTML5 microdata for storage:
+
+```html
+<div itemscope itemtype="//refin.io/Person">
+  <span itemprop="email">user@example.com</span>
+  <span itemprop="name">John Doe</span>
+</div>
+```
+
+This format ensures:
+- Platform-independent serialization
+- Human-readable structure
+- Consistent hashing across implementations
+
+### Recipe System
+
+Recipes define the schema for ONE object types. **CRITICAL**: Array properties must include a `rules` array, even if empty:
+
+```typescript
+// ✅ CORRECT - provides rules array
+{
+    itemprop: 'devices',
+    itemtype: {
+        type: 'array',
+        item: {
+            type: 'object',
+            rules: []  // Required! Prevents parser crash
+        }
+    }
+}
+
+// ❌ INCORRECT - missing rules array crashes parser
+{
+    itemprop: 'devices',
+    itemtype: {
+        type: 'array',
+        item: {
+            type: 'object'
+            // Missing rules causes: "Cannot read property 'forEach' of undefined"
+        }
+    }
+}
+```
+
+### Storage Patterns
+
+**For Versioned Objects** (have ID properties):
+```typescript
+// Creates version nodes AND stores object
+const result = await storeVersionedObject(subject);
+// Returns: { hash, idHash, versionHash }
+```
+
+**For Unversioned Objects**:
+```typescript
+// Stores object only (no versioning)
+const hash = await storeUnversionedObject(keys);
+```
+
+**For Binary Data**:
+```typescript
+// Store BLOB
+const result = await storeArrayBufferAsBlob(arrayBuffer);
+// Returns: { hash: SHA256Hash<BLOB>, status: 'new' | 'exists' }
+
+// Read BLOB
+const data = await readBlobAsArrayBuffer(blobHash);
+```
+
+### Versioning System
+
+Versioned objects use a DAG (Directed Acyclic Graph):
+
+```typescript
+interface VersionNode {
+    depth: number;
+    creationTime: number;
+    data: SHA256Hash;  // Hash of actual object data
+}
+
+// Version node types:
+// - VersionNodeEdge: First version
+// - VersionNodeChange: Linear update (prev: hash)
+// - VersionNodeMerge: Merge versions (nodes: Set<hash>)
+```
+
+**Version Map**: Maps `ID hash → Set<version hashes>`
+
+**Retrieval**:
+- `getObject(objectHash)` - Get specific version
+- `getObjectByIdHash(idHash)` - Get latest version
+- Requires vheads files created by `storeVersionedObject()`
+
+### Reference Types in Recipes
+
+```typescript
+// Reference to specific object version
+{
+    itemprop: 'attachment',
+    itemtype: {
+        type: 'referenceToObj',
+        allowedTypes: new Set(['Message'])
+    }
+}
+
+// Reference to all versions via ID
+{
+    itemprop: 'owner',
+    itemtype: {
+        type: 'referenceToId',
+        allowedTypes: new Set(['Person'])
+    }
+}
+
+// Reference to BLOB
+{
+    itemprop: 'photo',
+    itemtype: { type: 'referenceToBlob' }
+}
+
+// Collection types
+{
+    itemprop: 'keywords',
+    itemtype: {
+        type: 'bag',  // Also: array, set, map
+        item: {
+            type: 'referenceToId',
+            allowedTypes: new Set(['Keyword'])
+        }
+    }
+}
+```
+
+### TypeScript Type System
+
+ONE.core uses declaration merging for extensible types:
+
+```typescript
+// Extend ONE's type system (in @OneCoreTypes.d.ts)
+declare module '@OneObjectInterfaces' {
+    export interface OneVersionedObjectInterfaces {
+        Subject: Subject;
+        Keyword: Keyword;
+    }
+}
+
+// Now Subject and Keyword are recognized ONE types
+```
+
+### Common Pitfalls
+
+1. **Using postToChannel() without storeVersionedObject()**
+   - `postToChannel()` syncs objects across instances
+   - `storeVersionedObject()` creates persistent vheads files
+   - **Both are required** for versioned objects retrieved via ID hash
+
+2. **Incorrect Recipe Definitions**
+   - Missing `rules: []` in array item definitions crashes parser
+   - Using `type: 'string'` instead of `referenceToId` breaks references
+   - Forgetting `isId: true` makes objects unversioned
+
+3. **Hash Type Confusion**
+   - Don't use object hashes where ID hashes are expected
+   - Keywords with Subject ID hashes must match what `storeVersionedObject()` returns
+
+4. **ID Hash Calculation**
+   - Use `calculateIdHashOfObj()` for consistent ID hashes
+   - Only ID properties (marked `isId: true`) are included in ID hash
+
+### Creating Custom Versioned Objects
+
+```typescript
+// 1. Define interface
+interface Subject {
+    $type$: 'Subject';
+    id: string;  // ID property
+    topic: SHA256IdHash<Topic>;
+    keywords: SHA256IdHash<Keyword>[];
+}
+
+// 2. Extend type system
+declare module '@OneObjectInterfaces' {
+    export interface OneVersionedObjectInterfaces {
+        Subject: Subject;
+    }
+}
+
+// 3. Create recipe
+const SubjectRecipe: Recipe = {
+    $type$: 'Recipe',
+    name: 'Subject',
+    rule: [
+        { itemprop: 'id', isId: true },  // Marks as versioned
+        {
+            itemprop: 'topic',
+            itemtype: {
+                type: 'referenceToId',
+                allowedTypes: new Set(['Topic'])
+            }
+        },
+        {
+            itemprop: 'keywords',
+            itemtype: {
+                type: 'bag',
+                item: {
+                    type: 'referenceToId',
+                    allowedTypes: new Set(['Keyword'])
+                }
+            }
+        }
+    ]
+};
+
+// 4. Register recipe (during init)
+await registerRecipes([SubjectRecipe]);
+
+// 5. Create and store objects
+const subject = {
+    $type$: 'Subject',
+    id: 'my-subject',
+    topic: topicIdHash,
+    keywords: [keywordIdHash1, keywordIdHash2]
+};
+
+// CRITICAL: Store before posting to channel
+const result = await storeVersionedObject(subject);
+await channelManager.postToChannel(topicId, subject);
+```
+
 ## Recent Optimizations (January 2025)
 
 ### Performance Improvements
@@ -56,93 +330,82 @@ This file provides guidance to Claude Code when working with LAMA Electron.
 - **Structured Output**: LLM returns formatted response with [RESPONSE] and [ANALYSIS] sections
 - **Automatic Processing**: Keywords and subjects are created/updated without blocking user interaction
 
-## XML-Based LLM Communication (Feature 018 - IN DEVELOPMENT)
+## Structured LLM Communication (Feature 018 - IN DEVELOPMENT)
 
-**Status**: Planning complete, ready for implementation
+**Status**: Planning complete, using Ollama native structured outputs
 
 ### Overview
-Structured XML protocol for LLM queries and responses, replacing text-based [RESPONSE]/[ANALYSIS] format. Enables reliable extraction of keywords, subjects, and summaries with full traceability.
+Structured JSON-based protocol for LLM responses using Ollama's native `format` parameter. Guarantees valid JSON structure (no parsing errors), extracts keywords/subjects/summaries reliably, stores directly as ONE.core objects using existing recipes. Eliminates need for prompt engineering to teach format.
 
-### XML Format
+### JSON Schema (Ollama Structured Outputs)
 
-**Query Format**:
-```xml
-<llmQuery>
-  <userMessage>[User's message]</userMessage>
-  <context topicId="..." messageCount="...">
-    <activeSubjects>subject1, subject2</activeSubjects>
-    <recentKeywords>keyword1, keyword2</recentKeywords>
-  </context>
-</llmQuery>
+**Response Schema** (enforced by Ollama at generation time):
+```json
+{
+  "response": "Natural language response",
+  "analysis": {
+    "subjects": [
+      {
+        "name": "subject-name",
+        "description": "Brief explanation",
+        "isNew": true,
+        "keywords": [
+          {"term": "keyword", "confidence": 0.8}
+        ]
+      }
+    ],
+    "summaryUpdate": "Brief summary of exchange"
+  }
+}
 ```
 
-**Response Format**:
-```xml
-<llmResponse>
-  <response>[Human-readable text]</response>
-  <analysis>
-    <subject name="topic-name" description="..." isNew="true|false">
-      <keyword term="keyword" confidence="0.8" />
-    </subject>
-    <summaryUpdate>[Incremental summary]</summaryUpdate>
-  </analysis>
-</llmResponse>
-```
+### Storage
 
-### New Data Models
-
-**XMLMessageAttachment**:
-- Stores complete XML messages as BLOB (>1KB) or inline (≤1KB)
-- Fields: `topicId`, `messageId`, `xmlContent`/`xmlBlob`, `format`, `version`, `size`
-- Enables verification and debugging of LLM extractions
-
-**SystemPromptTemplate**:
-- Per-model system prompts with XML format instructions
-- Fields: `modelId`, `promptText`, `xmlSchemaVersion`, `version`, `active`
-- Templates teach LLMs the expected XML structure
-
-**Enhanced Models** (added `sourceXmlHash` field):
-- Keyword: Links to XMLMessageAttachment that extracted it
-- Subject: Links to XMLMessageAttachment that created it
-- Summary: Links to XMLMessageAttachment that triggered update
+**ONE.core Objects** (using existing recipes):
+- JSON is parsed and stored directly as ONE.core objects
+- Subject: Created/updated from analysis.subjects
+- Keyword: Created from subject keywords
+- Summary: Updated from analysis.summaryUpdate
+- Message: Links to extracted subjects/keywords via ONE.core references
+- No intermediate XML storage - parse JSON and create objects directly
 
 ### Implementation Files
 
 **New**:
-- `/main/core/one-ai/models/XMLMessageAttachment.ts` - BLOB/inline storage model
-- `/main/core/one-ai/models/SystemPromptTemplate.ts` - System prompt management
-- `/main/core/one-ai/recipes/xml-message-attachment.ts` - Recipe definition
-- `/main/core/one-ai/recipes/system-prompt-template.ts` - Recipe definition
+- `/main/schemas/llm-response.schema.ts` - JSON schema for Ollama `format` parameter
+- `/specs/018-we-must-create/contracts/json-schema.md` - JSON schema contract
 
 **Modified**:
-- `/main/services/llm-manager.ts` - Add `formatQueryAsXML()`, `parseXMLResponse()`
-- `/main/services/attachment-service.ts` - Add `storeXMLAttachment()`, `retrieveXMLAttachment()`
-- `/main/core/ai-assistant-model.ts` - Use XML protocol, set `sourceXmlHash` on objects
-- `/main/ipc/handlers/llm.ts` - Return `{text, xmlAttachmentId, analysis}`
+- `/main/services/ollama.ts` - Added `format` parameter support in chatWithOllama()
+- `/main/services/llm-manager.ts` - Pass `format` option through, parse JSON response
+- `/main/core/ai-assistant-model.ts` - Parse JSON, create ONE.core objects directly
+- `/main/ipc/handlers/llm.ts` - Return `{text, analysis}` with parsed data
 
 ### Key Principles
 
-- **Fail Fast**: Malformed XML throws error, no fallback to text
-- **No Legacy Migration**: Old conversations stay as-is, new use XML
+- **Guaranteed Structure**: Ollama validates JSON schema before returning (no malformed responses)
+- **Fail Fast**: JSON parse errors throw (but shouldn't happen - Ollama guarantees structure)
+- **No Legacy Migration**: Old conversations stay as-is, new use structured outputs
 - **Real-time Processing**: Extraction during chat with `setImmediate()` for non-blocking
-- **Traceability**: Every extracted object links back to source XML via `sourceXmlHash`
-- **Performance**: <100ms parsing overhead, <1MB average attachment size
+- **Traceability**: Extracted objects link back to source message via ONE.core references
+- **Performance**: <5ms JSON parsing overhead
 
 ### Technical Decisions
 
-- **Parser**: fast-xml-parser v4.x (3-5ms for 10KB)
-- **System Prompt**: One-shot learning, ~400 tokens, temperature=0
-- **Storage**: BLOB for >1KB, inline for ≤1KB
-- **Schema**: 3-level max depth, camelCase tags, attributes for metadata
+- **Schema Enforcement**: Ollama's native `format` parameter (no parsing errors possible)
+- **JSON Parsing**: Native JSON.parse() (~1-2ms for 10KB)
+- **System Prompt**: Simplified (~100 tokens vs 400 - no format teaching needed), temperature=0
+- **Storage**: ONE.core native objects using existing recipes (Subject, Keyword, Summary)
 
 ### Documentation
 
 - Spec: `/specs/018-we-must-create/spec.md`
-- Plan: `/specs/018-we-must-create/plan.md`
+- Plan: `/specs/018-we-must-create/plan.md` (updated for Ollama structured outputs)
 - Research: `/specs/018-we-must-create/research.md`
-- Contracts: `/specs/018-we-must-create/contracts/xml-schema.md`
+- Contracts: `/specs/018-we-must-create/contracts/json-schema.md` (JSON schema for Ollama)
 - Data Model: `/specs/018-we-must-create/data-model.md`
 - Quickstart: `/specs/018-we-must-create/quickstart.md`
+- Ollama Blog: https://ollama.com/blog/structured-outputs
 
 ### Topic ID Determinism
 - **Name-based IDs**: Topics use cleaned conversation names as IDs (e.g., "pizza-discussion" not "topic-1758610172370")

@@ -1,7 +1,8 @@
-# Implementation Plan: Structured XML-Based LLM Communication
+# Implementation Plan: Structured JSON-Based LLM Communication (Ollama Native)
 
 **Branch**: `018-we-must-create` | **Date**: 2025-10-06 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/Users/gecko/src/lama.electron/specs/018-we-must-create/spec.md`
+**Updated**: 2025-10-06 - Using Ollama's native structured outputs instead of prompt-engineered XML
 
 ## Execution Flow (/plan command scope)
 ```
@@ -16,7 +17,9 @@
 ```
 
 ## Summary
-Implement structured XML-based communication protocol between LAMA and LLMs. System must format queries with metadata, teach LLMs the XML response format via system prompts, parse responses to extract both human-readable text and structured analysis data (keywords, subjects, summaries), and store XML messages as attachments while keeping UI presentation natural. Real-time extraction during chat with no legacy migration.
+Implement structured JSON-based communication protocol between LAMA and LLMs using Ollama's native `format` parameter. System defines JSON schemas for responses, Ollama enforces structure at LLM level (no prompt engineering needed), parse guaranteed-valid JSON to extract human-readable text and structured analysis data (keywords, subjects, summaries), store directly as ONE.core objects using existing recipes. Real-time extraction during chat with no legacy migration.
+
+**Key Change from Original Plan**: Leverage Ollama's structured outputs feature (https://ollama.com/blog/structured-outputs) to guarantee valid structure instead of relying on system prompt engineering. This eliminates malformed response handling, reduces parsing errors, and simplifies implementation. Store directly as ONE.core objects - no XML conversion needed.
 
 ## Technical Context
 **Language/Version**: TypeScript 5.x, Node.js 20+, React 18
@@ -29,10 +32,10 @@ Implement structured XML-based communication protocol between LAMA and LLMs. Sys
 **Testing**: Jest for unit, integration tests with real ONE.core instance
 **Target Platform**: Electron (macOS, Linux, Windows)
 **Project Type**: Electron app (main process + renderer process)
-**Performance Goals**: <100ms parsing overhead per message, <1MB average XML attachment size
+**Performance Goals**: <5ms JSON parsing overhead per message
 **Constraints**:
 - Real-time processing (no async delays)
-- Must fail fast on XML parsing errors
+- Must fail fast on JSON parsing errors (but Ollama guarantees structure)
 - NO browser-side ONE.core access
 **Scale/Scope**: Hundreds of conversations, thousands of messages per conversation
 
@@ -42,14 +45,14 @@ Implement structured XML-based communication protocol between LAMA and LLMs. Sys
 **Simplicity**:
 - Projects: 1 (Electron app with main/renderer separation) ✅
 - Using framework directly? YES - Direct ONE.core, no wrappers ✅
-- Single data model? YES - XML stored as attachment, parsed data as ONE objects ✅
+- Single data model? YES - JSON parsed, stored as ONE.core objects using existing recipes ✅
 - Avoiding patterns? YES - No Repository pattern, direct storage access ✅
 
 **Architecture**:
 - EVERY feature as library? N/A - Electron app architecture ✅
 - Libraries listed:
-  - `main/services/llm-manager.ts` (XML formatting & parsing)
-  - `main/services/attachment-service.ts` (XML storage)
+  - `main/services/llm-manager.ts` (JSON parsing from Ollama)
+  - `main/schemas/llm-response.schema.ts` (Ollama format schema)
   - `main/core/one-ai/` (structured data models)
 - CLI per library: N/A - Electron app
 - Library docs: N/A
@@ -59,7 +62,7 @@ Implement structured XML-based communication protocol between LAMA and LLMs. Sys
 - Git commits show tests before implementation? YES ✅
 - Order: Contract→Integration→E2E→Unit strictly followed? YES ✅
 - Real dependencies used? YES - Real ONE.core, real file system ✅
-- Integration tests for: XML parsing, attachment storage, IPC handlers ✅
+- Integration tests for: JSON parsing, ONE.core storage, IPC handlers ✅
 - FORBIDDEN: Implementation before test, skipping RED phase ✅
 
 **Observability**:
@@ -76,7 +79,7 @@ Implement structured XML-based communication protocol between LAMA and LLMs. Sys
 - Single ONE.core in Node.js ONLY? YES ✅
 - Browser is UI ONLY? YES - NO ONE.core imports ✅
 - ALL data operations via IPC? YES ✅
-- Fail fast, no fallbacks? YES - XML parse errors throw ✅
+- Fail fast, no fallbacks? YES - JSON parse errors throw (but Ollama guarantees structure) ✅
 
 ## Project Structure
 
@@ -89,22 +92,25 @@ specs/018-we-must-create/
 ├── data-model.md        # Phase 1 output (/plan command)
 ├── quickstart.md        # Phase 1 output (/plan command)
 ├── contracts/           # Phase 1 output (/plan command)
-│   └── xml-schema.md    # XML format contract
+│   └── json-schema.md   # JSON schema contract for Ollama
 └── tasks.md             # Phase 2 output (/tasks command - NOT created by /plan)
 ```
 
 ### Source Code (existing Electron structure)
 ```
 main/                           # Node.js main process
+├── schemas/
+│   └── llm-response.schema.ts # NEW: JSON schema for Ollama format parameter
 ├── services/
-│   ├── llm-manager.ts         # MODIFY: Add XML formatting/parsing
-│   └── attachment-service.ts  # USE: Store XML as attachments
+│   ├── llm-manager.ts         # MODIFY: Add Ollama structured output support
+│   └── ollama.ts              # MODIFY: Pass format parameter to Ollama
 ├── core/
 │   ├── one-ai/
-│   │   └── recipes/           # NEW: XML attachment recipe
-│   └── ai-assistant-model.ts  # MODIFY: Use XML protocol
+│   │   ├── models/            # USE: Existing Subject, Keyword, Summary recipes
+│   │   └── services/          # USE: Existing TopicAnalyzer
+│   └── ai-assistant-model.ts  # MODIFY: Parse JSON, create ONE.core objects
 └── ipc/handlers/
-    └── llm.ts                 # MODIFY: Handle XML in IPC
+    └── llm.ts                 # MODIFY: Return parsed analysis data
 
 electron-ui/                   # Browser renderer process
 └── src/
@@ -112,10 +118,10 @@ electron-ui/                   # Browser renderer process
 
 tests/
 ├── integration/
-│   ├── xml-parsing.test.ts   # NEW
-│   └── xml-attachment.test.ts # NEW
+│   ├── json-parsing.test.ts  # NEW
+│   └── one-core-storage.test.ts # NEW
 └── contract/
-    └── xml-schema.test.ts    # NEW
+    └── json-schema.test.ts   # NEW
 ```
 
 **Structure Decision**: Existing Electron app structure (main + renderer separation per LAMA constitution)
@@ -124,25 +130,25 @@ tests/
 **Status**: ✅ Complete
 
 ### Research Tasks
-1. **XML Schema Design**:
-   - Research: Best practices for LLM-friendly XML formats
-   - Decision needed: Tag naming conventions, nesting depth limits
-   - Alternatives: JSON (rejected - harder for LLMs to generate), YAML (rejected - whitespace issues)
+1. **Ollama Structured Outputs**:
+   - Research: Ollama's native `format` parameter for JSON schema enforcement
+   - Decision: Use Ollama structured outputs (guarantees valid JSON)
+   - Alternatives: Prompt engineering (rejected - error-prone), XML (rejected - unnecessary conversion)
 
-2. **Attachment Storage Patterns**:
-   - Research: ONE.core BLOB storage best practices
-   - Decision needed: Inline vs external BLOB storage
-   - Size limits and compression strategies
+2. **JSON Schema Design**:
+   - Research: JSON Schema v7 best practices for LLM responses
+   - Decision: Define schema for response + analysis structure
+   - Constraints: Required fields, type validation, string patterns
 
-3. **System Prompt Engineering**:
-   - Research: Effective LLM system prompt patterns for structured output
-   - Decision needed: One-shot vs few-shot examples in prompt
-   - Prompt token budget allocation
+3. **ONE.core Native Storage**:
+   - Research: Using existing Keyword/Subject/Summary recipes
+   - Decision: No new recipes needed - use ONE.core references for traceability
+   - References: Link extracted objects to source Message
 
-4. **XML Parsing Libraries**:
-   - Research: fast-xml-parser vs xml2js vs native DOMParser
-   - Requirements: Speed, error recovery, TypeScript support
-   - Benchmark: Parsing 10KB XML in <10ms
+4. **System Prompt Simplification**:
+   - Research: Minimal prompts when schema enforces structure
+   - Decision: ~100 token prompt (vs 400+ for XML teaching)
+   - Focus: Intent description only, not format instructions
 
 **Output**: research.md with all decisions and rationales
 
@@ -151,104 +157,92 @@ tests/
 
 ### Data Model (data-model.md)
 From spec entities:
-1. **XML Message Attachment**
-   - Fields: topicId, messageId, xmlContent, format, version
-   - Storage: ONE.core BLOB attachment
-   - Validation: Well-formed XML, schema compliance
+1. **Message** (existing)
+   - No changes needed - serves as traceability anchor
+   - Extracted objects link back to Message via ONE.core references
 
-2. **Parsed Analysis Metadata**
-   - Existing: Keyword, Subject, Summary (from one-ai package)
-   - Enhancement: Link to source XML attachment
-   - New field: sourceXmlHash (reference to attachment)
+2. **Keyword/Subject/Summary** (existing)
+   - Use existing recipes as-is
+   - Link to source Message via ONE.core reference system
+   - No new fields or recipe changes needed
 
-3. **System Prompt Template**
-   - Fields: modelId, promptText, xmlSchema, version
-   - Storage: ONE.core versioned object
-   - Lifecycle: Per-model configuration
+3. **JSON Schema**
+   - Define schema for Ollama `format` parameter
+   - Location: `/main/schemas/llm-response.schema.ts`
+   - Enforces: response + analysis structure with types/constraints
 
 ### Contracts (contracts/)
-1. **XML Query Format Contract** (xml-schema.md):
-   ```xml
-   <llm_query>
-     <user_message>[natural language]</user_message>
-     <context>
-       <previous_subjects>[...]</previous_subjects>
-       <active_keywords>[...]</active_keywords>
-     </context>
-   </llm_query>
+1. **JSON Response Format Contract** (json-schema.md):
+   ```json
+   {
+     "response": "Natural language response",
+     "analysis": {
+       "subjects": [
+         {
+           "name": "subject-name",
+           "description": "Brief explanation",
+           "isNew": true,
+           "keywords": [{"term": "keyword", "confidence": 0.8}]
+         }
+       ],
+       "summaryUpdate": "Brief summary of exchange"
+     }
+   }
    ```
 
-2. **XML Response Format Contract**:
-   ```xml
-   <llm_response>
-     <response>[human-readable text]</response>
-     <analysis>
-       <subjects>
-         <subject name="..." keywords="..." isNew="true|false" />
-       </subjects>
-       <keywords>
-         <keyword term="..." confidence="0.0-1.0" />
-       </keywords>
-       <summary_update>[incremental summary]</summary_update>
-     </analysis>
-   </llm_response>
-   ```
-
-3. **IPC Contract** (existing pattern):
+2. **IPC Contract** (existing pattern):
    - Request: `llm:chat` with message + topicId
-   - Response: {text, xmlAttachmentId, analysis}
-   - Error: XML parse failure returns text-only fallback
+   - Response: {text, analysis} with parsed JSON data
+   - Error: JSON parse errors throw (but Ollama guarantees structure)
 
 ### Integration Test Scenarios
 From user stories:
-1. **Scenario**: User sends message → XML query generated
-   - Assert: Query contains user message + context
-   - Assert: Well-formed XML
+1. **Scenario**: User sends message → Ollama returns structured JSON
+   - Assert: JSON matches schema (Ollama guarantees)
+   - Assert: Response text present
 
-2. **Scenario**: LLM returns XML → Parsed correctly
-   - Assert: Human text extracted
-   - Assert: Keywords, subjects extracted
-   - Assert: XML stored as attachment
+2. **Scenario**: JSON parsed → ONE.core objects created
+   - Assert: Keywords created from analysis.subjects[].keywords
+   - Assert: Subjects created from analysis.subjects[]
+   - Assert: Summary updated from analysis.summaryUpdate
 
-3. **Scenario**: XML parse fails → Graceful degradation
-   - Assert: User sees response text
-   - Assert: Error logged
-   - Assert: No analysis data created
+3. **Scenario**: Objects linked to source Message
+   - Assert: ONE.core references established
+   - Assert: Can trace Keyword/Subject back to creating Message
 
 ### Agent Context Update
 - Update `/Users/gecko/src/lama.electron/CLAUDE.md` with:
-  - XML communication protocol summary
-  - New recipes: XMLAttachment
-  - Modified services: llm-manager, ai-assistant-model
+  - Ollama structured output integration summary
+  - JSON schema location
+  - Modified services: llm-manager, ollama, ai-assistant-model
 
-**Output**: data-model.md, contracts/xml-schema.md, failing tests, quickstart.md, CLAUDE.md updated
+**Output**: data-model.md, contracts/json-schema.md, failing tests, quickstart.md, CLAUDE.md updated
 
 ## Phase 2: Task Planning Approach
 *This section describes what the /tasks command will do - DO NOT execute during /plan*
 
 **Task Generation Strategy**:
-1. Load contracts/xml-schema.md → Generate schema validation tests
-2. From data-model.md → Generate recipe creation tasks
-3. From user stories → Generate integration test tasks
+1. Load contracts/json-schema.md → Generate schema validation tests
+2. From data-model.md → Generate integration test tasks
+3. From user stories → Generate end-to-end tests
 4. Implementation tasks to make tests pass
 
 **Task Categories**:
-- **Contract Tests** [P]: XML schema validation (query, response)
-- **Model Tasks** [P]: XMLAttachment recipe, SystemPromptTemplate
-- **Service Tasks**: LLMManager.formatQueryAsXML(), LLMManager.parseXMLResponse()
-- **Storage Tasks**: AttachmentService integration
-- **Integration Tests**: End-to-end XML workflow
-- **IPC Tasks**: Update llm:chat handler
+- **Contract Tests** [P]: JSON schema validation (Ollama response)
+- **Schema Tasks** [P]: Define llm-response.schema.ts with Ollama format
+- **Service Tasks**: ollama.ts (add format parameter), llm-manager.ts (parse JSON)
+- **Integration Tasks**: ai-assistant-model.ts (create ONE.core objects from JSON)
+- **Integration Tests**: End-to-end Ollama → JSON → ONE.core workflow
+- **IPC Tasks**: Update llm:chat handler to return parsed analysis
 
 **Ordering Strategy**:
 1. Contract tests (fail) [P]
-2. XML schema definition [P]
-3. Recipe definitions [P]
-4. LLM Manager modifications (formatQuery, parseResponse)
-5. Attachment storage integration
-6. AI Assistant Model updates
-7. IPC handler updates
-8. Integration tests (pass)
+2. JSON schema definition [P]
+3. ollama.ts modifications (format parameter support)
+4. llm-manager.ts modifications (JSON parsing)
+5. ai-assistant-model.ts updates (create ONE.core objects)
+6. IPC handler updates
+7. Integration tests (pass)
 
 **Estimated Output**: 20-25 numbered, ordered tasks in tasks.md
 

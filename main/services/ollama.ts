@@ -77,6 +77,8 @@ async function testOllamaModel(modelName: any, baseUrl: string = 'http://localho
 
 /**
  * Chat with Ollama using the /api/chat endpoint
+ *
+ * @param options.format - Optional JSON schema for structured outputs (Ollama native)
  */
 async function chatWithOllama(
   modelName: any,
@@ -93,21 +95,13 @@ async function chatWithOllama(
   console.log(`[Ollama] Starting request ${requestId} to ${baseUrl}`)
 
   try {
-    console.log(`[Ollama] Chatting with ${modelName}, ${messages.length} messages`)
-
     // Keep conversation structure for better context
     const systemMessages = messages.filter((msg: any) => msg.role === 'system')
     const nonSystemMessages = messages.filter((msg: any) => msg.role !== 'system')
     const recentNonSystemMessages = nonSystemMessages.slice(-10) // Keep more context
     const formattedMessages = [...systemMessages, ...recentNonSystemMessages]
 
-    console.log(`[Ollama] Total messages: ${messages.length}, System messages: ${systemMessages.length}, Recent messages: ${formattedMessages.length}`)
-    if (systemMessages.length > 0) {
-      console.log(`[Ollama] System message preview:`, systemMessages[0]?.content?.substring(0, 200) + '...')
-    }
-
     const startTime = Date.now()
-    console.log(`[Ollama] ⏱️ Starting API call at ${new Date().toISOString()} with streaming`)
 
     // Prepare headers with auth if provided
     const headers = {
@@ -115,28 +109,54 @@ async function chatWithOllama(
       ...(authHeaders || {})
     };
 
+    // Structured outputs require non-streaming mode
+    const useStreaming = !options.format;
+
     // Use the chat endpoint for proper conversation handling
+    const requestBody: any = {
+      model: modelName,
+      messages: formattedMessages,
+      stream: useStreaming,
+      options: {
+        temperature: options.temperature || 0.7,
+        num_predict: options.max_tokens || 2048,
+        top_k: 40,
+        top_p: 0.95
+      }
+    };
+
+    // Add format parameter for structured outputs (Ollama native)
+    if (options.format) {
+      requestBody.format = options.format;
+      console.log('[Ollama] ========== OLLAMA STRUCTURED OUTPUT ==========');
+      console.log('[Ollama] Using structured output format (JSON schema)');
+      console.log('[Ollama] Stream disabled for structured output');
+      console.log('[Ollama] Format schema:', JSON.stringify(options.format, null, 2));
+      console.log('[Ollama] ==============================================');
+    }
+
     const response: any = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers,
       signal: controller.signal,
-      body: JSON.stringify({
-        model: modelName,
-        messages: formattedMessages,
-        stream: true,  // Enable streaming
-        options: {
-          temperature: options.temperature || 0.7,
-          num_predict: options.max_tokens || 2048,
-          top_k: 40,
-          top_p: 0.95
-        }
-      })
+      body: JSON.stringify(requestBody)
     })
     
     if (!response.ok) {
       throw new Error(`Ollama API error: ${response.statusText}`)
     }
-    
+
+    // Non-streaming response (for structured outputs)
+    if (!useStreaming) {
+      const json = await response.json()
+      const content = json.message?.content || ''
+      console.log(`[Ollama] Non-streaming response: ${content.substring(0, 200)}...`)
+      if (!content) {
+        throw new Error('Ollama generated no response')
+      }
+      return content
+    }
+
     // Process streaming response - node-fetch v2 compatibility
     let fullResponse = ''
     let firstChunkTime = null
@@ -146,7 +166,6 @@ async function chatWithOllama(
     response.body.on('data', (chunk: any) => {
       if (!firstChunkTime) {
         firstChunkTime = Date.now()
-        console.log(`[Ollama] ⏱️ First chunk received in ${firstChunkTime - startTime}ms`)
       }
 
       buffer += chunk.toString()
@@ -200,13 +219,18 @@ async function chatWithOllama(
     
     const responseTime = Date.now() - startTime
     console.log(`[Ollama] ⏱️ Full response completed in ${responseTime}ms`)
-    
-    // Handle empty response
+
+    // Handle empty response - fail fast, no fallback
     if (!fullResponse || fullResponse === '') {
-      console.log('[Ollama] WARNING: No response generated')
-      fullResponse = "I apologize, but I could not generate a response."
-    } else {
-      console.log(`[Ollama] Got response: ${String(fullResponse).substring(0, 100)}...`)
+      throw new Error('Ollama generated no response - model may not support structured output or failed to generate')
+    }
+
+    {
+      console.log('[Ollama] ========== OLLAMA RESPONSE TRACE ==========')
+      console.log('[Ollama] Full response length:', fullResponse.length)
+      console.log('[Ollama] Full response (first 500 chars):', fullResponse.substring(0, 500))
+      console.log('[Ollama] Full response (last 200 chars):', fullResponse.substring(Math.max(0, fullResponse.length - 200)))
+      console.log('[Ollama] ===========================================')
     }
     
     // Clean up request tracking

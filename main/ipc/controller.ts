@@ -192,6 +192,12 @@ class IPCController {
     // LLM Configuration handlers (network Ollama support)
     registerLlmConfigHandlers();
 
+    // Legacy alias for UI compatibility
+    this.handle('llm:getConfig', async (event: IpcMainInvokeEvent, params: any) => {
+      const { handleGetOllamaConfig } = await import('./handlers/llm-config.js');
+      return handleGetOllamaConfig(event, params || {});
+    });
+
     // Attachment handlers
     this.handle('attachment:store', attachmentHandlers.storeAttachment);
     this.handle('attachment:get', attachmentHandlers.getAttachment);

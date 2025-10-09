@@ -12,7 +12,7 @@
     "electron:src": "NODE_ENV=development electron lama-electron-shadcn.js",
     "simple": "NODE_ENV=development electron lama-simple.js",
     "dev": "cd electron-ui && npm run dev",
-    "build": "cd electron-ui && npm run build",
+    "build": "npm run build:all",
     "build:ui": "npm run build --prefix electron-ui",
     "build:preload": "esbuild electron-preload.ts --bundle --platform=node --target=esnext --format=cjs --external:electron --outfile=dist/electron-preload.js",
     "build:main": "tsc -p tsconfig.main.json && npm run build:preload",

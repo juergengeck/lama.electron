@@ -1,4 +1,4 @@
-# Data Model: XML-Based LLM Communication
+# Data Model: Ollama Structured Output Integration
 
 **Feature**: 018-we-must-create | **Version**: 1.0.0 | **Date**: 2025-10-06
 
@@ -6,96 +6,35 @@
 
 ## Overview
 
-This data model defines ONE.core versioned objects and BLOB attachments for storing XML-formatted LLM communications. All objects are stored via ONE.core storage in the Node.js main process.
+This data model defines how Ollama's structured JSON outputs are stored using ONE.core's existing recipes. No new recipes needed - we use existing Subject, Keyword, and Summary models with ONE.core references for traceability.
 
 ---
 
-## 1. XMLMessageAttachment (New)
+## 1. Message (Existing - Enhanced Usage)
 
-**Purpose**: Store complete XML-formatted messages (queries and responses) as attachments
+**Purpose**: Store user and AI messages - already exists in ONE.core
 
-### Recipe Definition
+### Usage Enhancement
 
-```typescript
-{
-  $type$: 'XMLMessageAttachment',
-  topicId: string,              // FK to Topic/conversation
-  messageId: string,             // FK to Message object
-  xmlContent?: string,           // Inline XML if ≤1KB
-  xmlBlob?: SHA256IdHash<BLOB>,  // BLOB reference if >1KB
-  format: 'llm-query' | 'llm-response',
-  version: number,               // Schema version (currently 1)
-  createdAt: number,             // Unix timestamp (ms)
-  size: number                   // XML byte size
-}
-```
+- Messages serve as the anchor for traceability
+- Extracted Keywords/Subjects link back to the Message that created them
+- Use ONE.core's native reference system (`SHA256IdHash<Message>`)
 
-### Field Specifications
+### No Changes Needed
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `$type$` | string | YES | Always "XMLMessageAttachment" |
-| `topicId` | string | YES | Topic/conversation identifier |
-| `messageId` | string | YES | Associated Message object ID |
-| `xmlContent` | string | NO | Inline XML (only if ≤1KB) |
-| `xmlBlob` | SHA256IdHash<BLOB> | NO | BLOB hash (only if >1KB) |
-| `format` | enum | YES | "llm-query" or "llm-response" |
-| `version` | number | YES | XML schema version (1.0.0 → 1) |
-| `createdAt` | number | YES | Creation timestamp (Date.now()) |
-| `size` | number | YES | XML byte size (for monitoring) |
-
-### Storage Rules
-
-- **≤1KB**: Store in `xmlContent` field (inline), `xmlBlob` is undefined
-- **>1KB**: Store in BLOB, `xmlBlob` contains hash, `xmlContent` is undefined
-- **Both fields**: Never populate both - exactly ONE must be defined
-- **BLOB Creation**: Use `@refinio/one.core/lib/storage-blob.js` `createBlob()`
-
-### Access Patterns
-
-- **By Message**: Query by `messageId` to get XML for specific message
-- **By Topic**: Query by `topicId` to get all XML messages in conversation
-- **By Format**: Filter by `format` to separate queries from responses
-
-### Example Objects
-
-**Small Response (Inline)**:
-```typescript
-{
-  $type$: 'XMLMessageAttachment',
-  topicId: 'family-planning-2025',
-  messageId: 'msg-abc123',
-  xmlContent: '<llmResponse><response>Yes, 529 plans are great.</response>...</llmResponse>',
-  format: 'llm-response',
-  version: 1,
-  createdAt: 1728234567890,
-  size: 345
-}
-```
-
-**Large Response (BLOB)**:
-```typescript
-{
-  $type$: 'XMLMessageAttachment',
-  topicId: 'family-planning-2025',
-  messageId: 'msg-def456',
-  xmlBlob: 'sha256://abc123...' as SHA256IdHash<BLOB>,
-  format: 'llm-response',
-  version: 1,
-  createdAt: 1728234590123,
-  size: 4567
-}
-```
+- Existing Message recipe works as-is
+- No new fields required
+- ONE.core already handles message storage and references
 
 ---
 
-## 2. Keyword (Enhanced)
+## 2. Keyword (Existing - Enhanced Usage)
 
-**Purpose**: Store extracted keywords with reference to source XML
+**Purpose**: Store extracted keywords with reference to source message
 
-**EXISTING MODEL** - Enhanced with new field
+**EXISTING MODEL** - Use with ONE.core references
 
-### Enhanced Recipe
+### Current Recipe
 
 ```typescript
 {
@@ -105,32 +44,25 @@ This data model defines ONE.core versioned objects and BLOB attachments for stor
   subjects: SHA256IdHash[],          // Bag of Subject ID hashes
   score?: number,                    // Confidence/relevance (0.0-1.0)
   createdAt: number,
-  lastSeen: number,
-  sourceXmlHash?: SHA256IdHash<XMLMessageAttachment>  // NEW: Reference to XML that created it
+  lastSeen: number
 }
 ```
 
-### New Field
+### Traceability
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `sourceXmlHash` | SHA256IdHash | NO | Hash of XMLMessageAttachment that extracted this keyword |
-
-### Usage
-
-- When creating Keyword from XML response, set `sourceXmlHash` to attachment hash
-- Enables tracing keywords back to original LLM analysis
-- Optional field - not set for manually created keywords
+- Link to source message via ONE.core references (not stored in Keyword object)
+- Use `addIdProof()` or similar ONE.core mechanism to link Keyword → Message
+- Query relationships using ONE.core's graph traversal
 
 ---
 
-## 3. Subject (Enhanced)
+## 3. Subject (Existing - Enhanced Usage)
 
-**Purpose**: Store extracted subjects (themes) with reference to source XML
+**Purpose**: Store extracted subjects (themes) with reference to source message
 
-**EXISTING MODEL** - Enhanced with new field
+**EXISTING MODEL** - Use with ONE.core references
 
-### Enhanced Recipe
+### Current Recipe
 
 ```typescript
 {
@@ -142,32 +74,25 @@ This data model defines ONE.core versioned objects and BLOB attachments for stor
   messageCount: number,
   createdAt: number,
   lastSeenAt: number,
-  archived: boolean,
-  sourceXmlHash?: SHA256IdHash<XMLMessageAttachment>  // NEW: Reference to XML that created it
+  archived: boolean
 }
 ```
 
-### New Field
+### Traceability
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `sourceXmlHash` | SHA256IdHash | NO | Hash of XMLMessageAttachment that created this subject |
-
-### Usage
-
-- When creating Subject from XML `<analysis><subject>`, set `sourceXmlHash`
-- Enables verification of subject extraction
-- Optional field - not set for manually created subjects
+- Link to source message via ONE.core references (not stored in Subject object)
+- Use ONE.core's native reference system to track Subject → Message relationship
+- Enables verification without adding fields to recipe
 
 ---
 
-## 4. Summary (Enhanced)
+## 4. Summary (Existing - Enhanced Usage)
 
-**Purpose**: Store conversation summaries with reference to source XML
+**Purpose**: Store conversation summaries with reference to source message
 
-**EXISTING MODEL** - Enhanced with new field
+**EXISTING MODEL** - Use with ONE.core references
 
-### Enhanced Recipe
+### Current Recipe
 
 ```typescript
 {
@@ -181,87 +106,63 @@ This data model defines ONE.core versioned objects and BLOB attachments for stor
   previousVersion?: string,          // ID of previous Summary
   createdAt: number,
   updatedAt: number,
-  changeReason?: string,
-  sourceXmlHash?: SHA256IdHash<XMLMessageAttachment>  // NEW: Reference to XML that updated it
+  changeReason?: string
 }
 ```
 
-### New Field
+### Traceability
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `sourceXmlHash` | SHA256IdHash | NO | Hash of XMLMessageAttachment whose `<summaryUpdate>` triggered this version |
+- Link to source message via ONE.core references (not stored in Summary object)
+- Track which message triggered summary update using ONE.core graph
 
 ---
 
-## 5. SystemPromptTemplate (New)
+## 5. Data Flow
 
-**Purpose**: Store LLM system prompts with XML format instructions per model
+### From Ollama JSON to ONE.core Objects
 
-### Recipe Definition
+```
+1. Ollama returns JSON (guaranteed structure via format parameter)
+   ↓
+2. Parse JSON using native JSON.parse()
+   ↓
+3. Extract analysis data (subjects, keywords, summaryUpdate)
+   ↓
+4. Create/update ONE.core objects using existing recipes
+   ↓
+5. Link objects to source Message using ONE.core references
+```
 
-```typescript
+### JSON Schema (defined in `/main/schemas/llm-response.schema.ts`)
+
+```json
 {
-  $type$: 'SystemPromptTemplate',
-  modelId: string,               // LLM model identifier (e.g., "gpt-4")
-  promptText: string,            // Complete system prompt with XML instructions
-  xmlSchemaVersion: number,      // XML schema version (1, 2, 3...)
-  version: number,               // Template version (increments on changes)
-  createdAt: number,
-  updatedAt: number,
-  active: boolean                // Only one active template per modelId
+  "response": "Natural language response",
+  "analysis": {
+    "subjects": [
+      {
+        "name": "subject-name",
+        "description": "Brief explanation",
+        "isNew": true,
+        "keywords": [
+          {"term": "keyword", "confidence": 0.8}
+        ]
+      }
+    ],
+    "summaryUpdate": "Brief summary of exchange"
+  }
 }
 ```
 
-### Field Specifications
+### Mapping JSON → ONE.core
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `$type$` | string | YES | Always "SystemPromptTemplate" |
-| `modelId` | string | YES | LLM model (e.g., "gpt-4-turbo", "claude-3") |
-| `promptText` | string | YES | Complete system prompt text |
-| `xmlSchemaVersion` | number | YES | XML schema version this template uses |
-| `version` | number | YES | Template version (1, 2, 3...) |
-| `createdAt` | number | YES | Creation timestamp |
-| `updatedAt` | number | YES | Last update timestamp |
-| `active` | boolean | YES | True if this is the active template for modelId |
-
-### Usage
-
-- **Creation**: When configuring LLM model, create template with XML instructions
-- **Versioning**: Incrementing `version` creates new template, old becomes `active: false`
-- **Retrieval**: LLM Manager queries for `{modelId: '...', active: true}`
-- **Storage**: ONE.core versioned object (not BLOB - prompts are ~400 tokens)
-
-### Example
-
-```typescript
-{
-  $type$: 'SystemPromptTemplate',
-  modelId: 'gpt-4-turbo',
-  promptText: `You are an AI assistant. Always respond using this XML format:
-
-<llmResponse>
-  <response>[Your natural language response]</response>
-  <analysis>
-    <subject name="topic-name" description="..." isNew="true|false">
-      <keyword term="..." confidence="0.8" />
-    </subject>
-    <summaryUpdate>[Brief summary]</summaryUpdate>
-  </analysis>
-</llmResponse>
-
-Rules:
-- Extract 1-3 subjects per response
-- Include 3-7 keywords per subject
-- Use lowercase, hyphenated names`,
-  xmlSchemaVersion: 1,
-  version: 1,
-  createdAt: 1728234567890,
-  updatedAt: 1728234567890,
-  active: true
-}
-```
+| JSON Path | ONE.core Object | Notes |
+|-----------|-----------------|-------|
+| `response` | Message content | Natural language text |
+| `analysis.subjects[].name` | Subject.id | Subject identifier |
+| `analysis.subjects[].description` | Subject metadata | Used for display |
+| `analysis.subjects[].keywords[]` | Keyword objects | Create/update Keywords |
+| `analysis.summaryUpdate` | Summary.content | Update conversation summary |
 
 ---
 
@@ -272,34 +173,29 @@ Rules:
 ```
 Topic (existing)
   ├─ 1:N → Message (existing)
-  │         ├─ 1:1 → XMLMessageAttachment (NEW)
-  │         └─ 1:N → Keyword (via sourceXmlHash)
+  │         ├─ 1:N → Keyword (via ONE.core references)
+  │         └─ 1:N → Subject (via ONE.core references)
   │
-  ├─ 1:N → Subject (enhanced)
-  │         └─ N:1 → XMLMessageAttachment (via sourceXmlHash)
+  ├─ 1:N → Subject (existing)
   │
-  ├─ 1:N → Summary (enhanced)
-  │         └─ N:1 → XMLMessageAttachment (via sourceXmlHash)
+  ├─ 1:N → Summary (existing)
+  │         └─ N:1 → Message (via ONE.core references - which message triggered update)
   │
-  └─ 1:N → Keyword (enhanced)
-
-LLMModel (existing)
-  └─ 1:N → SystemPromptTemplate (NEW)
+  └─ 1:N → Keyword (existing)
 ```
 
 ### Referential Integrity
 
-- **XMLMessageAttachment.messageId** → Message (required, enforced)
-- **XMLMessageAttachment.topicId** → Topic (required, enforced)
-- **Keyword.sourceXmlHash** → XMLMessageAttachment (optional, not enforced)
-- **Subject.sourceXmlHash** → XMLMessageAttachment (optional, not enforced)
-- **Summary.sourceXmlHash** → XMLMessageAttachment (optional, not enforced)
+- **Message → Topic**: Existing ONE.core relationship
+- **Keyword → Message**: ONE.core reference (traceability)
+- **Subject → Message**: ONE.core reference (traceability)
+- **Summary → Message**: ONE.core reference (which message triggered update)
 
 ### Cascade Behavior
 
-- **Delete Topic**: XMLMessageAttachments remain (orphaned) - manual cleanup required
-- **Delete Message**: XMLMessageAttachment should be deleted (implement in service layer)
-- **Delete XMLMessageAttachment**: Keywords/Subjects remain (sourceXmlHash becomes dangling reference)
+- **Delete Topic**: Messages deleted per existing ONE.core behavior
+- **Delete Message**: Keywords/Subjects remain (references become historical)
+- ONE.core handles reference cleanup automatically
 
 ---
 
@@ -309,81 +205,37 @@ LLMModel (existing)
 
 ```
 main/
+├── schemas/
+│   └── llm-response.schema.ts      # NEW: JSON schema for Ollama
 ├── core/
 │   └── one-ai/
 │       ├── models/
-│       │   ├── Keyword.ts               # MODIFY: Add sourceXmlHash field
-│       │   ├── Subject.ts               # MODIFY: Add sourceXmlHash field
-│       │   ├── Summary.ts               # MODIFY: Add sourceXmlHash field
-│       │   ├── XMLMessageAttachment.ts  # NEW
-│       │   └── SystemPromptTemplate.ts  # NEW
-│       └── recipes/
-│           ├── keyword.ts               # MODIFY: Add sourceXmlHash to recipe
-│           ├── subject.ts               # MODIFY: Add sourceXmlHash to recipe
-│           ├── summary.ts               # MODIFY: Add sourceXmlHash to recipe
-│           ├── xml-message-attachment.ts # NEW
-│           └── system-prompt-template.ts # NEW
+│       │   ├── Keyword.ts          # EXISTING: No changes
+│       │   ├── Subject.ts          # EXISTING: No changes
+│       │   └── Summary.ts          # EXISTING: No changes
+│       ├── recipes/
+│       │   ├── keyword.ts          # EXISTING: No changes
+│       │   ├── subject.ts          # EXISTING: No changes
+│       │   └── summary.ts          # EXISTING: No changes
+│       └── services/
+│           └── TopicAnalyzer.ts    # MODIFY: Parse JSON, create objects
+└── services/
+    ├── llm-manager.ts              # MODIFY: Pass format to Ollama
+    └── ollama.ts                   # MODIFY: Support format parameter
 ```
 
-### Recipe Registration
+### Implementation Strategy
 
-**Location**: `/main/core/one-ai/recipes/index.ts`
+**No Recipe Changes Required**:
+- Use existing Keyword/Subject/Summary recipes as-is
+- Use ONE.core's native reference system for traceability
+- No new fields or types needed
 
-```typescript
-import { XMLMessageAttachmentRecipe } from './xml-message-attachment.js';
-import { SystemPromptTemplateRecipe } from './system-prompt-template.js';
-
-export const recipes = {
-  XMLMessageAttachment: XMLMessageAttachmentRecipe,
-  SystemPromptTemplate: SystemPromptTemplateRecipe,
-  // ... existing recipes
-};
-```
-
-### BLOB Management
-
-**Service**: `/main/services/attachment-service.ts` (existing)
-
-**New Methods**:
-- `storeXMLAttachment(topicId, messageId, xmlString, format)` - Store XML as attachment
-- `retrieveXMLAttachment(attachmentHash)` - Retrieve XML content
-- `getAttachmentSize(attachmentHash)` - Get byte size
-
-**Implementation**:
-```typescript
-import { createBlob, retrieveBlob } from '@refinio/one.core/lib/storage-blob.js';
-
-async storeXMLAttachment(topicId, messageId, xmlString, format) {
-  const size = Buffer.byteLength(xmlString, 'utf8');
-
-  if (size <= 1024) {
-    // Inline storage
-    return await storeVersionedObject({
-      $type$: 'XMLMessageAttachment',
-      topicId,
-      messageId,
-      xmlContent: xmlString,
-      format,
-      version: 1,
-      createdAt: Date.now(),
-      size
-    });
-  } else {
-    // BLOB storage
-    const blobHash = await createBlob(Buffer.from(xmlString, 'utf8'));
-    return await storeVersionedObject({
-      $type$: 'XMLMessageAttachment',
-      topicId,
-      messageId,
-      xmlBlob: blobHash,
-      format,
-      version: 1,
-      createdAt: Date.now(),
-      size
-    });
-  }
-}
-```
+**Service Layer Changes**:
+- `llm-manager.ts`: Parse JSON from Ollama
+- `TopicAnalyzer.ts`: Create ONE.core objects from parsed JSON
+- Use `storeVersionedObject()` for objects
+- Use ONE.core reference APIs to link objects
 
 ---
 
@@ -393,20 +245,19 @@ async storeXMLAttachment(topicId, messageId, xmlString, format) {
 
 | Object Type | Avg Size | Count per Topic | Total per 1000 Messages |
 |-------------|----------|-----------------|-------------------------|
-| XMLMessageAttachment (query) | 500 bytes | 1000 | 500 KB |
-| XMLMessageAttachment (response) | 3 KB | 1000 | 3 MB |
-| Keyword (with sourceXmlHash) | 150 bytes | ~5000 | 750 KB |
-| Subject (with sourceXmlHash) | 200 bytes | ~100 | 20 KB |
-| SystemPromptTemplate | 1 KB | 1 per model | 1 KB |
+| Keyword | 120 bytes | ~5000 | 600 KB |
+| Subject | 180 bytes | ~100 | 18 KB |
+| Summary | 300 bytes | ~50 versions | 15 KB |
+| ONE.core references | 64 bytes each | ~5000 | 320 KB |
 
-**Total overhead per 1000 messages**: ~4.3 MB (acceptable for local storage)
+**Total overhead per 1000 messages**: ~950 KB (minimal - no redundant XML storage)
 
 ### Query Performance
 
-- **Retrieve XML by Message**: O(1) - direct hash lookup
-- **Retrieve all XML for Topic**: O(N) - N = message count (with index)
-- **Trace Keyword → XML**: O(1) - sourceXmlHash direct lookup
-- **List all Templates**: O(M) - M = model count (~10)
+- **Retrieve Keywords by Message**: O(1) - ONE.core reference lookup
+- **Retrieve Subjects for Topic**: O(N) - N = subject count (with index)
+- **Trace Keyword → Message**: O(1) - ONE.core reference lookup
+- **List Summaries**: O(V) - V = version count (~50)
 
 ---
 
@@ -414,27 +265,34 @@ async storeXMLAttachment(topicId, messageId, xmlString, format) {
 
 **NO LEGACY MIGRATION** (per stakeholder decision in spec.md)
 
-- Existing Keywords/Subjects/Summaries: Keep as-is, no `sourceXmlHash` field
-- New conversations: Use XML format from first message
+- Existing Keywords/Subjects/Summaries: Keep as-is
+- New conversations: Use Ollama structured outputs from first message
 - Mixed state: Acceptable - old data without references, new data with references
+- ONE.core handles both seamlessly
 
 ---
 
 ## 10. Validation & Constraints
 
-### XMLMessageAttachment
+### JSON Response (enforced by Ollama)
 
-- **Exactly one content field**: `xmlContent` XOR `xmlBlob` (not both)
-- **Size accuracy**: `size` field must match actual byte length
-- **Version compatibility**: `version` must match supported schema versions
-- **Format enum**: `format` must be "llm-query" or "llm-response"
+- **Structure**: Ollama guarantees JSON matches schema (no malformed responses)
+- **Required fields**: All required fields present (enforced by schema)
+- **Type safety**: Types match schema definition
 
-### SystemPromptTemplate
+### Business Logic (enforced by application)
 
-- **Unique active template**: Only one `active: true` per `modelId`
-- **Version increment**: Each new version must be `previousVersion + 1`
-- **XML schema compatibility**: `xmlSchemaVersion` must match deployed schema
+- **Keyword confidence**: Only store keywords with confidence ≥ 0.6
+- **Subject limit**: Maximum 3 subjects per response
+- **Keyword limit**: Maximum 10 keywords per subject
+- **Summary length**: 10-500 characters
+
+### ONE.core Constraints
+
+- **Object hashing**: ONE.core ensures content-addressable storage
+- **Reference integrity**: ONE.core validates reference hashes
+- **Version control**: ONE.core handles object versioning automatically
 
 ---
 
-*Data model v1.0.0 - Defines storage for XML-based LLM communication with ONE.core*
+*Data model v1.0.0 - Defines Ollama structured output integration with ONE.core native storage*

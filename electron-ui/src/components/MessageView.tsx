@@ -124,17 +124,26 @@ export function MessageView({
     }
   }, [keywordsJustAppeared, chatHeaderRef])
 
-  // Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
+  // Auto-scroll to bottom when new messages arrive or during streaming
   useEffect(() => {
-    if (isUserScrolledUp) return
+    // During streaming, always scroll (ignore user scroll position)
+    const isStreaming = isAIProcessing || aiStreamingContent
+
+    // If user has scrolled up and not streaming, don't auto-scroll
+    if (isUserScrolledUp && !isStreaming) return
 
     // Use requestAnimationFrame to ensure DOM has finished rendering before scrolling
     requestAnimationFrame(() => {
       if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+        // Use instant scroll during streaming for better responsiveness
+        // Use smooth scroll for normal message updates
+        messagesEndRef.current.scrollIntoView({
+          behavior: isStreaming ? 'instant' : 'smooth',
+          block: 'end'
+        })
       }
     })
-  }, [messages, aiStreamingContent, isUserScrolledUp])
+  }, [messages, aiStreamingContent, isUserScrolledUp, isAIProcessing])
 
 
 
@@ -208,6 +217,17 @@ export function MessageView({
 
       // Send the message with attachments
       await onSendMessage(messageContent, messageAttachments.length > 0 ? messageAttachments : undefined)
+
+      // Reset scroll position tracking and force instant scroll to bottom after sending
+      setIsUserScrolledUp(false)
+      // Use double requestAnimationFrame to ensure DOM has fully updated
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (messagesEndRef.current) {
+            messagesEndRef.current.scrollIntoView({ behavior: 'instant', block: 'end' })
+          }
+        })
+      })
 
     } catch (error) {
       console.error('Failed to send enhanced message:', error)

@@ -169,7 +169,7 @@ export const KeywordDetailPanel: React.FC<KeywordDetailPanelProps> = ({
             </Button>
           </div>
         </div>
-        <CardDescription>
+        <div className="text-sm text-muted-foreground">
           <div className="flex flex-wrap items-center gap-3 mt-2">
             <Badge variant="secondary">
               {keywordData.frequency} occurrences
@@ -189,7 +189,7 @@ export const KeywordDetailPanel: React.FC<KeywordDetailPanelProps> = ({
               </span>
             )}
           </div>
-        </CardDescription>
+        </div>
       </CardHeader>
 
       <CardContent className="pt-0 space-y-6">

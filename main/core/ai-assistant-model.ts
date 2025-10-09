@@ -589,38 +589,59 @@ What can I help you with today?`
           setImmediate(async () => {
             try {
               console.log('[AIAssistantModel] Processing analysis in background...')
+              console.log('[AIAssistantModel] Full analysis object:', JSON.stringify((result as any)?.analysis, null, 2))
 
-              // Create or update subject FIRST (subjects must exist before keywords can reference them)
-              let subjectId: string | null = null;
-              if ((result as any)?.analysis.subject && (this.nodeOneCore as any).topicAnalysisModel) {
-                const { name, description, isNew } = (result as any)?.analysis.subject
-                if (isNew) {
-                  // Create subject with keyword combination as the name
-                  const keywords = name.split(/[\s-]+/).filter((k: any) => k)
-                  const subject = await (this.nodeOneCore as any).topicAnalysisModel.createSubject(
-                    topicId,
-                    keywords,
-                    name,
-                    description,
-                    0.8 // confidence score
-                  )
-                  subjectId = subject?.id || null;
-                  console.log(`[AIAssistantModel] Created new subject: ${name} with ID: ${subjectId}`)
+              // Process ALL subjects from analysis (it's an array)
+              if ((result as any)?.analysis.subjects && Array.isArray((result as any).analysis.subjects) && (this.nodeOneCore as any).topicAnalysisModel) {
+                console.log(`[AIAssistantModel] Processing ${(result as any).analysis.subjects.length} subjects...`)
 
-                  // Notify UI that a new subject was created
-                  for (const window of BrowserWindow.getAllWindows()) {
-                    window.webContents.send('subjects:updated', {
+                for (const subjectData of (result as any).analysis.subjects) {
+                  const { name, description, isNew, keywords: subjectKeywords } = subjectData
+
+                  console.log(`[AIAssistantModel] Subject data:`, JSON.stringify(subjectData, null, 2))
+                  console.log(`[AIAssistantModel] Processing subject: ${name} (isNew: ${isNew})`)
+                  console.log(`[AIAssistantModel] Keywords array:`, subjectKeywords)
+
+                  if (isNew) {
+                    // Extract keyword terms from keyword objects
+                    const keywordTerms = subjectKeywords?.map((kw: any) => kw.term || kw) || []
+                    console.log(`[AIAssistantModel] Extracted keyword terms:`, keywordTerms)
+
+                    // Create subject with keywords
+                    const subject = await (this.nodeOneCore as any).topicAnalysisModel.createSubject(
                       topicId,
-                      subject: { id: subjectId, name, description, keywords }
-                    })
-                  }
-                  console.log(`[AIAssistantModel] Sent subjects:updated event to UI for topic ${topicId}`)
-                } else {
-                  // Update existing subject or mark as active
-                  const subjects = await (this.nodeOneCore as any).topicAnalysisModel.getSubjects(topicId)
-                  const existing = subjects.find((s: any) => s.keywordCombination === name)
-                  if (existing) {
-                    subjectId = existing.id;
+                      keywordTerms,
+                      name,
+                      description,
+                      0.8 // confidence score
+                    )
+                    console.log(`[AIAssistantModel] Created new subject: ${name} with ID hash: ${subject.idHash}`)
+
+                    // Create keywords with subject reference
+                    for (const keyword of subjectKeywords || []) {
+                      const term = keyword.term || keyword
+                      await (this.nodeOneCore as any).topicAnalysisModel.addKeywordToSubject(
+                        topicId,
+                        term,
+                        subject.idHash
+                      )
+                    }
+                    console.log(`[AIAssistantModel] Created ${subjectKeywords?.length || 0} keywords for subject: ${name}`)
+
+                    // Notify UI that a new subject was created
+                    for (const window of BrowserWindow.getAllWindows()) {
+                      window.webContents.send('subjects:updated', {
+                        topicId,
+                        subject: { id: subject.idHash, name, description, keywords: keywordTerms }
+                      })
+                    }
+                    console.log(`[AIAssistantModel] Sent subjects:updated event to UI for topic ${topicId}`)
+                  } else {
+                    // Update existing subject or mark as active
+                    const subjects = await (this.nodeOneCore as any).topicAnalysisModel.getSubjects(topicId)
+                    const existing = subjects.find((s: any) => s.keywordCombination === name)
+                    if (existing) {
+                      const subjectId = existing.id;
                     if (existing.archived) {
                       await (this.nodeOneCore as any).topicAnalysisModel.unarchiveSubject(topicId, existing.id)
                       console.log(`[AIAssistantModel] Reactivated subject: ${name}`)
@@ -633,22 +654,14 @@ What can I help you with today?`
                         })
                       }
                     }
+                    }
                   }
                 }
-              }
 
-              // Now create/update keywords WITH subject reference
-              if ((result as any)?.analysis.subject?.keywords?.length > 0 && subjectId && (this.nodeOneCore as any).topicAnalysisModel) {
-                for (const keyword of (result as any)?.analysis.subject.keywords) {
-                  await (this.nodeOneCore as any).topicAnalysisModel.addKeywordToSubject(topicId, keyword, subjectId)
-                }
-                console.log(`[AIAssistantModel] Added ${(result as any)?.analysis.subject.keywords?.length} keywords linked to subject ${subjectId}`)
-
-                // Notify UI that keywords have been updated
+                // Notify UI that keywords have been updated for all subjects
                 for (const window of BrowserWindow.getAllWindows()) {
                   window.webContents.send('keywords:updated', {
-                    topicId,
-                    keywords: (result as any)?.analysis.subject.keywords
+                    topicId
                   })
                 }
                 console.log(`[AIAssistantModel] Sent keywords:updated event to UI for topic ${topicId}`)

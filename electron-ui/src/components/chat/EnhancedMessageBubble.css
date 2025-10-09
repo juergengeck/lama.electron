@@ -13,16 +13,23 @@
   width: fit-content;
 }
 
-/* When message contains a pre block, allow it to expand */
-/* Using a class-based approach for better compatibility */
+/* When message contains a pre block or table, allow it to expand */
+/* Using :has() selector for automatic detection */
+.enhanced-message-bubble:has(pre),
+.enhanced-message-bubble:has(table),
 .enhanced-message-bubble.has-pre {
   max-width: min(95%, 1200px);
 }
 
-/* Ensure pre blocks can use available width */
+/* Ensure pre blocks and tables can use available width */
 .enhanced-message-bubble pre {
   overflow-x: auto;
   white-space: pre;
+}
+
+.enhanced-message-bubble table {
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 .enhanced-message-bubble.own {

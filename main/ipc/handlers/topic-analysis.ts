@@ -249,34 +249,25 @@ ${String(conversationText).substring(0, 3000)}`;
     }
 
     // Store subjects first, then create keywords with subject references
-    const createdSubjects = [];
+    const subjectsToStore = [];
     for (const subject of subjects.slice(0, 5)) {
       const subjectId = subject.keywords.join('+');
-      await model.createSubject(
+      const createdSubject = await model.createSubject(
         topicId,
         subject.keywords,
         subjectId,
         subject.description,
         0.8
       );
-      createdSubjects.push({ id: subjectId, keywords: subject.keywords });
+      // Store the ID HASH, not the string ID
+      subjectsToStore.push({ idHash: createdSubject.idHash, keywords: subject.keywords });
     }
 
-    // Now create keywords with subject references
-    const keywordToSubjects = new Map<string, string[]>();
-    for (const subject of createdSubjects) {
-      for (const keyword of subject.keywords) {
-        const normalizedKeyword = keyword.toLowerCase().trim();
-        if (!keywordToSubjects.has(normalizedKeyword)) {
-          keywordToSubjects.set(normalizedKeyword, []);
-        }
-        keywordToSubjects.get(normalizedKeyword)!.push(subject.id);
+    // Now create keywords with subject ID hashes
+    for (const subject of subjectsToStore) {
+      for (const keywordTerm of subject.keywords) {
+        await model.addKeywordToSubject(topicId, keywordTerm, subject.idHash);
       }
-    }
-
-    // Create each unique keyword with its subject references
-    for (const [keyword, subjectIds] of keywordToSubjects) {
-      await model.createKeywordWithSubjects(topicId, keyword, subjectIds, 1, 0.8);
     }
 
     // Generate summary using LLM

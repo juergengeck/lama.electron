@@ -112,6 +112,7 @@ export async function getKeywordDetails(
     t = Date.now();
     const subjectIdHashes = keywordObj.subjects || [];
     console.log('[KeywordDetail] ⏱️ Got subject ID hashes from keyword:', `${Date.now() - t}ms`, `(${subjectIdHashes.length} subjects)`);
+    console.log('[KeywordDetail] 🔍 DEBUG keyword.subjects:', JSON.stringify(subjectIdHashes, null, 2));
 
     // Load ONLY the subjects referenced by this keyword using their ID hashes
     t = Date.now();
@@ -120,12 +121,16 @@ export async function getKeywordDetails(
 
     for (const subjectIdHash of subjectIdHashes) {
       try {
+        console.log('[KeywordDetail] 🔍 Attempting to load subject with ID hash:', subjectIdHash);
         const result = await getObjectByIdHash(subjectIdHash);
+        console.log('[KeywordDetail] 🔍 getObjectByIdHash returned:', result ? `obj: ${result.obj?.$type$}` : 'null');
         if (result?.obj) {
           subjects.push(result.obj);
+        } else {
+          console.warn('[KeywordDetail] ⚠️  Subject not found for ID hash:', subjectIdHash);
         }
       } catch (error) {
-        console.warn('[KeywordDetail] Could not load subject with ID hash:', subjectIdHash, error);
+        console.warn('[KeywordDetail] ❌ Could not load subject with ID hash:', subjectIdHash, error);
       }
     }
     console.log('[KeywordDetail] ⏱️ Loaded specific subjects:', `${Date.now() - t}ms`, `(${subjects.length} loaded)`);

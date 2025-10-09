@@ -436,7 +436,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
 
             // Try to get more detailed stats from main process (optional)
             try {
-              const detailedStats = await window.electronAPI.invoke('lama:getDataStats')
+              const detailedStats = await window.electronAPI.invoke('iom:getDataStats')
               if (detailedStats?.success && detailedStats.data) {
                 stats = { ...stats, ...detailedStats.data }
               }

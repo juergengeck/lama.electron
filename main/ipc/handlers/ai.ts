@@ -80,17 +80,37 @@ const aiHandlers = {
             try {
               console.log('[AIHandler] Processing analysis in background for topic:', topicId)
 
-              // Create subject if identified
-              if (result.analysis.subject && result.analysis.subject.isNew) {
-                const { name, keywords } = result.analysis.subject
-                await nodeOneCore.topicAnalysisModel.createSubject(
-                  topicId,
-                  keywords,
-                  name,
-                  result.analysis.subject.description,
-                  0.8
-                )
-                console.log(`[AIHandler] Created new subject: ${name}`)
+              // Process all subjects from analysis
+              if (result.analysis.subjects && Array.isArray(result.analysis.subjects)) {
+                for (const subject of result.analysis.subjects) {
+                  if (subject.isNew) {
+                    // Extract keyword terms from keyword objects
+                    const keywordTerms = subject.keywords?.map((kw: any) => kw.term || kw) || []
+
+                    // Create subject -> returns subject with idHash
+                    const createdSubject = await nodeOneCore.topicAnalysisModel.createSubject(
+                      topicId,
+                      keywordTerms,
+                      subject.name,
+                      subject.description,
+                      0.8
+                    )
+
+                    console.log(`[AIHandler] Created subject: ${subject.name} with ID: ${createdSubject.idHash}`)
+
+                    // Store each keyword with reference to this subject
+                    for (const keyword of (subject.keywords || [])) {
+                      const term = keyword.term || keyword
+                      await nodeOneCore.topicAnalysisModel.addKeywordToSubject(
+                        topicId,
+                        term,
+                        createdSubject.idHash
+                      )
+                    }
+
+                    console.log(`[AIHandler] Stored ${subject.keywords?.length || 0} keywords for subject: ${subject.name}`)
+                  }
+                }
               }
             } catch (error) {
               console.error('[AIHandler] Error processing analysis:', error)
@@ -118,6 +138,50 @@ const aiHandlers = {
         const response = chatResult.response
         const responseStr = String(response || '');
         console.log('[AIHandler] Got response:', responseStr.substring(0, 100) + '...')
+
+        // Process analysis in background if available
+        if (chatResult.analysis && nodeOneCore.topicAnalysisModel && topicId) {
+          setImmediate(async () => {
+            try {
+              console.log('[AIHandler] Processing analysis in background for topic:', topicId)
+
+              // Process all subjects from analysis
+              if (chatResult.analysis.subjects && Array.isArray(chatResult.analysis.subjects)) {
+                for (const subject of chatResult.analysis.subjects) {
+                  if (subject.isNew) {
+                    // Extract keyword terms from keyword objects
+                    const keywordTerms = subject.keywords?.map((kw: any) => kw.term || kw) || []
+
+                    // Create subject -> returns subject with idHash
+                    const createdSubject = await nodeOneCore.topicAnalysisModel.createSubject(
+                      topicId,
+                      keywordTerms,
+                      subject.name,
+                      subject.description,
+                      0.8
+                    )
+
+                    console.log(`[AIHandler] Created subject: ${subject.name} with ID: ${createdSubject.idHash}`)
+
+                    // Store each keyword with reference to this subject
+                    for (const keyword of (subject.keywords || [])) {
+                      const term = keyword.term || keyword
+                      await nodeOneCore.topicAnalysisModel.addKeywordToSubject(
+                        topicId,
+                        term,
+                        createdSubject.idHash
+                      )
+                    }
+
+                    console.log(`[AIHandler] Stored ${subject.keywords?.length || 0} keywords for subject: ${subject.name}`)
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('[AIHandler] Error processing analysis:', error)
+            }
+          })
+        }
 
         const result = {
           success: true,

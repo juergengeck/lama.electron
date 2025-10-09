@@ -11,14 +11,14 @@ class IPCLogger {
   [key: string]: any;
   constructor() {
     this.mainWindow = null
-    this.enabled = true
+    this.enabled = false  // Disabled by default - too much spam from ONE.core
     this.originalConsole = {
       log: console.log,
       error: console.error,
       warn: console.warn,
       info: console.info
     }
-    
+
     // Override console methods
     this.setupInterceptors()
   }

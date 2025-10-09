@@ -233,7 +233,7 @@ export function DataDashboard({ onNavigate, showHierarchyView = false }: DataDas
         
         // If we didn't get stats from browser, try from main process
         if (!actualStats) {
-          const statsResult = await window.electronAPI.invoke('lama:getDataStats')
+          const statsResult = await window.electronAPI.invoke('iom:getDataStats')
           if (statsResult.success && statsResult.data) {
             setDataStats(statsResult.data)
           }
