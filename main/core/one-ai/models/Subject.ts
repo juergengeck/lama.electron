@@ -8,20 +8,40 @@ import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-ob
 
 /**
  * Create a Subject object using ONE.core versioned storage
+ * @param topicId - Topic ID hash (referenceToId)
+ * @param keywordCombination - Combination string for subject ID
+ * @param description - Subject description
+ * @param confidence - Confidence score
+ * @param keywordTerms - Array of keyword terms (strings) to convert to ID hashes
  */
 export async function createSubject(
   topicId: any,
   keywordCombination: any,
   description: any,
   confidence: any,
-  keywords = []
+  keywordTerms: string[] = []
 ) {
+  // Calculate Keyword ID hashes from terms
+  const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js');
+  const keywordIdHashes = [];
+
+  for (const term of keywordTerms) {
+    // Create a minimal Keyword ID object to calculate its ID hash
+    // Only ID properties are needed for calculateIdHashOfObj
+    const keywordIdObj = {
+      $type$: 'Keyword' as const,
+      term: term.toLowerCase().trim()
+    };
+    const keywordIdHash = await calculateIdHashOfObj(keywordIdObj as any);
+    keywordIdHashes.push(keywordIdHash);
+  }
+
   const now = Date.now();
   const subject = {
     $type$: 'Subject' as const,
     id: keywordCombination, // Required: Use keyword combination as ID
-    topic: topicId, // Required: Parent topic reference
-    keywords, // Required: Array of SHA256Hash<Keyword>
+    topic: topicId, // Required: Plain topic ID string (Topic is unversioned, not an ID object)
+    keywords: keywordIdHashes, // Required: Array of Keyword ID hashes
     timeRanges: [
       {
         start: now,

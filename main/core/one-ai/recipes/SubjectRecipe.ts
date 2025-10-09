@@ -11,23 +11,22 @@ export const SubjectRecipe = {
     name: 'Subject',
     rule: [
         {
-            itemprop: '$type$',
-            itemtype: { type: 'string', regexp: /^Subject$/ }
-        },
-        {
             itemprop: 'id',
             itemtype: { type: 'string' },
             isId: true // This makes Subject a versioned object
         },
         {
             itemprop: 'topic',
-            itemtype: { type: 'string' } // Hash reference to parent Topic
+            itemtype: { type: 'string' }
         },
         {
             itemprop: 'keywords',
             itemtype: {
-                type: 'array',
-                item: { type: 'string' }
+                type: 'bag',
+                item: {
+                    type: 'referenceToId',
+                    allowedTypes: new Set(['Keyword'])
+                }
             }
         },
         {
@@ -64,11 +63,6 @@ export const SubjectRecipe = {
         {
             itemprop: 'archived',
             itemtype: { type: 'boolean' },
-            optional: true
-        },
-        {
-            itemprop: '$versionHash$',
-            itemtype: { type: 'string' },
             optional: true
         }
     ]

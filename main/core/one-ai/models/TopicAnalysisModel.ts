@@ -45,16 +45,36 @@ export default class TopicAnalysisModel extends Model {
     /**
      * Create a Subject object
      * Subjects track temporal ranges when they were discussed
+     * @param topicId - Topic ID hash
+     * @param keywordTerms - Array of keyword terms (strings)
+     * @param keywordCombination - Combination string for subject ID
+     * @param description - Subject description
+     * @param confidence - Confidence score
      */
-    async createSubject(topicId: any, keywords: any, keywordCombination: any, description: any, confidence: any): Promise<any> {
+    async createSubject(topicId: any, keywordTerms: string[], keywordCombination: any, description: any, confidence: any): Promise<any> {
         this.state.assertCurrentState('Initialised');
+
+        // Calculate Keyword ID hashes from terms
+        const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js');
+        const keywordIdHashes = [];
+
+        for (const term of keywordTerms) {
+            // Create a minimal Keyword ID object to calculate its ID hash
+            // Only ID properties are needed for calculateIdHashOfObj
+            const keywordIdObj = {
+                $type$: 'Keyword' as const,
+                term: term.toLowerCase().trim()
+            };
+            const keywordIdHash = await calculateIdHashOfObj(keywordIdObj as any);
+            keywordIdHashes.push(keywordIdHash);
+        }
 
         const now = Date.now();
         const subjectObj = {
             $type$: 'Subject' as const,
             id: keywordCombination, // Use keyword combination as ID
-            topic: topicId,
-            keywords: keywords || [],
+            topic: topicId, // Plain topic ID string (Topic is unversioned, not an ID object)
+            keywords: keywordIdHashes, // Array of Keyword ID hashes
             timeRanges: [
                 {
                     start: now,
@@ -67,13 +87,24 @@ export default class TopicAnalysisModel extends Model {
             archived: false
         };
 
-        // Post to the conversation's channel, not a separate analysis channel
+        // STORE the versioned object first - this creates the vheads file for ID hash lookups
+        const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+        console.log('[TopicAnalysisModel] 🔍 About to store Subject with ID:', keywordCombination);
+        console.log('[TopicAnalysisModel] 🔍 Subject object:', JSON.stringify(subjectObj, null, 2));
+
+        const result = await storeVersionedObject(subjectObj);
+
+        console.log('[TopicAnalysisModel] ✅ Stored Subject with idHash:', result.idHash);
+        console.log('[TopicAnalysisModel] ✅ Stored Subject with hash:', result.hash);
+
+        // Also post to channel for sync (optional - if you want it to sync across instances)
         await this.channelManager.postToChannel(
             topicId,
             subjectObj
         );
 
-        return subjectObj;
+        console.log('[TopicAnalysisModel] ✅ Posted Subject to channel:', topicId);
+        return { ...subjectObj, idHash: result.idHash, hash: result.hash };
     }
 
     /**
@@ -141,10 +172,17 @@ export default class TopicAnalysisModel extends Model {
 
         if (existing) {
             // Update frequency
-            existing.frequency = (existing.frequency || 0) + 1;
-            existing.lastSeen = new Date().toISOString();
-            await this.channelManager.postToChannel(topicId, existing);
-            return existing;
+            const now = Date.now();
+            const updatedKeyword = {
+                ...existing,
+                $type$: 'Keyword' as const,
+                frequency: (existing.frequency || 0) + 1,
+                lastSeen: now,
+                // Ensure timestamps are integers (fix migration issues)
+                createdAt: typeof existing.createdAt === 'number' ? existing.createdAt : now
+            };
+            await this.channelManager.postToChannel(topicId, updatedKeyword);
+            return updatedKeyword;
         }
 
         // Create new keyword
@@ -161,6 +199,8 @@ export default class TopicAnalysisModel extends Model {
     async addKeywordToSubject(topicId: any, term: any, subjectIdHash: any): Promise<any> {
         this.state.assertCurrentState('Initialised');
 
+        console.log('[TopicAnalysisModel] 🔍 addKeywordToSubject called:', { topicId, term, subjectIdHash });
+
         if (!subjectIdHash) {
             throw new Error('Subject ID hash is required - keywords must be linked to subjects');
         }
@@ -173,16 +213,25 @@ export default class TopicAnalysisModel extends Model {
 
         if (existing) {
             // Update frequency and link to subject if not already linked
-            existing.frequency = (existing.frequency || 0) + 1;
-            existing.lastSeen = Date.now();
-            if (!existing.subjects) {
-                existing.subjects = [];
+            // CRITICAL: Preserve $type$ when updating (can be lost during retrieval)
+            const now = Date.now();
+            const updatedKeyword = {
+                ...existing,
+                $type$: 'Keyword' as const,
+                frequency: (existing.frequency || 0) + 1,
+                lastSeen: now,
+                subjects: existing.subjects || [],
+                // Ensure timestamps are integers (fix migration issues)
+                createdAt: typeof existing.createdAt === 'number' ? existing.createdAt : now
+            };
+            if (!updatedKeyword.subjects.includes(subjectIdHash)) {
+                updatedKeyword.subjects.push(subjectIdHash);
+                console.log('[TopicAnalysisModel] ✅ Added subject ID hash to existing keyword:', { term: normalizedTerm, subjectIdHash, subjects: updatedKeyword.subjects });
+            } else {
+                console.log('[TopicAnalysisModel] ℹ️  Subject ID hash already in keyword:', { term: normalizedTerm, subjectIdHash });
             }
-            if (!existing.subjects.includes(subjectIdHash)) {
-                existing.subjects.push(subjectIdHash);
-            }
-            await this.channelManager.postToChannel(topicId, existing);
-            return existing;
+            await this.channelManager.postToChannel(topicId, updatedKeyword);
+            return updatedKeyword;
         }
 
         // Create new keyword linked to subject
@@ -198,6 +247,7 @@ export default class TopicAnalysisModel extends Model {
             lastSeen: now
         };
 
+        console.log('[TopicAnalysisModel] ✅ Created new keyword with subject:', { term: normalizedTerm, subjectIdHash, subjects: keywordObj.subjects });
         await this.channelManager.postToChannel(topicId, keywordObj);
         return keywordObj;
     }

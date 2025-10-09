@@ -37,21 +37,21 @@ async function enrichKeywordWithTopicReferences(keyword, subjects, channelManage
     const topicMap = new Map();
 
     for (const subject of subjects) {
-        if (!subject.topicId) {
-            console.warn('[KeywordEnrichment] Subject missing topicId, skipping:', subject);
+        if (!subject.topic) {
+            console.warn('[KeywordEnrichment] Subject missing topic, skipping:', subject);
             continue;
         }
 
-        if (!topicMap.has(subject.topicId)) {
-            topicMap.set(subject.topicId, {
-                topicId: subject.topicId,
+        if (!topicMap.has(subject.topic)) {
+            topicMap.set(subject.topic, {
+                topicId: subject.topic,
                 messageCount: 0,
                 lastMessageDate: subject.lastSeen,
                 authors: new Set()
             });
         }
 
-        const topicData = topicMap.get(subject.topicId);
+        const topicData = topicMap.get(subject.topic);
         topicData.messageCount += subject.messageCount || 0;
 
         // Update last message date if this subject is more recent
@@ -130,11 +130,12 @@ async function enrichSubjectsWithMetadata(subjects, allSubjects = null) {
 
     const enriched = subjects.map(subject => {
         // Calculate places mentioned (number of distinct topics referencing this keyword combination)
-        const keywordCombo = subject.keywordCombination;
+        // NOTE: Subject objects from storage use 'id' for keywordCombination and 'topic' for topicId
+        const keywordCombo = subject.keywordCombination || subject.id;
         const placesMentioned = new Set(
             subjectsToAnalyze
-                .filter(s => s.keywordCombination === keywordCombo)
-                .map(s => s.topicId)
+                .filter(s => (s.keywordCombination || s.id) === keywordCombo)
+                .map(s => s.topicId || s.topic)
         ).size;
 
         // Calculate relevance score
@@ -144,10 +145,16 @@ async function enrichSubjectsWithMetadata(subjects, allSubjects = null) {
         const authors = []; // Placeholder
 
         // Sort timestamp is the last seen date
-        const sortTimestamp = subject.lastSeen || subject.firstSeen || new Date().toISOString();
+        // NOTE: Subject objects from storage use 'lastSeenAt' and 'createdAt' instead of 'lastSeen' and 'firstSeen'
+        const sortTimestamp = subject.lastSeen || subject.lastSeenAt || subject.firstSeen || subject.createdAt || new Date().toISOString();
 
         return {
             ...subject,
+            // Normalize field names for UI compatibility
+            keywordCombination: keywordCombo,
+            topicId: subject.topicId || subject.topic,
+            lastSeen: subject.lastSeen || subject.lastSeenAt,
+            firstSeen: subject.firstSeen || subject.createdAt,
             relevanceScore,
             placesMentioned,
             authors,
