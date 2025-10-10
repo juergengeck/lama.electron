@@ -15,7 +15,6 @@ import type { MessageAttachment, BlobDescriptor } from '@/types/attachments'
 
 // Import keyword detail panel
 import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 interface MessageViewProps {
   messages: Message[]
@@ -281,6 +280,17 @@ export function MessageView({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Keyword Detail Panel - Inline at top */}
+      {showKeywordDetail && selectedKeyword && topicId && (
+        <div className="border-b border-gray-700 bg-gray-900/50 max-h-[25vh] overflow-y-auto">
+          <KeywordDetailPanel
+            keyword={selectedKeyword}
+            topicId={topicId}
+            onClose={handleCloseKeywordDetail}
+          />
+        </div>
+      )}
+
       <div className="flex-1 px-4 py-2 overflow-y-auto" ref={scrollAreaRef} onScroll={handleScroll} style={{ minHeight: 0 }}>
         <div className="space-y-4">
           {messages.length === 0 && !loading && !isAIProcessing && !aiStreamingContent && (
@@ -392,19 +402,6 @@ export function MessageView({
         placeholder={placeholder}
         theme="dark"
       />
-
-      {/* Keyword Detail Dialog */}
-      {showKeywordDetail && selectedKeyword && topicId && (
-        <Dialog open={showKeywordDetail} onOpenChange={handleCloseKeywordDetail}>
-          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-            <KeywordDetailPanel
-              keyword={selectedKeyword}
-              topicId={topicId}
-              onClose={handleCloseKeywordDetail}
-            />
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   )
 }

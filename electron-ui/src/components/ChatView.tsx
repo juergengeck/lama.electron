@@ -271,7 +271,7 @@ export const ChatView = memo(function ChatView({
 
         {/* Keyword Detail Panel - Shows at top when visible (same space as summary) */}
         {showKeywordDetail && selectedKeyword && (
-          <div className="border-b bg-muted/30">
+          <div className="border-b bg-muted/30 max-h-[25vh] overflow-y-auto">
             <KeywordDetailPanel
               keyword={selectedKeyword}
               topicId={conversationId}
