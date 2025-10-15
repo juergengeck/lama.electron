@@ -16,6 +16,10 @@ import type { MessageAttachment, BlobDescriptor } from '@/types/attachments'
 // Import keyword detail panel
 import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
 
+// Import proposal carousel
+import { ProposalCarousel } from './ProposalCarousel'
+import { useProposals } from '@/hooks/useProposals'
+
 interface MessageViewProps {
   messages: Message[]
   currentUserId?: string
@@ -27,7 +31,7 @@ interface MessageViewProps {
   isAIProcessing?: boolean // Show typing indicator when AI is processing
   aiStreamingContent?: string // Show partial AI response while streaming
   topicId?: string // Topic ID for context panel
-  keywordsJustAppeared?: boolean // Flag indicating keywords just appeared
+  subjectsJustAppeared?: boolean // Flag indicating subjects just appeared
   chatHeaderRef?: React.RefObject<HTMLDivElement> // Ref to ChatHeader to measure height change
 }
 
@@ -42,7 +46,7 @@ export function MessageView({
   isAIProcessing = false,
   aiStreamingContent = '',
   topicId,
-  keywordsJustAppeared = false,
+  subjectsJustAppeared = false,
   chatHeaderRef
 }: MessageViewProps) {
   console.log('[MessageView] 🎨 Rendering with', messages.length, 'messages')
@@ -61,6 +65,21 @@ export function MessageView({
   // Keyword detail dialog state
   const [showKeywordDetail, setShowKeywordDetail] = useState(false)
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null)
+
+  // Proposal carousel
+  const {
+    proposals,
+    currentIndex,
+    loading: proposalsLoading,
+    error: proposalsError,
+    nextProposal,
+    previousProposal,
+    dismissProposal,
+    shareProposal
+  } = useProposals({
+    topicId: topicId || '',
+    autoRefresh: true
+  })
   
   // Load contact names
   useEffect(() => {
@@ -98,30 +117,30 @@ export function MessageView({
     setIsUserScrolledUp(distanceFromBottom > 50)
   }
 
-  // Adjust scroll position when keywords appear to compensate for header height change
+  // Adjust scroll position when subjects appear to compensate for header height change
   useEffect(() => {
-    if (keywordsJustAppeared && chatHeaderRef?.current && scrollAreaRef.current) {
-      console.log('[MessageView] Keywords just appeared, adjusting scroll position')
+    if (subjectsJustAppeared && chatHeaderRef?.current && scrollAreaRef.current) {
+      console.log('[MessageView] Subjects just appeared, adjusting scroll position')
 
-      // Measure the height of the keyword line that just appeared
+      // Measure the height of the subject line that just appeared
       // We use requestAnimationFrame to wait for the DOM to update
       requestAnimationFrame(() => {
         if (!chatHeaderRef.current || !scrollAreaRef.current) return
 
-        // The keyword line is roughly 48px (py-2 + text height + border)
+        // The subject line is roughly 48px (py-2 + text height + border)
         // But let's measure it to be precise
         const headerHeight = chatHeaderRef.current.offsetHeight
-        console.log('[MessageView] Header height after keywords:', headerHeight)
+        console.log('[MessageView] Header height after subjects:', headerHeight)
 
         // Adjust scroll to compensate for the header growth
         // This keeps the visible content in the same position
         const currentScroll = scrollAreaRef.current.scrollTop
-        // Approximate keyword line height is ~48px
-        const keywordLineHeight = 48
-        scrollAreaRef.current.scrollTop = currentScroll + keywordLineHeight
+        // Approximate subject line height is ~48px
+        const subjectLineHeight = 48
+        scrollAreaRef.current.scrollTop = currentScroll + subjectLineHeight
       })
     }
-  }, [keywordsJustAppeared, chatHeaderRef])
+  }, [subjectsJustAppeared, chatHeaderRef])
 
   // Auto-scroll to bottom when new messages arrive or during streaming
   useEffect(() => {
@@ -279,7 +298,7 @@ export function MessageView({
   const shouldShowSenderLabels = otherParticipants.length > 1
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden relative">
       {/* Keyword Detail Panel - Inline at top */}
       {showKeywordDetail && selectedKeyword && topicId && (
         <div className="border-b border-gray-700 bg-gray-900/50 max-h-[25vh] overflow-y-auto">
@@ -292,7 +311,7 @@ export function MessageView({
       )}
 
       <div className="flex-1 px-4 py-2 overflow-y-auto" ref={scrollAreaRef} onScroll={handleScroll} style={{ minHeight: 0 }}>
-        <div className="space-y-4">
+        <div className="space-y-4" style={{ paddingBottom: proposals.length > 0 ? '120px' : '0' }}>
           {messages.length === 0 && !loading && !isAIProcessing && !aiStreamingContent && (
             <div className="text-center py-8 text-muted-foreground">
               No messages yet. Start a conversation!
@@ -394,6 +413,28 @@ export function MessageView({
         </div>
       </div>
 
+      {/* Proposal Carousel - Absolutely positioned above message input */}
+      {proposals.length > 0 && (
+        <div className="absolute bottom-16 left-0 right-0 px-4 pointer-events-none">
+          <div className="pointer-events-auto">
+            <ProposalCarousel
+              proposals={proposals}
+              currentIndex={currentIndex}
+              onNext={nextProposal}
+              onPrevious={previousProposal}
+              onShare={async (proposalId, pastSubjectIdHash) => {
+                const result = await shareProposal(proposalId, pastSubjectIdHash, false)
+                if (result.success && result.sharedContent) {
+                  // Insert shared content as a message
+                  const contextMessage = `Related context from "${result.sharedContent.subjectName}": ${result.sharedContent.keywords.join(', ')}`
+                  await onSendMessage(contextMessage)
+                }
+              }}
+              onDismiss={dismissProposal}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Message input */}
       <EnhancedMessageInput
