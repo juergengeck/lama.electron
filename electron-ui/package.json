@@ -25,6 +25,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@ai-sdk/react": "^2.0.71",
     "@anthropic-ai/sdk": "^0.59.0",
     "@modelcontextprotocol/sdk": "^1.17.2",
     "@radix-ui/react-alert-dialog": "^1.1.14",
@@ -44,6 +45,7 @@
     "@types/dompurify": "^3.0.5",
     "@types/marked": "^5.0.2",
     "@types/qrcode.react": "^1.0.5",
+    "ai": "^5.0.71",
     "buffer": "^6.0.3",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
@@ -59,6 +61,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
+    "react-swipeable": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "stream-browserify": "^3.0.0",
     "tailwind-merge": "^2.2.0",

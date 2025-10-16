@@ -92,52 +92,60 @@ export function registerContactHandlers() {
       const someoneObjects = await nodeOneCore.leuteModel.others()
       const allContacts: Contact[] = []
 
+      // Track processed Person IDs to skip duplicates
+      const processedPersonIds = new Set<string>()
+
       // Transform Someone objects to plain serializable objects
       for (const someone of someoneObjects) {
         try {
           const personId = await someone.mainIdentity()
           if (!personId) continue
 
-          // Get profile to extract display name
-          const profiles = await someone.profiles()
-          let displayName = 'Unknown Contact'
+          // Skip if we've already processed this Person (duplicate Someone object)
+          if (processedPersonIds.has(personId)) {
+            continue
+          }
+          processedPersonIds.add(personId)
 
-          if (profiles && profiles.length > 0) {
-            const profile = profiles[0]
-            // Try to get nickname or name from profile
-            displayName = (profile as any).nickname ||
-                         (profile as any).name ||
-                         `Contact ${String(personId).substring(0, 8)}`
+          // Get profile to extract display name from PersonName
+          const profile = await someone.mainProfile()
+          let displayName: string | null = null
+
+          if (profile?.personDescriptions && Array.isArray(profile.personDescriptions)) {
+            const nameDesc = profile.personDescriptions.find((d: any) => d.$type$ === 'PersonName')
+            if (nameDesc && 'name' in nameDesc) {
+              displayName = nameDesc.name
+            }
+          }
+
+          // If no PersonName found, throw error - don't use fallbacks
+          if (!displayName) {
+            throw new Error(`No PersonName found for contact ${String(personId).substring(0, 8)}`)
+          }
+
+          // Check if this is an AI contact
+          let isAI = false
+          let modelId: string | undefined
+          if (nodeOneCore.aiAssistantModel?.llmObjectManager) {
+            isAI = nodeOneCore.aiAssistantModel.llmObjectManager.isLLMPerson(personId)
+
+            // If this is an AI, get the model ID
+            if (isAI && nodeOneCore.aiAssistantModel) {
+              modelId = nodeOneCore.aiAssistantModel.getModelIdForPersonId(personId)
+            }
           }
 
           allContacts.push({
             id: personId,
             personId: personId,
             name: displayName,
-            isAI: false,
+            isAI: isAI,
+            modelId: modelId, // Include the model ID for AI contacts
             canMessage: true,
-            isConnected: false
+            isConnected: isAI // AI is always "connected"
           })
         } catch (err: any) {
           console.error('[contacts:list] Error processing someone:', err)
-        }
-      }
-
-      // Add AI assistant contacts if available
-      if (nodeOneCore.aiAssistantModel) {
-        const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
-
-        // Transform AI contacts to match the contact format
-        for (const aiContact of aiContacts) {
-          allContacts.push({
-            id: aiContact.personId,
-            personId: aiContact.personId,
-            name: aiContact.name,
-            isAI: true,
-            modelId: aiContact.modelId,
-            canMessage: true,
-            isConnected: true // AI is always "connected"
-          })
         }
       }
 

@@ -9,11 +9,19 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-interface ChatHeaderProps {
-  conversationName: string
+interface Subject {
+  id: string
+  name: string
   keywords: string[]
   messageCount: number
-  onKeywordClick?: (keyword: string) => void
+  timestamp: number
+}
+
+interface ChatHeaderProps {
+  conversationName: string
+  subjects: Subject[]
+  messageCount: number
+  onSubjectClick?: (subject: Subject) => void
   hasAI?: boolean
   onToggleSummary?: () => void
   showSummary?: boolean
@@ -22,15 +30,15 @@ interface ChatHeaderProps {
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
   conversationName,
-  keywords,
+  subjects,
   messageCount,
-  onKeywordClick,
+  onSubjectClick,
   hasAI = false,
   onToggleSummary,
   showSummary = false,
   className = ''
 }) => {
-  console.log('[ChatHeader] Rendering with:', { conversationName, keywords: keywords.length, hasAI, messageCount })
+  console.log('[ChatHeader] Rendering with:', { conversationName, subjects: subjects?.length || 0, hasAI, messageCount })
 
   const [showLeftChevron, setShowLeftChevron] = useState(false)
   const [showRightChevron, setShowRightChevron] = useState(false)
@@ -49,7 +57,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     }
   }
 
-  // Check scroll on mount and when keywords change
+  // Check scroll on mount and when subjects change
   useEffect(() => {
     checkScrollPosition()
 
@@ -65,7 +73,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     return () => {
       resizeObserver.disconnect()
     }
-  }, [keywords])
+  }, [subjects])
 
   // Smooth scroll function
   const scroll = (direction: 'left' | 'right') => {
@@ -94,12 +102,14 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2">
-          {/* Message & Keyword count - show next to brain icon */}
-          {keywords.length > 0 && (
+          {/* Current subject - show the most recent/active subject */}
+          {subjects && subjects.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground mr-2">
               <span>{messageCount} messages</span>
               <span>•</span>
-              <span>{keywords.length} keywords</span>
+              <span className="font-medium text-foreground/80">
+                {subjects[0]?.name || subjects[0]?.id || 'Subject'}
+              </span>
             </div>
           )}
 
@@ -232,80 +242,100 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         </div>
       </div>
 
-      {/* Keywords Cloud with Horizontal Scroll */}
-      {keywords.length > 0 && (
-        <div className="px-4 pb-3 relative">
-          <div className="flex items-center gap-2 relative">
-            {/* Left Chevron */}
-            {showLeftChevron && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 p-0 flex-shrink-0 z-10"
-                onClick={() => scroll('left')}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-            )}
+      {/* Subjects Bar with Horizontal Scroll */}
+      {subjects && subjects.length > 0 && (() => {
+        // Deduplicate subjects by name - keep the most recent version
+        const uniqueSubjects = subjects.reduce((acc, subject) => {
+          const name = subject.id || subject.name || 'Subject';
+          const existing = acc.find(s => (s.id || s.name) === name);
+          if (!existing) {
+            acc.push(subject);
+          } else {
+            // Keep the one with the most recent timestamp
+            if (subject.timestamp > existing.timestamp) {
+              const index = acc.indexOf(existing);
+              acc[index] = subject;
+            }
+          }
+          return acc;
+        }, [] as Subject[]);
 
-            {/* Keywords Container with Gradient Overlay */}
-            <div className="relative flex-1 overflow-hidden">
-              {/* Left Gradient Fade */}
+        return (
+          <div className="px-4 pb-3 relative">
+            <div className="flex items-center gap-2 relative">
+              {/* Left Chevron */}
               {showLeftChevron && (
-                <div
-                  className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none"
-                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 p-0 flex-shrink-0 z-10"
+                  onClick={() => scroll('left')}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
               )}
 
-              {/* Scrollable Keywords Container */}
-              <div
-                ref={scrollContainerRef}
-                className="flex gap-2 overflow-x-auto scrollbar-none scroll-smooth"
-                onScroll={checkScrollPosition}
-                style={{
-                  scrollbarWidth: 'none',
-                  msOverflowStyle: 'none',
-                  WebkitScrollbar: { display: 'none' }
-                }}
-              >
-                {keywords.map((keyword, idx) => {
-                  const keywordText = typeof keyword === 'string' ? keyword : (keyword.term || keyword.text || '');
-                  return (
-                    <Badge
-                      key={idx}
-                      variant="secondary"
-                      className="cursor-pointer hover:bg-secondary/80 transition-colors text-xs whitespace-nowrap flex-shrink-0"
-                      onClick={() => onKeywordClick?.(keywordText)}
-                      title={typeof keyword === 'object' && keyword.subjects?.length > 0 ? `Subjects: ${keyword.subjects.length}` : undefined}
-                    >
-                      #{keywordText}
-                    </Badge>
-                  );
-                })}
+              {/* Subjects Container with Gradient Overlay */}
+              <div className="relative flex-1 overflow-hidden">
+                {/* Left Gradient Fade */}
+                {showLeftChevron && (
+                  <div
+                    className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none"
+                  />
+                )}
+
+                {/* Scrollable Subjects Container */}
+                <div
+                  ref={scrollContainerRef}
+                  className="flex gap-2 overflow-x-auto scrollbar-none scroll-smooth"
+                  onScroll={checkScrollPosition}
+                  style={{
+                    scrollbarWidth: 'none',
+                    msOverflowStyle: 'none',
+                    WebkitScrollbar: { display: 'none' }
+                  }}
+                >
+                  {uniqueSubjects.map((subject, idx) => {
+                    const keywordCount = subject.keywords?.length || 0;
+                    const keywordPreview = subject.keywords?.slice(0, 3).join(', ') || '';
+                    const subjectName = subject.id || subject.name || 'Subject';
+                    return (
+                      <Badge
+                        key={idx}
+                        variant="secondary"
+                        className="cursor-pointer hover:bg-secondary/80 transition-colors text-xs whitespace-nowrap flex-shrink-0"
+                        onClick={() => onSubjectClick?.(subject)}
+                        title={`${subjectName}\n${keywordCount} keywords: ${keywordPreview}${keywordCount > 3 ? '...' : ''}`}
+                      >
+                        {subjectName}
+                      </Badge>
+                    );
+                  })}
+                </div>
+
+                {/* Right Gradient Fade */}
+                {showRightChevron && (
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none"
+                  />
+                )}
               </div>
 
-              {/* Right Gradient Fade */}
+              {/* Right Chevron */}
               {showRightChevron && (
-                <div
-                  className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none"
-                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 p-0 flex-shrink-0 z-10"
+                  onClick={() => scroll('right')}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               )}
             </div>
-
-            {/* Right Chevron */}
-            {showRightChevron && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 p-0 flex-shrink-0 z-10"
-                onClick={() => scroll('right')}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   )
 }

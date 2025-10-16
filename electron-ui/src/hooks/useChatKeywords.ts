@@ -33,8 +33,11 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
     if (!topicId || !window.electronAPI) return;
 
     const handleKeywordsUpdated = (data: any) => {
+      console.log(`[useChatKeywords-${topicId}] 🔔 Received keywords:updated event for: "${data.topicId}"`);
+      console.log(`[useChatKeywords-${topicId}] 🔍 My topicId: "${topicId}"`);
+      console.log(`[useChatKeywords-${topicId}] 🔍 Match: ${data.topicId === topicId}`);
       if (data.topicId === topicId) {
-        console.log('[useChatKeywords] Keywords updated event received for topic:', topicId);
+        console.log(`[useChatKeywords-${topicId}] ✅ Fetching updated keywords`);
         // Trigger a refresh by incrementing request counter
         requestCounter.current++;
         // Re-fetch keywords immediately
@@ -48,14 +51,16 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
               // Keep full keyword objects with subjects array
               const keywords = response.data.keywords;
               const keywordTerms = keywords.map((k: any) => k.term || k);
-              console.log('[useChatKeywords] Refreshed keywords after update:', keywordTerms.length);
+              console.log(`[useChatKeywords-${topicId}] Refreshed keywords after update:`, keywordTerms.length);
               setKeywords(keywords);
             }
           } catch (err) {
-            console.error('[useChatKeywords] Error refreshing keywords:', err);
+            console.error(`[useChatKeywords-${topicId}] Error refreshing keywords:`, err);
           }
         };
         fetchKeywords();
+      } else {
+        console.log(`[useChatKeywords-${topicId}] ❌ Ignoring event for different topic`);
       }
     };
 
@@ -71,8 +76,11 @@ export function useChatKeywords(topicId: string, messages: Message[] = []) {
 
   // Non-blocking keyword extraction
   useEffect(() => {
+    // CRITICAL: Clear keywords immediately when topicId changes to prevent stale data
+    console.log('[useChatKeywords] 🧹 Clearing keywords for topic change to:', topicId);
+    setKeywords([]);
+
     if (!topicId) {
-      setKeywords([]);
       return;
     }
 

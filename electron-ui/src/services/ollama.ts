@@ -21,6 +21,7 @@ export interface OllamaModelInfo {
   name: string
   displayName: string
   size: string
+  sizeBytes: number
   description: string
   capabilities: string[]
   contextLength: number
@@ -98,6 +99,7 @@ export function parseOllamaModel(model: OllamaModel): OllamaModelInfo {
     name: model.name,
     displayName,
     size: `${sizeGB} GB`,
+    sizeBytes: model.size,
     description,
     capabilities,
     contextLength,

@@ -64,6 +64,16 @@ export const SubjectRecipe = {
             itemprop: 'archived',
             itemtype: { type: 'boolean' },
             optional: true
+        },
+        {
+            itemprop: 'likes',
+            itemtype: { type: 'integer' },
+            optional: true
+        },
+        {
+            itemprop: 'dislikes',
+            itemtype: { type: 'integer' },
+            optional: true
         }
     ]
 };

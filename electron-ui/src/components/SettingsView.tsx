@@ -179,6 +179,10 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
     try {
       setLoadingModels(true)
       const modelList = await lamaBridge.getAvailableModels()
+      console.log('[SettingsView] Loaded models:', modelList)
+      modelList.forEach((m: ModelInfo) => {
+        console.log(`[SettingsView] Model ${m.id}: modelType=${m.modelType}, isLoaded=${m.isLoaded}, size=${m.size}`)
+      })
       setModels(modelList)
     } catch (error) {
       console.error('Failed to load models:', error)
@@ -508,6 +512,14 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
       if (result?.success && result.value) {
         setClaudeApiKey(result.value)
         setApiKeyStatus('valid')
+
+        // Trigger model discovery on load if API key exists
+        console.log('[SettingsView] Found existing Claude API key, triggering model discovery...')
+        const discoveryResult = await window.electronAPI?.invoke('ai:discoverClaudeModels')
+
+        if (discoveryResult?.success && discoveryResult.data?.models) {
+          console.log(`[SettingsView] Discovered ${discoveryResult.data.models.length} Claude models on load`)
+        }
       }
     } catch (error) {
       console.error('Failed to load Claude API key:', error)
@@ -554,6 +566,33 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
 
         if (testResult?.success) {
           setApiKeyStatus('valid')
+
+          // Trigger LLM manager to discover Claude models with the new API key
+          console.log('[SettingsView] Triggering Claude model discovery...')
+          const discoveryResult = await window.electronAPI?.invoke('ai:discoverClaudeModels', {
+            apiKey: claudeApiKey
+          })
+
+          if (discoveryResult?.success && discoveryResult.data?.models) {
+            const claudeModels = discoveryResult.data.models
+            console.log(`[SettingsView] Discovered ${claudeModels.length} Claude models from API`)
+
+            // Create AI contacts for each discovered Claude model
+            for (const model of claudeModels) {
+              try {
+                const contactResult = await window.electronAPI?.invoke('ai:getOrCreateContact', {
+                  modelId: model.id
+                })
+                if (contactResult?.success) {
+                  console.log(`[SettingsView] Created AI contact for ${model.name}`)
+                }
+              } catch (err) {
+                console.warn(`[SettingsView] Failed to create contact for ${model.name}:`, err)
+              }
+            }
+          }
+
+          // Reload models to show newly discovered Claude models
           await loadModels()
         } else {
           setApiKeyStatus('invalid')
@@ -585,7 +624,35 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
 
       if (result?.success) {
         setOllamaStatus('valid')
+
+        // Reload models
         await loadModels()
+
+        // Discover Ollama models and create AI contacts
+        console.log('[SettingsView] Triggering Ollama model discovery...')
+        const discoveryResult = await window.electronAPI?.invoke('ai:discoverOllamaModels')
+
+        if (discoveryResult?.success && discoveryResult.data?.models) {
+          const ollamaModels = discoveryResult.data.models
+          console.log(`[SettingsView] Discovered ${ollamaModels.length} Ollama models`)
+
+          // Create AI contacts for each discovered Ollama model
+          for (const model of ollamaModels) {
+            try {
+              const contactResult = await window.electronAPI?.invoke('ai:getOrCreateContact', {
+                modelId: model.id
+              })
+              if (contactResult?.success) {
+                console.log(`[SettingsView] Created AI contact for ${model.name}`)
+              }
+            } catch (err) {
+              console.warn(`[SettingsView] Failed to create contact for ${model.name}:`, err)
+            }
+          }
+
+          // Reload models again to show updated contact info
+          await loadModels()
+        }
       } else {
         setOllamaStatus('invalid')
       }
@@ -759,14 +826,14 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
             </CardContent>
           </Card>
 
-          {/* AI Models */}
+          {/* AI Configuration */}
           <Card>
             <CardHeader>
               <div className="flex items-center space-x-2">
                 <Brain className="h-4 w-4" />
-                <CardTitle className="text-lg">AI Contacts</CardTitle>
+                <CardTitle className="text-lg">AI Configuration</CardTitle>
               </div>
-              <CardDescription>Configure AI assistants as contacts</CardDescription>
+              <CardDescription>Configure API keys and AI model providers</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Ollama Configuration */}
@@ -835,9 +902,26 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
 
               <Separator />
 
-              {/* AI Contact List */}
+              {/* AI Model Management */}
               <div className="space-y-2">
-                <Label>AI Assistant Contacts</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Available AI Models</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (onNavigate) {
+                        onNavigate('contacts')
+                      }
+                    }}
+                  >
+                    <MessageSquare className="h-3 w-3 mr-1" />
+                    Go to Contacts
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  AI models are automatically added as contacts. Go to Contacts tab to start chatting with them.
+                </p>
                 {loadingModels ? (
                   <div className="flex items-center justify-center py-4">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
@@ -846,7 +930,7 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                   <Alert>
                     <AlertTriangle className="h-4 w-4" />
                     <AlertDescription>
-                      No AI contacts configured. Add API keys above to enable AI assistants.
+                      No AI models available. Configure Claude API key or Ollama above to add models.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -857,16 +941,13 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                           <div className="flex items-center space-x-2">
                             {getProviderIcon(model.provider)}
                             <span className="font-medium">{model.name}</span>
-                            <span className="text-xs text-muted-foreground">({model.name.toLowerCase()}@ai.local)</span>
-                            {model.isLoaded && (
-                              <Badge variant="outline" className="text-xs">
-                                <CheckCircle className="h-3 w-3 mr-1" />
-                                Active
-                              </Badge>
-                            )}
+                            <Badge variant="outline" className="text-xs">
+                              {model.provider}
+                            </Badge>
                           </div>
                           <div className="flex items-center space-x-2">
-                            {!model.isLoaded && (
+                            {/* Local models (Ollama) need to be loaded, remote/API models are always ready */}
+                            {model.modelType === 'local' && !model.isLoaded && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -874,35 +955,40 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                                 disabled={loadingStates[model.id]}
                               >
                                 {loadingStates[model.id] ? (
-                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary" />
+                                  <>
+                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary mr-1" />
+                                    Loading...
+                                  </>
                                 ) : (
                                   <>
-                                    <Cpu className="h-3 w-3 mr-1" />
-                                    Load Model
+                                    <Download className="h-3 w-3 mr-1" />
+                                    Load
                                   </>
                                 )}
                               </Button>
                             )}
                             {model.isLoaded && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => console.log('Open chat with', model.name)}
-                              >
-                                <MessageSquare className="h-3 w-3 mr-1" />
-                                Chat
-                              </Button>
+                              <Badge variant="secondary" className="text-xs">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Loaded
+                              </Badge>
+                            )}
+                            {model.modelType === 'remote' && (
+                              <Badge variant="secondary" className="text-xs">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Ready
+                              </Badge>
                             )}
                           </div>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {model.description} • Chat with this AI assistant in your contacts
+                          {model.description}
                         </div>
-                        <div className="flex items-center space-x-4 text-xs">
-                          <span>{formatSize(model.size)}</span>
-                          <span>·</span>
-                          <span>{model.contextLength} token context</span>
-                          {model.capabilities.length > 0 && (
+                        <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                          {model.size !== undefined && <span>{formatSize(model.size)}</span>}
+                          {model.size !== undefined && <span>·</span>}
+                          <span>{model.contextLength.toLocaleString()} tokens</span>
+                          {model.capabilities && model.capabilities.length > 0 && (
                             <>
                               <span>·</span>
                               <div className="flex items-center space-x-1">

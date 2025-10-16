@@ -346,9 +346,83 @@ export async function getSubjects(event: IpcMainInvokeEvent, { topicId, includeA
       }))
     });
 
+    // Get all keywords to resolve ID hashes to terms
+    const allKeywords: any = await model.getKeywords(topicId);
+    console.log('[TopicAnalysis] 🔍 Retrieved keywords for resolution:', {
+      topicId,
+      keywordCount: allKeywords.length,
+      sampleKeywords: allKeywords.slice(0, 3).map((k: any) => k.term)
+    });
+
+    // Create a map of keyword ID hash -> keyword term
+    const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js');
+    const keywordHashToTerm = new Map<string, string>();
+
+    for (const keyword of allKeywords) {
+      if (keyword.term) {
+        // Calculate the ID hash for this keyword to match against subjects
+        const keywordIdObj = {
+          $type$: 'Keyword' as const,
+          term: keyword.term.toLowerCase().trim()
+        };
+        const idHash = await calculateIdHashOfObj(keywordIdObj as any);
+        keywordHashToTerm.set(idHash, keyword.term);
+        console.log('[TopicAnalysis] 🔍 Keyword hash mapping:', {
+          term: keyword.term,
+          idHash: idHash.substring(0, 16) + '...'
+        });
+      }
+    }
+
+    console.log('[TopicAnalysis] 🔍 Created hash->term map with', keywordHashToTerm.size, 'entries');
+
+    // Resolve keyword ID hashes to terms in each subject
+    const resolvedSubjects = subjects.map((subject: any) => {
+      console.log('[TopicAnalysis] 🔍 Resolving keywords for subject:', {
+        subjectId: subject.id,
+        keywordHashes: (subject.keywords || []).map((h: string) => h.substring(0, 16) + '...')
+      });
+
+      const resolvedKeywords = (subject.keywords || []).map((keywordHash: string) => {
+        const term = keywordHashToTerm.get(keywordHash);
+        if (!term) {
+          console.warn('[TopicAnalysis] ⚠️  Could not resolve keyword hash:', {
+            hash: keywordHash.substring(0, 16) + '...',
+            fullHash: keywordHash,
+            availableHashes: Array.from(keywordHashToTerm.keys()).map(h => h.substring(0, 16) + '...')
+          });
+        } else {
+          console.log('[TopicAnalysis] ✅ Resolved keyword hash to term:', {
+            hash: keywordHash.substring(0, 16) + '...',
+            term
+          });
+        }
+        return term || keywordHash; // Fall back to hash if resolution fails
+      });
+
+      console.log('[TopicAnalysis] 🔍 Resolved subject keywords:', {
+        subjectId: subject.id,
+        resolvedKeywords
+      });
+
+      return {
+        ...subject,
+        keywords: resolvedKeywords // Replace ID hashes with actual terms
+      };
+    });
+
     const filteredSubjects = includeArchived
-      ? subjects
-      : subjects.filter((s: any) => !s.archived);
+      ? resolvedSubjects
+      : resolvedSubjects.filter((s: any) => !s.archived);
+
+    console.log('[TopicAnalysis] ✅ Resolved subjects with keyword terms:', {
+      topicId,
+      subjectCount: filteredSubjects.length,
+      sampleSubject: filteredSubjects[0] ? {
+        id: filteredSubjects[0].id,
+        keywords: filteredSubjects[0].keywords
+      } : null
+    });
 
     return {
       success: true,

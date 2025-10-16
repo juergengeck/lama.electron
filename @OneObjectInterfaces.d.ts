@@ -10,6 +10,7 @@ declare module '@OneObjectInterfaces' {
     export interface OneVersionedObjectInterfaces {
         GlobalLLMSettings: GlobalLLMSettings;
         Keyword: Keyword;
+        ProposalConfig: ProposalConfig;
     }
 
     // Add our custom ID object types
@@ -53,5 +54,16 @@ declare module '@OneObjectInterfaces' {
         score?: number;
         createdAt: number; // Unix timestamp
         lastSeen: number; // Unix timestamp
+    }
+
+    export interface ProposalConfig {
+        $type$: 'ProposalConfig';
+        userEmail: string; // ID property - user's email
+        matchWeight: number; // 0.0 to 1.0 - weight given to keyword match
+        recencyWeight: number; // 0.0 to 1.0 - weight given to recency
+        recencyWindow: number; // milliseconds - time window for recency boost
+        minJaccard: number; // 0.0 to 1.0 - minimum Jaccard similarity threshold
+        maxProposals: number; // 1-50 - maximum number of proposals to return
+        updated: number; // Unix timestamp of last update
     }
 }

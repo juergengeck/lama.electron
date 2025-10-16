@@ -83,45 +83,10 @@ export class AttachmentService implements IAttachmentService {
       }
       options?.onProgress?.(50)
       
-      // Store blob in Node.js ONE.core instance via IPC, fallback to browser
-      let hash: string
-      if (window.electronAPI) {
-        try {
-          // Convert to base64 for IPC transfer
-          const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-          
-          const result = await window.electronAPI.invoke('attachment:store', {
-            data: base64Data,
-            metadata: {
-              name: file.name,
-              type: file.type,
-              size: file.size
-            }
-          })
-          
-          if (result.success) {
-            hash = result.data.hash
-            console.log(`[AttachmentService] Stored blob in Node.js with hash: ${hash}`)
-          } else {
-            console.warn(`[AttachmentService] Node storage failed (${result.error}), using browser fallback`)
-            // Fallback to browser storage
-            const fallbackResult = await storeArrayBufferAsBlob(arrayBuffer)
-            hash = fallbackResult.hash as unknown as string
-            console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${fallbackResult.status}`)
-          }
-        } catch (error: unknown) {
-          console.warn(`[AttachmentService] IPC failed (${(error as Error).message}), using browser fallback`)
-          // Fallback to browser storage
-          const result = await storeArrayBufferAsBlob(arrayBuffer)
-          hash = result.hash as unknown as string
-          console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${result.status}`)
-        }
-      } else {
-        // Fallback to browser storage for development
-        const result = await storeArrayBufferAsBlob(arrayBuffer)
-        hash = result.hash as unknown as string
-        console.log(`[AttachmentService] Stored blob locally with hash: ${hash}, status: ${result.status}`)
-      }
+      // Store blob directly using ONE.core (this file is in main process, not renderer)
+      const result = await storeArrayBufferAsBlob(arrayBuffer)
+      const hash = result.hash as unknown as string
+      console.log(`[AttachmentService] Stored blob with hash: ${hash}, status: ${result.status}`)
       options?.onProgress?.(80)
       
       // Cache the descriptor
@@ -160,41 +125,15 @@ export class AttachmentService implements IAttachmentService {
       }
       
       console.log(`[AttachmentService] Loading from storage: ${hash}`)
-      
-      let descriptor: BlobDescriptor
-      
-      if (window.electronAPI) {
-        // Load from Node.js backend
-        const result = await window.electronAPI.invoke('attachment:get', { hash })
-        
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to get attachment')
-        }
-        
-        // Convert base64 back to ArrayBuffer
-        const base64Data = result.data.data
-        const binaryString = atob(base64Data)
-        const bytes = new Uint8Array(binaryString.length)
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i)
-        }
-        
-        descriptor = {
-          data: bytes.buffer,
-          type: result.data.metadata?.type || 'application/octet-stream',
-          name: result.data.metadata?.name || 'attachment',
-          size: result.data.metadata?.size || bytes.length
-        }
-      } else {
-        // Fallback to browser storage
-        const data = await readBlobAsArrayBuffer(hash as any)
-        
-        descriptor = {
-          data,
-          type: 'application/octet-stream',
-          name: 'attachment',
-          size: data.byteLength
-        }
+
+      // Load directly from ONE.core (this file is in main process, not renderer)
+      const data = await readBlobAsArrayBuffer(hash as any)
+
+      const descriptor: BlobDescriptor = {
+        data,
+        type: 'application/octet-stream',
+        name: 'attachment',
+        size: data.byteLength
       }
       
       // Cache for future use

@@ -1,0 +1,434 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "IPC Proposal Handlers Contract",
+  "description": "Contract definitions for proposal-related IPC handlers between browser and Node.js",
+  "version": "1.0.0",
+  "handlers": {
+    "proposals:getForTopic": {
+      "description": "Get ranked proposals for a specific topic based on current subjects",
+      "request": {
+        "type": "object",
+        "required": ["topicId"],
+        "properties": {
+          "topicId": {
+            "type": "string",
+            "description": "ID of the current topic to get proposals for"
+          },
+          "currentSubjects": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "ID hash of current Subject"
+            },
+            "description": "Optional: Current subjects if already known, otherwise will be queried"
+          },
+          "forceRefresh": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, bypass cache and recompute proposals"
+          }
+        },
+        "examples": [
+          {
+            "topicId": "current-conversation-123",
+            "forceRefresh": false
+          },
+          {
+            "topicId": "current-conversation-123",
+            "currentSubjects": ["subj-hash-abc", "subj-hash-def"],
+            "forceRefresh": true
+          }
+        ]
+      },
+      "response": {
+        "type": "object",
+        "required": ["proposals", "count"],
+        "properties": {
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/Proposal"
+            },
+            "description": "Array of ranked proposals, ordered by relevance score (descending)"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Total number of proposals returned"
+          },
+          "cached": {
+            "type": "boolean",
+            "description": "Whether results were served from cache"
+          },
+          "computeTimeMs": {
+            "type": "number",
+            "description": "Time taken to compute proposals (for performance monitoring)"
+          }
+        },
+        "examples": [
+          {
+            "proposals": [
+              {
+                "id": "prop-uuid-1234",
+                "pastSubject": "past-subj-hash-xyz",
+                "currentSubject": "current-subj-hash-abc",
+                "matchedKeywords": ["cooking", "italian-food"],
+                "relevanceScore": 0.68,
+                "sourceTopicId": "past-conversation-456",
+                "pastSubjectName": "Italian Cooking Techniques",
+                "createdAt": 1704096000000
+              }
+            ],
+            "count": 1,
+            "cached": false,
+            "computeTimeMs": 42.3
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "TOPIC_NOT_FOUND",
+          "message": "Topic with ID {topicId} does not exist"
+        },
+        {
+          "code": "NO_SUBJECTS",
+          "message": "Current topic has no identified subjects yet"
+        },
+        {
+          "code": "COMPUTATION_ERROR",
+          "message": "Failed to compute proposals: {error}"
+        }
+      ]
+    },
+    "proposals:updateConfig": {
+      "description": "Update user's proposal matching configuration",
+      "request": {
+        "type": "object",
+        "required": ["config"],
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/ProposalConfig",
+            "description": "New configuration values (partial update supported)"
+          }
+        },
+        "examples": [
+          {
+            "config": {
+              "matchWeight": 0.8,
+              "recencyWeight": 0.2,
+              "minJaccard": 0.15
+            }
+          }
+        ]
+      },
+      "response": {
+        "type": "object",
+        "required": ["success", "config"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether config was successfully updated"
+          },
+          "config": {
+            "$ref": "#/definitions/ProposalConfig",
+            "description": "Complete updated configuration"
+          },
+          "versionHash": {
+            "type": "string",
+            "description": "ONE.core version hash of stored config"
+          }
+        },
+        "examples": [
+          {
+            "success": true,
+            "config": {
+              "userEmail": "user@example.com",
+              "matchWeight": 0.8,
+              "recencyWeight": 0.2,
+              "recencyWindow": 2592000000,
+              "minJaccard": 0.15,
+              "maxProposals": 10,
+              "updated": 1704096000000
+            },
+            "versionHash": "abc123def456..."
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "INVALID_CONFIG",
+          "message": "Configuration validation failed: {details}"
+        },
+        {
+          "code": "STORAGE_ERROR",
+          "message": "Failed to store configuration: {error}"
+        }
+      ]
+    },
+    "proposals:getConfig": {
+      "description": "Get current user's proposal configuration",
+      "request": {
+        "type": "object",
+        "properties": {},
+        "description": "No parameters required (uses current user from session)"
+      },
+      "response": {
+        "type": "object",
+        "required": ["config"],
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/ProposalConfig",
+            "description": "Current configuration or defaults if not yet customized"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "description": "Whether this is default config (not yet customized)"
+          }
+        },
+        "examples": [
+          {
+            "config": {
+              "userEmail": "user@example.com",
+              "matchWeight": 0.7,
+              "recencyWeight": 0.3,
+              "recencyWindow": 2592000000,
+              "minJaccard": 0.2,
+              "maxProposals": 10,
+              "updated": 1704096000000
+            },
+            "isDefault": false
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "USER_NOT_AUTHENTICATED",
+          "message": "No authenticated user to retrieve config for"
+        }
+      ]
+    },
+    "proposals:dismiss": {
+      "description": "Mark a proposal as dismissed for the current session",
+      "request": {
+        "type": "object",
+        "required": ["proposalId", "topicId"],
+        "properties": {
+          "proposalId": {
+            "type": "string",
+            "description": "ID of the proposal being dismissed"
+          },
+          "topicId": {
+            "type": "string",
+            "description": "Current topic ID"
+          },
+          "pastSubjectIdHash": {
+            "type": "string",
+            "description": "ID hash of past subject (for session-wide dismissal)"
+          }
+        },
+        "examples": [
+          {
+            "proposalId": "prop-uuid-1234",
+            "topicId": "current-conversation-123",
+            "pastSubjectIdHash": "past-subj-hash-xyz"
+          }
+        ]
+      },
+      "response": {
+        "type": "object",
+        "required": ["success"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether dismissal was recorded"
+          },
+          "remainingCount": {
+            "type": "integer",
+            "description": "Number of non-dismissed proposals still available"
+          }
+        },
+        "examples": [
+          {
+            "success": true,
+            "remainingCount": 3
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "PROPOSAL_NOT_FOUND",
+          "message": "Proposal with ID {proposalId} does not exist"
+        }
+      ]
+    },
+    "proposals:share": {
+      "description": "Share a proposal's past subject context into the current conversation",
+      "request": {
+        "type": "object",
+        "required": ["proposalId", "topicId"],
+        "properties": {
+          "proposalId": {
+            "type": "string",
+            "description": "ID of the proposal being shared"
+          },
+          "topicId": {
+            "type": "string",
+            "description": "Current topic ID to share into"
+          },
+          "pastSubjectIdHash": {
+            "type": "string",
+            "description": "ID hash of past subject to retrieve and share"
+          },
+          "includeMessages": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to include sample messages from past conversation"
+          }
+        },
+        "examples": [
+          {
+            "proposalId": "prop-uuid-1234",
+            "topicId": "current-conversation-123",
+            "pastSubjectIdHash": "past-subj-hash-xyz",
+            "includeMessages": true
+          }
+        ]
+      },
+      "response": {
+        "type": "object",
+        "required": ["success"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether sharing was successful"
+          },
+          "sharedContent": {
+            "type": "object",
+            "properties": {
+              "subjectName": {
+                "type": "string"
+              },
+              "keywords": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "messages": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Sample messages if includeMessages was true"
+              }
+            },
+            "description": "Content that was shared"
+          }
+        },
+        "examples": [
+          {
+            "success": true,
+            "sharedContent": {
+              "subjectName": "Italian Cooking Techniques",
+              "keywords": ["cooking", "italian-food", "pasta", "techniques"],
+              "messages": []
+            }
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "SHARE_FAILED",
+          "message": "Failed to share proposal: {error}"
+        },
+        {
+          "code": "SUBJECT_NOT_FOUND",
+          "message": "Past subject no longer exists"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "Proposal": {
+      "type": "object",
+      "required": ["id", "pastSubject", "currentSubject", "matchedKeywords", "relevanceScore", "sourceTopicId", "pastSubjectName", "createdAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this proposal"
+        },
+        "pastSubject": {
+          "type": "string",
+          "description": "ID hash of past Subject"
+        },
+        "currentSubject": {
+          "type": "string",
+          "description": "ID hash of current Subject"
+        },
+        "matchedKeywords": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Keywords that matched between subjects",
+          "minItems": 1
+        },
+        "relevanceScore": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Computed relevance score"
+        },
+        "sourceTopicId": {
+          "type": "string",
+          "description": "Topic ID where past subject originated"
+        },
+        "pastSubjectName": {
+          "type": "string",
+          "description": "Human-readable name of past subject"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Unix timestamp when past subject was created"
+        }
+      }
+    },
+    "ProposalConfig": {
+      "type": "object",
+      "required": ["userEmail", "matchWeight", "recencyWeight", "recencyWindow", "minJaccard", "maxProposals", "updated"],
+      "properties": {
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "User's email (ID property for ONE.core versioning)"
+        },
+        "matchWeight": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Weight given to keyword match similarity"
+        },
+        "recencyWeight": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Weight given to subject recency"
+        },
+        "recencyWindow": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Time window in milliseconds for recency boost"
+        },
+        "minJaccard": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Minimum Jaccard similarity threshold"
+        },
+        "maxProposals": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum number of proposals to return"
+        },
+        "updated": {
+          "type": "integer",
+          "description": "Unix timestamp of last update"
+        }
+      }
+    }
+  }
+}

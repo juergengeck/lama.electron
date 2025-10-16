@@ -30,6 +30,8 @@ import auditHandlers from './handlers/audit.js';
 import exportHandlers from './handlers/export.js';
 import feedForwardHandlers from './handlers/feed-forward.js';
 import { registerLlmConfigHandlers } from './handlers/llm-config.js';
+// @ts-ignore - TS file with named export
+import { proposalHandlers } from './handlers/proposals.js';
 
 // Node error type
 interface NodeError extends Error {
@@ -184,6 +186,9 @@ class IPCController {
     this.handle('ai:getTools', aiHandlers.getTools);
     this.handle('ai:executeTool', aiHandlers.executeTool);
     this.handle('ai:initialize', aiHandlers.initializeLLM);
+    this.handle('ai:initializeLLM', aiHandlers.initializeLLM); // Alias for UI compatibility
+    this.handle('ai:getOrCreateContact', aiHandlers.getOrCreateContact);
+    this.handle('ai:discoverClaudeModels', aiHandlers.discoverClaudeModels);
     this.handle('ai:debugTools', aiHandlers.debugTools);
     this.handle('llm:testApiKey', aiHandlers.testApiKey);
     this.handle('ai:ensureDefaultChats', aiHandlers['ai:ensureDefaultChats']);
@@ -233,6 +238,13 @@ class IPCController {
     this.handle('keywordDetail:getKeywordDetails', keywordDetailHandlers.getKeywordDetails);
     this.handle('keywordDetail:updateKeywordAccessState', keywordDetailHandlers.updateKeywordAccessState);
 
+    // Proposal handlers
+    this.handle('proposals:getForTopic', proposalHandlers['proposals:getForTopic']);
+    this.handle('proposals:updateConfig', proposalHandlers['proposals:updateConfig']);
+    this.handle('proposals:getConfig', proposalHandlers['proposals:getConfig']);
+    this.handle('proposals:dismiss', proposalHandlers['proposals:dismiss']);
+    this.handle('proposals:share', proposalHandlers['proposals:share']);
+
     // Export handlers
     this.handle('export:file', exportHandlers.exportFile);
     this.handle('export:fileAuto', exportHandlers.exportFileAuto);
@@ -270,6 +282,9 @@ class IPCController {
     this.handle('onecore:secureStore', oneCoreHandlers.secureStore);
     this.handle('onecore:secureRetrieve', oneCoreHandlers.secureRetrieve);
     this.handle('onecore:clearStorage', oneCoreHandlers.clearStorage);
+
+    // Topic feedback handler
+    this.handle('topics:recordFeedback', topicHandlers.recordSubjectFeedback);
 
     // Debug handler for owner ID comparison
     this.handle('debug', (event: IpcMainInvokeEvent, data: any) => {

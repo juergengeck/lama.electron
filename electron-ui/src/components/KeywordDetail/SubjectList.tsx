@@ -1,6 +1,7 @@
 /**
  * SubjectList Component
  * Displays scrollable list of subjects with sorting
+ * Groups subjects with the same name together
  */
 
 import React, { useMemo } from 'react';
@@ -15,46 +16,70 @@ interface SubjectListProps {
   className?: string;
 }
 
+interface SubjectGroup {
+  description: string;
+  subjects: EnrichedSubject[];
+  // Aggregate metadata for sorting
+  maxRelevanceScore: number;
+  mostRecentTimestamp: number;
+  totalAuthors: number;
+}
+
 export const SubjectList: React.FC<SubjectListProps> = ({
   subjects,
   sortMode,
   onTopicClick,
   className = ''
 }) => {
-  // Sort subjects based on selected mode
-  const sortedSubjects = useMemo(() => {
-    const sorted = [...subjects];
+  // Group subjects by description and sort groups
+  const sortedGroups = useMemo(() => {
+    // Group subjects by description
+    const groupMap = new Map<string, EnrichedSubject[]>();
 
+    subjects.forEach(subject => {
+      const desc = subject.description;
+      if (!groupMap.has(desc)) {
+        groupMap.set(desc, []);
+      }
+      groupMap.get(desc)!.push(subject);
+    });
+
+    // Convert to groups with aggregate metadata
+    const groups: SubjectGroup[] = Array.from(groupMap.entries()).map(([description, subjects]) => {
+      const maxRelevanceScore = Math.max(...subjects.map(s => s.relevanceScore));
+      const mostRecentTimestamp = Math.max(
+        ...subjects.map(s => new Date(s.sortTimestamp || s.lastSeen).getTime())
+      );
+      const uniqueAuthors = new Set(subjects.flatMap(s => s.authors || []));
+
+      return {
+        description,
+        subjects,
+        maxRelevanceScore,
+        mostRecentTimestamp,
+        totalAuthors: uniqueAuthors.size
+      };
+    });
+
+    // Sort groups based on selected mode
     switch (sortMode) {
       case 'relevance':
-        // Sort by relevance score (descending)
-        sorted.sort((a, b) => b.relevanceScore - a.relevanceScore);
+        groups.sort((a, b) => b.maxRelevanceScore - a.maxRelevanceScore);
         break;
 
       case 'time':
-        // Sort by last seen timestamp (descending - most recent first)
-        sorted.sort((a, b) => {
-          const timeA = new Date(a.sortTimestamp || a.lastSeen).getTime();
-          const timeB = new Date(b.sortTimestamp || b.lastSeen).getTime();
-          return timeB - timeA;
-        });
+        groups.sort((a, b) => b.mostRecentTimestamp - a.mostRecentTimestamp);
         break;
 
       case 'author':
-        // Sort by number of authors (descending)
-        sorted.sort((a, b) => {
-          const authorsA = a.authors?.length || 0;
-          const authorsB = b.authors?.length || 0;
-          return authorsB - authorsA;
-        });
+        groups.sort((a, b) => b.totalAuthors - a.totalAuthors);
         break;
 
       default:
-        // Default to relevance
-        sorted.sort((a, b) => b.relevanceScore - a.relevanceScore);
+        groups.sort((a, b) => b.maxRelevanceScore - a.maxRelevanceScore);
     }
 
-    return sorted;
+    return groups;
   }, [subjects, sortMode]);
 
   // Empty state
@@ -69,14 +94,18 @@ export const SubjectList: React.FC<SubjectListProps> = ({
     );
   }
 
+  // Calculate total unique subjects for footer
+  const totalSubjects = subjects.length;
+  const totalGroups = sortedGroups.length;
+
   return (
     <div className={`subject-list ${className}`}>
       <ScrollArea className="h-[400px]">
         <div className="space-y-3 pr-4">
-          {sortedSubjects.map((subject, index) => (
+          {sortedGroups.map((group, groupIndex) => (
             <SubjectItem
-              key={`${subject.topicId}-${subject.keywordCombination}-${index}`}
-              subject={subject}
+              key={`${group.description}-${groupIndex}`}
+              subjects={group.subjects}
               onTopicClick={onTopicClick}
             />
           ))}
@@ -85,7 +114,8 @@ export const SubjectList: React.FC<SubjectListProps> = ({
 
       {/* Summary footer */}
       <div className="mt-3 pt-3 border-t text-xs text-gray-500">
-        Showing {sortedSubjects.length} subject{sortedSubjects.length !== 1 ? 's' : ''}
+        Showing {totalGroups} subject name{totalGroups !== 1 ? 's' : ''}
+        {totalSubjects !== totalGroups && ` (${totalSubjects} version${totalSubjects !== 1 ? 's' : ''})`}
         {' • '}
         Sorted by {sortMode}
       </div>

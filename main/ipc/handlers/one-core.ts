@@ -338,36 +338,13 @@ const oneCoreHandlers = {
 
       const contacts: Contact[] = []
 
-      // Add the owner (self) first - useful for editing own profile
+      // Get owner ID for special handling below
+      let myId: string | null = null
       try {
         const me = await nodeOneCore.leuteModel.me()
-        const myId = await me.mainIdentity()
-        const myProfile = await me.mainProfile()
-
-        let myName = nodeOneCore.instanceName || 'Node.js Owner'
-        if (myProfile?.personDescriptions?.length > 0) {
-          const nameDesc = myProfile.personDescriptions.find(isPersonName)
-          if (nameDesc && 'name' in nameDesc) {
-            myName = nameDesc.name
-          }
-        }
-
-        contacts.push({
-          id: myId,
-          personId: myId,
-          name: myName + ' (You)',
-          displayName: myName + ' (You)',
-          email: String(myId).substring(0, 8) + '@lama.network',
-          isAI: false,
-          role: 'owner',
-          platform: 'nodejs',
-          status: 'owner',
-          isConnected: true,
-          trusted: true,
-          lastSeen: new Date().toISOString()
-        })
+        myId = await me.mainIdentity()
       } catch (error) {
-        console.warn('[OneCoreHandler] Error getting owner info:', error)
+        console.warn('[OneCoreHandler] Error getting owner ID:', error)
       }
 
       // Get ALL contacts from LeuteModel.others() - this is the ONLY source of truth
@@ -540,6 +517,12 @@ const oneCoreHandlers = {
             }
           }
 
+          // Check if this is the owner
+          const isOwner = personId === myId
+          if (isOwner) {
+            displayName += ' (You)'
+          }
+
           // Following one.leute pattern - don't check connection status for contacts
           // Contacts exist regardless of connection state
 
@@ -551,10 +534,10 @@ const oneCoreHandlers = {
             displayName: displayName,
             email: email || `${String(personId).substring(0, 8)}@lama.network`,
             isAI: isAI,
-            role: 'contact',
-            platform: isAI ? 'ai' : 'external',
-            status: 'offline', // Connection status should be checked separately if needed
-            isConnected: false, // Connection status should be checked separately if needed
+            role: isOwner ? 'owner' : 'contact',
+            platform: isAI ? 'ai' : (isOwner ? 'nodejs' : 'external'),
+            status: isOwner ? 'owner' : 'offline',
+            isConnected: isOwner ? true : false,
             trusted: true,
             lastSeen: new Date().toISOString()
           })
@@ -566,13 +549,14 @@ const oneCoreHandlers = {
       // AI contacts should already be in LeuteModel.others()
       // They are created as proper Person objects and added to contacts
       // No need to add them again - that would violate single source of truth
-      console.log(`[OneCoreHandler] AI contacts are included in LeuteModel.others()`)
+      console.log(`[OneCoreHandler] All contacts (including owner and AI) from LeuteModel.others()`)
 
       console.log('\n[OneCoreHandler] SUMMARY:')
-      console.log(`[OneCoreHandler]   - Owner: 1`)
-      console.log(`[OneCoreHandler]   - From LeuteModel: ${others.length}`)
+      console.log(`[OneCoreHandler]   - Total from LeuteModel.others(): ${others.length}`)
+      console.log(`[OneCoreHandler]   - After deduplication: ${contacts.length}`)
+      console.log(`[OneCoreHandler]   - Owner: ${contacts.filter(c => c.role === 'owner').length}`)
       console.log(`[OneCoreHandler]   - AI contacts: ${contacts.filter(c => c.isAI).length}`)
-      console.log(`[OneCoreHandler]   - TOTAL: ${contacts.length}`)
+      console.log(`[OneCoreHandler]   - Regular contacts: ${contacts.filter(c => !c.isAI && c.role !== 'owner').length}`)
 
       // Check for duplicate IDs in final contact list
       const finalIds = new Map<string, number>()
@@ -737,31 +721,95 @@ const oneCoreHandlers = {
   },
 
   /**
-   * Store data securely using ONE.core storage
-   * TODO: Implement proper secure storage using ONE.core versioned objects
+   * Store data securely using LLM objects
+   * Claude API keys are stored as LLM objects with encryptedAuthToken
    */
   async secureStore(event: IpcMainInvokeEvent, { key, value, encrypted = true }: { key: string; value: any; encrypted?: boolean }): Promise<IpcResponse> {
     console.log(`[OneCoreHandler] Secure store: ${key} (encrypted: ${encrypted})`)
+    console.log(`[OneCoreHandler] nodeOneCore initialized: ${nodeOneCore?.initialized}, channelManager: ${!!nodeOneCore?.channelManager}`)
 
-    // TODO: Use ONE.core's storage directly for secure key-value storage
-    // Can use storeVersionObjectAsChange() with a custom SecureSettings object
+    try {
+      if (key === 'claude_api_key') {
+        if (!nodeOneCore?.initialized || !nodeOneCore?.channelManager) {
+          throw new Error('ONE.core not initialized')
+        }
 
-    return {
-      success: false,
-      error: 'secureStore not yet implemented - needs ONE.core versioned object storage'
+        console.log('[OneCoreHandler] Importing llm-config handler...')
+        const { handleSetOllamaConfig } = await import('./llm-config.js')
+
+        console.log('[OneCoreHandler] Calling handleSetOllamaConfig with Claude API key...')
+        const result = await handleSetOllamaConfig(event, {
+          modelType: 'remote',
+          baseUrl: 'https://api.anthropic.com',
+          authType: 'bearer',
+          authToken: value,
+          modelName: 'claude',
+          setAsActive: true
+        })
+
+        console.log('[OneCoreHandler] handleSetOllamaConfig result:', result)
+
+        if (!result.success) {
+          throw new Error('error' in result ? result.error : 'Failed to store API key')
+        }
+
+        return {
+          success: true,
+          data: { stored: true, configHash: result.configHash }
+        }
+      }
+
+      throw new Error(`Unsupported secure storage key: ${key}`)
+
+    } catch (error) {
+      console.error('[OneCoreHandler] secureStore error:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
     }
   },
 
   /**
-   * Retrieve data from ONE.core's secure storage
-   * TODO: Implement proper secure retrieval using ONE.core versioned objects
+   * Retrieve data from LLM objects
+   * Claude API keys are stored as LLM objects with encryptedAuthToken
    */
   async secureRetrieve(event: IpcMainInvokeEvent, { key }: { key: string }): Promise<IpcResponse> {
     console.log(`[OneCoreHandler] Secure retrieve: ${key}`)
 
-    return {
-      success: false,
-      error: 'secureRetrieve not yet implemented - needs ONE.core versioned object storage'
+    try {
+      if (key === 'claude_api_key') {
+        if (!nodeOneCore?.channelManager) {
+          throw new Error('ONE.core not initialized')
+        }
+
+        const { decryptToken } = await import('../../services/ollama-config-manager.js')
+
+        const iterator = nodeOneCore.channelManager.objectIteratorWithType('LLM', {
+          channelId: 'lama'
+        })
+
+        for await (const llmObj of iterator) {
+          if (llmObj?.data?.name === 'claude' && llmObj.data.active && !llmObj.data.deleted) {
+            const encrypted = (llmObj.data as any).encryptedAuthToken
+            if (encrypted) {
+              const apiKey = decryptToken(encrypted)
+              return { success: true, value: apiKey }
+            }
+          }
+        }
+
+        throw new Error('API key not found')
+      }
+
+      throw new Error(`Unsupported secure storage key: ${key}`)
+
+    } catch (error) {
+      console.error('[OneCoreHandler] secureRetrieve error:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
     }
   },
 

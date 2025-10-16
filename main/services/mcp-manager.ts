@@ -160,12 +160,34 @@ class MCPManager {
     if (tools.length === 0) {
       return '';
     }
-    
-    let description = '\n\nWhen asked about files, respond with ONLY this JSON:\n';
+
+    let description = '\n\n# Available Tools\n\n';
+    description += 'You have access to the following tools that you can execute:\n\n';
+
+    for (const tool of tools) {
+      description += `**${tool.fullName}**\n`;
+      if (tool.description) {
+        description += `${tool.description}\n`;
+      }
+      if (tool.inputSchema && tool.inputSchema.properties) {
+        description += 'Parameters:\n';
+        for (const [paramName, paramDef] of Object.entries(tool.inputSchema.properties)) {
+          const def = paramDef as any;
+          const required = tool.inputSchema.required?.includes(paramName) ? ' (required)' : ' (optional)';
+          description += `  - ${paramName}${required}: ${def.description || def.type || 'no description'}\n`;
+        }
+      }
+      description += '\n';
+    }
+
+    description += '\n# Tool Usage\n\n';
+    description += 'When you need to use a tool, respond with ONLY the JSON block (no thinking, no explanation):\n\n';
     description += '```json\n';
-    description += '{"tool":"filesystem:list_directory","parameters":{"path":"./"}}\n';
-    description += '```\n';
-    
+    description += '{"tool":"tool-name","parameters":{"param":"value"}}\n';
+    description += '```\n\n';
+    description += 'The system will execute the tool and provide you with the result. Then you can respond with the result formatted for the user.\n';
+    description += 'IMPORTANT: Do NOT simulate tool execution - actually call the tool by responding with the JSON.\n';
+
     return description;
   }
 

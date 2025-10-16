@@ -222,14 +222,24 @@ class NodeOneCore implements INodeOneCore {
       
       // Set initialized before models so instance manager can work
       this.initialized = true
-      
+
       // Initialize models in proper order
       await this.initializeModels()
-      
+
+      // NOW that ONE.core is initialized, discover Claude models (requires secure storage)
+      console.log('[NodeOneCore] Discovering Claude models from API (post-init)...')
+      try {
+        const { default: llmManager } = await import('../services/llm-manager.js')
+        await llmManager.discoverClaudeModels()
+        console.log('[NodeOneCore] ✅ Claude models discovered successfully')
+      } catch (error) {
+        console.warn('[NodeOneCore] Failed to discover Claude models (non-critical):', (error as Error).message)
+      }
+
       console.log(`[NodeOneCore] Initialized successfully`)
-      
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         ownerId: this.ownerId,
         name: this.instanceName
       }
@@ -1359,8 +1369,8 @@ class NodeOneCore implements INodeOneCore {
       }, 30000)
     }
 
-    // Set up AI contacts now that everything is initialized
-    await this.setupAIContactsWhenReady()
+    // AI contacts are set up by AIAssistantModel.init() during setupMessageSync()
+    // No need to duplicate contact creation here
 
     // Initialize Feed-Forward Manager
     // try {
@@ -1580,85 +1590,7 @@ class NodeOneCore implements INodeOneCore {
     }
   }
   
-  /**
-   * Set up AI assistant contacts for available models
-   */
-  async setupAIContacts(): Promise<any> {
-    console.log('[NodeOneCore] 🤖 Setting up AI assistant contacts...')
-    
-    try {
-      // Get available AI models from LLM manager
-      const { default: llmManager } = await import('../services/llm-manager.js')
-      const { default: stateManager } = await import('../state/manager.js')
-
-      // Check if user has already selected a model
-      const state = stateManager.getState()
-      const savedModelId = state?.ai?.defaultModelId
-      if (!savedModelId) {
-        console.log('[NodeOneCore] No model selected yet, skipping AI contact creation')
-        return []
-      }
-
-      const allModels = this.llmManager?.getAvailableModels()
-      const initialModel = allModels.find((m: any) => m.id === savedModelId)
-
-      if (!initialModel) {
-        console.log('[NodeOneCore] Saved model not found:', savedModelId)
-        return []
-      }
-
-      console.log(`[NodeOneCore] Setting up saved AI model: ${initialModel.name}`)
-
-      // Create ONE AI identity for the LAMA chat
-      // The Hi chat will use this same AI but with a different context
-
-      // Create the -private version for LAMA
-      const lamaModel = {
-        ...initialModel,
-        id: initialModel.id + ':lama',
-        name: initialModel.name.replace('-private', '') + '-private' // Ensure -private suffix
-      }
-
-      // Create the AI contact and store with full metadata
-      const aiContacts: any[] = []
-      const { storeIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
-      const { createDefaultKeys, hasDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
-
-      // Create LAMA contact person
-      const lamaPersonData: any = {
-        $type$: 'Person' as const,
-        email: `${lamaModel.id.replace(/[^a-zA-Z0-9]/g, '_')}@ai.local`,
-        name: lamaModel.name
-      }
-      const lamaResult = await storeIdObject(lamaPersonData)
-      const lamaPersonId = typeof lamaResult === 'object' && lamaResult.idHash ? lamaResult.idHash : lamaResult
-
-      // Ensure keys exist
-      if (!(await hasDefaultKeys(lamaPersonId as any))) {
-        await createDefaultKeys(lamaPersonId as any)
-      }
-
-      // Store LAMA contact with full metadata
-      const lamaContactInfo = {
-        modelId: lamaModel.id,
-        personId: lamaPersonId,
-        name: lamaModel.name,
-        isPrivate: true,
-        chatId: 'lama'
-      };
-      (this.aiAssistantModel as any)?.aiContacts?.set(lamaModel.id, lamaContactInfo);
-      (aiContacts as any)?.push(lamaContactInfo);
-      
-      console.log(`[NodeOneCore] ✅ Created AI contact: ${lamaContactInfo.name}`)
-      
-      // Store for reference
-      this.aiPersonIds = aiContacts as any
-      
-      return aiContacts
-    } catch (error) {
-      console.error('[NodeOneCore] Could not set up AI contacts:', error)
-    }
-  }
+  // REMOVED: setupAIContacts() - AIAssistantModel handles all AI contact creation
   
   /**
    * Get AI person ID for a model (delegates to AIContactManager)
@@ -1758,22 +1690,7 @@ class NodeOneCore implements INodeOneCore {
     }
   }
 
-  /**
-   * Set up AI contacts after LLMManager is ready
-   * This should be called from the main app after LLMManager.init()
-   */
-  async setupAIContactsWhenReady(): Promise<any> {
-    if (!this.initialized) {
-      console.log('[NodeOneCore] Cannot set up AI contacts - Node not initialized')
-      return
-    }
-    
-    try {
-      await this.setupAIContacts()
-    } catch (error) {
-      console.error('[NodeOneCore] Failed to set up AI contacts:', error)
-    }
-  }
+  // REMOVED: setupAIContactsWhenReady() - AIAssistantModel handles all AI contact creation
   
   // Removed setupBrowserAccess - browser has no ONE instance
   

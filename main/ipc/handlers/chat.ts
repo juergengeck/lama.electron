@@ -166,12 +166,14 @@ const chatHandlers = {
       // TopicRoom.sendMessage expects (message, author, channelOwner)
       // undefined author means "use my main identity"
       // For P2P: channelOwner should be null (shared channel)
-      // For group: channelOwner should be undefined (use my main identity)
+      // For group: channelOwner should be YOUR person ID (you write to YOUR channel)
       console.log('[ChatHandler] DEBUG: About to send message to topicRoom')
       console.log('[ChatHandler] Attachments:', attachments?.length || 0)
 
       const isP2P = conversationId.includes('<->')
-      const channelOwner = isP2P ? null : undefined
+      // CRITICAL: For group chats, each participant writes to THEIR OWN channel
+      // This means channelOwner should be the current user's person ID
+      const channelOwner = isP2P ? null : nodeOneCore.ownerId
 
       // Check if we have attachments
       if (attachments && attachments.length > 0) {
@@ -283,6 +285,7 @@ const chatHandlers = {
       let topicRoom: any
       try {
         topicRoom = await nodeOneCore.topicModel.enterTopicRoom(conversationId)
+        console.log(`[ChatHandler] 🔍 Entered topic room - requested: "${conversationId}", topicRoom.topic.id: "${topicRoom.topic?.id}"`)
       } catch (error) {
         // Return empty messages if topic doesn't exist yet
         return {
@@ -312,10 +315,6 @@ const chatHandlers = {
             owner: c.owner?.substring(0, 8) || 'undefined'
           })))
       }
-
-      // DEBUG: Show what we're about to retrieve
-      // Retrieve messages using proper channel isolation
-      console.log(`[ChatHandler] Retrieving messages for: ${conversationId}`)
 
       // Retrieve messages with strict conversation isolation
       rawMessages = await topicRoom.retrieveAllMessages()
@@ -428,8 +427,28 @@ const chatHandlers = {
         }
       }))
 
+      // CRITICAL: Deduplicate messages by content + sender + timestamp
+      // Messages can appear multiple times when retrieved from multiple channels
+      const seen = new Map<string, any>()
+      const deduplicatedMessages = formattedMessages.filter((msg: any) => {
+        // Create deduplication key from content, sender, and timestamp (to ms precision)
+        const dedupeKey = `${msg.sender}-${msg.text}-${msg.timestamp}`
+
+        if (seen.has(dedupeKey)) {
+          console.log(`[ChatHandler] 🔁 Skipping duplicate message: "${msg.text.substring(0, 50)}..." from ${msg.senderName}`)
+          return false
+        }
+
+        seen.set(dedupeKey, true)
+        return true
+      })
+
+      if (deduplicatedMessages.length !== formattedMessages.length) {
+        console.log(`[ChatHandler] ✂️  Deduplicated ${formattedMessages.length - deduplicatedMessages.length} duplicate messages`)
+      }
+
       // Apply pagination
-      const paginatedMessages = formattedMessages.slice(offset, offset + limit)
+      const paginatedMessages = deduplicatedMessages.slice(offset, offset + limit)
 
       console.log(`[ChatHandler] 📤 Returning ${paginatedMessages.length} messages for ${conversationId}:`)
       paginatedMessages.forEach((msg: any, i: any) => {
@@ -439,8 +458,8 @@ const chatHandlers = {
       return {
         success: true,
         messages: paginatedMessages,
-        total: formattedMessages.length,
-        hasMore: offset + limit < formattedMessages.length
+        total: deduplicatedMessages.length,
+        hasMore: offset + limit < deduplicatedMessages.length
       }
     } catch (error) {
       console.error('[ChatHandler] Error getting messages:', error)
@@ -533,18 +552,21 @@ const chatHandlers = {
       }
 
       // Mark conversation metadata if it has AI participants
-      // NOTE: Do NOT register AI topics here - that's AIAssistantModel's responsibility
-      // AIAssistantModel will register topics when it scans existing conversations
+      let aiModelIdForTopic = null
       if (nodeOneCore.aiAssistantModel) {
-        const aiContacts = nodeOneCore.aiAssistantModel.getAllContacts()
         for (const participant of participants) {
-          const isAI = aiContacts.some((contact: any) => contact.personId === participant)
+          // Use isAIPerson which checks LLMObjectManager (has all models, not just cached)
+          const isAI = nodeOneCore.aiAssistantModel.isAIPerson(participant)
           if (isAI) {
             conversation.hasAIParticipant = true
-            // isAITopic will be determined by AIAssistantModel during scan
-            const aiContact = aiContacts.find((contact: any) => contact.personId === participant)
-            if (aiContact) {
-              conversation.aiModelId = aiContact.modelId
+            // Get model ID using reverse lookup
+            const modelId = nodeOneCore.aiAssistantModel.getModelIdForPersonId(participant)
+            if (modelId) {
+              console.log(`[ChatHandler] Found AI participant ${String(participant).substring(0, 8)} with model: ${modelId}`)
+              conversation.aiModelId = modelId
+              aiModelIdForTopic = modelId  // Store for registration below
+            } else {
+              console.error(`[ChatHandler] AI participant ${String(participant).substring(0, 8)} has no model ID - this is a bug`)
             }
             break
           }
@@ -568,6 +590,12 @@ const chatHandlers = {
             validParticipantIds as any
           )
           console.log('[ChatHandler] Created topic with proper group participants:', validParticipantIds.length)
+
+          // Register the AI topic with the CORRECT model ID BEFORE triggering welcome
+          if (aiModelIdForTopic && nodeOneCore.aiAssistantModel) {
+            console.log(`[ChatHandler] Registering AI topic ${conversation.id} with model: ${aiModelIdForTopic}`)
+            nodeOneCore.aiAssistantModel.registerAITopic(conversation.id, aiModelIdForTopic)
+          }
 
           // Trigger AI welcome message if this is an AI conversation
           if (conversation.hasAIParticipant && nodeOneCore.aiAssistantModel) {

@@ -211,15 +211,27 @@ const aiHandlers = {
         await llmManager.init()
       }
 
-      const models = llmManager.getModels()
+      const models = llmManager.getAvailableModels()
       // Get default model from AI Assistant Model which is the single source of truth
       const defaultModel = nodeOneCore?.aiAssistantModel?.getDefaultModel()
+      const defaultModelId = defaultModel?.id || null
+
+      // Mark models as loaded if they have AI contacts created
+      // A model is loaded if it has been initialized with an AI contact (person ID)
+      const modelsWithLoadStatus = models.map((model: any) => {
+        const hasAIContact = nodeOneCore?.aiAssistantModel?.getPersonIdForModel(model.id) !== null
+        return {
+          ...model,
+          isLoaded: hasAIContact,
+          isDefault: model.id === defaultModelId
+        }
+      })
 
       return {
         success: true,
         data: {
-          models,
-          defaultModelId: defaultModel?.id || null
+          models: modelsWithLoadStatus,
+          defaultModelId
         }
       }
     } catch (error) {
@@ -420,10 +432,7 @@ const aiHandlers = {
     console.log('[AIHandler] Get or create AI contact for model:', modelId)
 
     try {
-      // Get the node instance
-      const { default: nodeProvisioning } = await import('../../services/node-provisioning.js')
-      const nodeOneCore = (nodeProvisioning as any).getNodeInstance()
-
+      // Use the imported nodeOneCore instance (don't try to get from nodeProvisioning)
       if (!nodeOneCore || !nodeOneCore.aiAssistantModel) {
         throw new Error('AI system not initialized')
       }
@@ -434,6 +443,13 @@ const aiHandlers = {
       if (!personId) {
         throw new Error(`Failed to create AI contact for model ${modelId}`)
       }
+
+      // Emit contacts:updated event to notify UI
+      const { BrowserWindow } = await import('electron')
+      BrowserWindow.getAllWindows().forEach(window => {
+        window.webContents.send('contacts:updated')
+      })
+      console.log('[AIHandler] Emitted contacts:updated event after creating AI contact')
 
       return {
         success: true,
@@ -537,6 +553,77 @@ const aiHandlers = {
       }
     } catch (error) {
       console.error('[AIHandler] Ensure default chats error:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Discover Claude models from Anthropic API
+   * Called after API key is saved to dynamically register available models
+   */
+  async discoverClaudeModels(event: IpcMainInvokeEvent, params?: { apiKey?: string }): Promise<IpcResponse> {
+    console.log('[AIHandler] Discovering Claude models from API...')
+
+    try {
+      if (!llmManager.isInitialized) {
+        await llmManager.init()
+      }
+
+      // Get API key from params or retrieve from storage
+      let apiKey = params?.apiKey
+
+      if (!apiKey) {
+        // Try to retrieve from secure storage
+        const oneCoreHandlers = await import('./one-core.js')
+        const apiKeyResult = await oneCoreHandlers.default.secureRetrieve(event, { key: 'claude_api_key' })
+
+        if (apiKeyResult?.success && apiKeyResult.value) {
+          apiKey = apiKeyResult.value
+        }
+      }
+
+      // Call LLM manager to discover models from API with explicit API key
+      await llmManager.discoverClaudeModels(apiKey)
+
+      // Get the updated list of models
+      const models = llmManager.getModels()
+      const claudeModels = models.filter((m: any) => m.provider === 'anthropic')
+
+      console.log(`[AIHandler] Discovered ${claudeModels.length} Claude models`)
+
+      // Automatically create AI contacts for all discovered Claude models
+      if (nodeOneCore?.aiAssistantModel && claudeModels.length > 0) {
+        console.log('[AIHandler] Creating AI contacts for discovered Claude models...')
+
+        for (const model of claudeModels) {
+          try {
+            await nodeOneCore.aiAssistantModel.ensureAIContactForModel(model.id)
+            console.log(`[AIHandler] Created AI contact for ${model.name}`)
+          } catch (contactError) {
+            console.warn(`[AIHandler] Failed to create contact for ${model.name}:`, contactError)
+          }
+        }
+
+        // Emit contacts:updated event to notify UI
+        const { BrowserWindow } = await import('electron')
+        BrowserWindow.getAllWindows().forEach(window => {
+          window.webContents.send('contacts:updated')
+        })
+        console.log('[AIHandler] Emitted contacts:updated event after creating Claude contacts')
+      }
+
+      return {
+        success: true,
+        data: {
+          models: claudeModels,
+          count: claudeModels.length
+        }
+      }
+    } catch (error) {
+      console.error('[AIHandler] Discover Claude models error:', error)
       return {
         success: false,
         error: (error as Error).message

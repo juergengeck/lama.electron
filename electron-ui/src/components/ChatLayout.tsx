@@ -24,6 +24,8 @@ interface Conversation {
   lastMessageTime?: Date | string
   modelName?: string
   isGroup?: boolean
+  hasAIParticipant?: boolean
+  isAITopic?: boolean
 }
 
 interface ChatLayoutProps {
@@ -119,7 +121,9 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
           name: conv.name || 'Unnamed Chat',
           lastMessage: conv.lastMessage?.text || '',
           lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
-          modelName: conv.modelName
+          modelName: conv.modelName,
+          hasAIParticipant: conv.hasAIParticipant || false,
+          isAITopic: conv.isAITopic || false
         }))
 
         setConversations(uiConversations)
@@ -206,7 +210,9 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         name: conv.name || 'Unnamed Chat',
         lastMessage: conv.lastMessage?.text || '',
         lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
-        modelName: conv.modelName || 'AI Assistant'
+        modelName: conv.modelName || 'AI Assistant',
+        hasAIParticipant: conv.hasAIParticipant || false,
+        isAITopic: conv.isAITopic || false
       }))
       
       setConversations(uiConversations)
@@ -701,10 +707,12 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       <div className="flex-1 min-w-0 overflow-hidden">
         {selectedConversation ? (
           <ChatView
+            key={selectedConversation}
             conversationId={selectedConversation}
             isInitiallyProcessing={processingConversations.has(selectedConversation)}
             onProcessingChange={handleProcessingChange}
             onMessageUpdate={handleMessageUpdate}
+            hasAIParticipant={conversations.find(c => c.id === selectedConversation)?.hasAIParticipant}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">

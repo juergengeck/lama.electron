@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Users, UserPlus, Search, Circle, Bot, MessageSquare } from 'lucide-react'
+import { Users, UserPlus, Search, Circle, Bot, MessageSquare, Download, CheckCircle } from 'lucide-react'
 import { useLama } from '@/hooks/useLama'
 
 interface ContactsViewProps {
@@ -16,8 +16,9 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
   const { bridge } = useLama()
   const [contacts, setContacts] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [loading, setLoading] = useState(false)
   const [creatingTopic, setCreatingTopic] = useState<string | null>(null)
+  const [loadingModel, setLoadingModel] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     loadContacts()
@@ -62,9 +63,43 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
       allContacts?.forEach((c, i) => {
         console.log(`[ContactsView]   Contact ${i}: ${c.name || c.displayName} (${c.id?.substring(0, 8)}...) status=${c.status}`)
       })
+
       // Filter out the owner (You) from the contacts list
       const nonOwnerContacts = (allContacts || []).filter(c => c.status !== 'owner')
-      setContacts(nonOwnerContacts)
+
+      // Enrich AI contacts with model information
+      const enrichedContacts = await Promise.all(
+        nonOwnerContacts.map(async (contact) => {
+          if (contact.isAI) {
+            try {
+              // Get all models
+              const models = await bridge.getAvailableModels()
+
+              // Find the model for this AI contact by matching the contact name to model ID
+              const contactModel = models.find(m =>
+                m.id === contact.name ||
+                m.name === contact.name ||
+                contact.name?.includes(m.id) ||
+                m.id?.includes(contact.name)
+              )
+
+              console.log(`[ContactsView] AI contact ${contact.name} matched to model:`, contactModel)
+
+              // Merge model info into contact
+              return {
+                ...contact,
+                modelInfo: contactModel
+              }
+            } catch (error) {
+              console.error(`[ContactsView] Failed to get model info for ${contact.name}:`, error)
+              return contact
+            }
+          }
+          return contact
+        })
+      )
+
+      setContacts(enrichedContacts)
     } finally {
       setLoading(false)
     }
@@ -127,15 +162,33 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
     }
   }
 
+  const handleLoadModel = async (contact: any) => {
+    if (!contact.modelInfo || !bridge) return
+
+    setLoadingModel(contact.id)
+    try {
+      console.log(`[ContactsView] Loading model: ${contact.modelInfo.id}`)
+      const success = await bridge.loadModel(contact.modelInfo.id)
+      if (success) {
+        // Reload contacts to update model status
+        await loadContacts()
+      }
+    } catch (error) {
+      console.error('[ContactsView] Failed to load model:', error)
+    } finally {
+      setLoadingModel(null)
+    }
+  }
+
   const handleAddContact = async () => {
     try {
       if (!window.electronAPI) {
         alert('Electron API not available')
         return
       }
-      
+
       const result = await window.electronAPI.invoke('iom:createPairingInvitation')
-      
+
       if (result.success && result.invitation) {
         // Copy invitation URL to clipboard
         await navigator.clipboard.writeText(result.invitation.url)
@@ -215,11 +268,17 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
                               </Badge>
                             </div>
                             <div className="flex items-center space-x-2 mt-1">
-                              <Circle className={`h-2 w-2 fill-current ${getStatusColor(contact.status)}`} />
+                              <Circle className={`h-2 w-2 fill-current ${
+                                contact.isAI
+                                  ? (contact.modelInfo?.isLoaded ? 'text-green-500' : 'text-yellow-500')
+                                  : getStatusColor(contact.status)
+                              }`} />
                               <span className="text-xs text-muted-foreground truncate">
-                                {contact.isAI ? 'Ready' : getStatusLabel(contact.status)}
+                                {contact.isAI
+                                  ? (contact.modelInfo?.isLoaded ? 'Ready' : 'Not Loaded')
+                                  : getStatusLabel(contact.status)}
                               </span>
-                              {contact.lastSeen && (
+                              {contact.lastSeen && !contact.isAI && (
                                 <span className="text-xs text-muted-foreground">
                                   · Last seen {new Date(contact.lastSeen).toLocaleTimeString()}
                                 </span>
@@ -227,21 +286,65 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
                             </div>
                           </div>
                         </div>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleMessageClick(contact)}
-                          disabled={creatingTopic === contact.id}
-                        >
-                          {creatingTopic === contact.id ? (
-                            <>Creating chat...</>
-                          ) : (
-                            <>
-                              <MessageSquare className="h-4 w-4 mr-1" />
-                              Message
-                            </>
+                        <div className="flex items-center space-x-2">
+                          {/* Debug logging for button rendering */}
+                          {contact.isAI && (() => {
+                            console.log(`[ContactsView] Rendering buttons for ${contact.name}:`, {
+                              isAI: contact.isAI,
+                              hasModelInfo: !!contact.modelInfo,
+                              modelType: contact.modelInfo?.modelType,
+                              isLoaded: contact.modelInfo?.isLoaded
+                            })
+                            return null
+                          })()}
+
+                          {/* For AI contacts with local models that aren't loaded, show Load button */}
+                          {contact.isAI && contact.modelInfo?.modelType === 'local' && !contact.modelInfo?.isLoaded && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleLoadModel(contact)
+                              }}
+                              disabled={loadingModel === contact.id}
+                            >
+                              {loadingModel === contact.id ? (
+                                <>
+                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary mr-1" />
+                                  Loading...
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="h-3 w-3 mr-1" />
+                                  Load Model
+                                </>
+                              )}
+                            </Button>
                           )}
-                        </Button>
+                          {/* For loaded models or remote API models, show Ready badge */}
+                          {contact.isAI && (contact.modelInfo?.isLoaded || contact.modelInfo?.modelType === 'remote') && (
+                            <Badge variant="secondary" className="text-xs">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Ready
+                            </Badge>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleMessageClick(contact)}
+                            disabled={creatingTopic === contact.id}
+                          >
+                            {creatingTopic === contact.id ? (
+                              <>Creating chat...</>
+                            ) : (
+                              <>
+                                <MessageSquare className="h-4 w-4 mr-1" />
+                                Message
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>

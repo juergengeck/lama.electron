@@ -44,6 +44,26 @@ export function GroupChatDialog({
     }
   }, [open])
 
+  // Listen for contacts:updated event to refresh contact list
+  useEffect(() => {
+    const handleContactsUpdated = () => {
+      console.log('[GroupChatDialog] Contacts updated event received, reloading...')
+      if (open) {
+        loadContacts()
+      }
+    }
+
+    if (window.electronAPI?.on) {
+      window.electronAPI.on('contacts:updated', handleContactsUpdated)
+    }
+
+    return () => {
+      if (window.electronAPI?.off) {
+        window.electronAPI.off('contacts:updated', handleContactsUpdated)
+      }
+    }
+  }, [open])
+
   const loadContacts = async () => {
     setLoading(true)
     try {
@@ -108,6 +128,14 @@ export function GroupChatDialog({
     onOpenChange(false)
   }
 
+  // Handle Enter key to submit
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && selectedUserIds.length > 0) {
+      e.preventDefault()
+      handleSubmit()
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -124,6 +152,7 @@ export function GroupChatDialog({
               placeholder="Enter group name..."
               value={chatName}
               onChange={(e) => setChatName(e.target.value)}
+              onKeyDown={handleKeyDown}
             />
           </div>
 
@@ -138,6 +167,7 @@ export function GroupChatDialog({
                 placeholder="Search users..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
                 className="pl-10"
               />
             </div>

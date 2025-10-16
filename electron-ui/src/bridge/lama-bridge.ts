@@ -285,7 +285,8 @@ class LamaBridge implements LamaAPI {
     if (!result.success) {
       return []
     }
-    return result.models || []
+    // Handler returns result.data.models, not result.models
+    return result.data?.models || []
   }
   
   async setDefaultModel(modelId: string): Promise<boolean> {

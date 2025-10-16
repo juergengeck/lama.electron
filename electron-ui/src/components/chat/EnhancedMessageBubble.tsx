@@ -8,6 +8,7 @@
 import React, { useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Copy, ThumbsUp, ThumbsDown, Check } from 'lucide-react';
 import './EnhancedMessageBubble.css';
 import './FormattedMessageContent.css';
 import { MessageContextMenu } from './MessageContextMenu';
@@ -378,6 +379,10 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
   attachmentDescriptors
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const [disliked, setDisliked] = useState(false);
+  const [showActions, setShowActions] = useState(false);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -388,7 +393,75 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
   const handleCloseContextMenu = () => {
     setContextMenu(null);
   };
-  
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  const handleLike = async () => {
+    setLiked(!liked);
+    if (disliked) setDisliked(false);
+
+    // Record feedback for all subjects in this message
+    if (message.subjects && message.subjects.length > 0) {
+      console.log('[EnhancedMessageBubble] Recording like for subjects:', message.subjects);
+
+      for (const subjectId of message.subjects) {
+        try {
+          const result = await (window as any).electronAPI.invoke('topics:recordFeedback', {
+            subjectId,
+            feedbackType: 'like'
+          });
+
+          if (result.success) {
+            console.log('[EnhancedMessageBubble] Feedback recorded for subject:', subjectId, result.subject);
+          } else {
+            console.error('[EnhancedMessageBubble] Failed to record feedback:', result.error);
+          }
+        } catch (error) {
+          console.error('[EnhancedMessageBubble] Error recording feedback:', error);
+        }
+      }
+    } else {
+      console.log('[EnhancedMessageBubble] No subjects to record feedback for');
+    }
+  };
+
+  const handleDislike = async () => {
+    setDisliked(!disliked);
+    if (liked) setLiked(false);
+
+    // Record feedback for all subjects in this message
+    if (message.subjects && message.subjects.length > 0) {
+      console.log('[EnhancedMessageBubble] Recording dislike for subjects:', message.subjects);
+
+      for (const subjectId of message.subjects) {
+        try {
+          const result = await (window as any).electronAPI.invoke('topics:recordFeedback', {
+            subjectId,
+            feedbackType: 'dislike'
+          });
+
+          if (result.success) {
+            console.log('[EnhancedMessageBubble] Feedback recorded for subject:', subjectId, result.subject);
+          } else {
+            console.error('[EnhancedMessageBubble] Failed to record feedback:', result.error);
+          }
+        } catch (error) {
+          console.error('[EnhancedMessageBubble] Error recording feedback:', error);
+        }
+      }
+    } else {
+      console.log('[EnhancedMessageBubble] No subjects to record feedback for');
+    }
+  };
+
   const [showFullTimestamp, setShowFullTimestamp] = useState(false);
   
   const formatTimestamp = (date: Date, full: boolean = false) => {
@@ -460,6 +533,41 @@ export const EnhancedMessageBubble: React.FC<EnhancedMessageBubbleProps> = ({
       </div>
       
       <div className="message-content">
+        {/* Message actions in upper right corner for non-own messages */}
+        {!message.isOwn && (
+          <div className="message-actions-top-right">
+            <button
+              onClick={handleCopy}
+              className="action-button-top"
+              title="Copy message"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+            <button
+              onClick={handleLike}
+              className="action-button-top"
+              title="Like message"
+              style={{
+                background: liked ? (theme === 'dark' ? '#065f46' : '#d1fae5') : 'transparent',
+                color: liked ? (theme === 'dark' ? '#34d399' : '#10b981') : (theme === 'dark' ? '#9ca3af' : '#6b7280')
+              }}
+            >
+              <ThumbsUp size={14} fill={liked ? 'currentColor' : 'none'} />
+            </button>
+            <button
+              onClick={handleDislike}
+              className="action-button-top"
+              title="Dislike message"
+              style={{
+                background: disliked ? (theme === 'dark' ? '#7f1d1d' : '#fee2e2') : 'transparent',
+                color: disliked ? (theme === 'dark' ? '#f87171' : '#ef4444') : (theme === 'dark' ? '#9ca3af' : '#6b7280')
+              }}
+            >
+              <ThumbsDown size={14} fill={disliked ? 'currentColor' : 'none'} />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
           <div className="flex-1">
             {message.isRetracted ? (

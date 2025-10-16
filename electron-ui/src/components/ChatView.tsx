@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { MessageView } from './MessageView'
 import { useLamaMessages } from '@/hooks/useLamaMessages'
 import { useLamaAuth, useLamaPeers } from '@/hooks/useLama'
 import { lamaBridge } from '@/bridge/lama-bridge'
 import { topicAnalysisService } from '@/services/topic-analysis-service'
-import { useChatKeywords } from '@/hooks/useChatKeywords'
+import { useChatSubjects } from '@/hooks/useChatSubjects'
 import { ChatHeader } from './chat/ChatHeader'
 import { ChatContext } from './chat/ChatContext'
 import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
@@ -15,16 +16,18 @@ export const ChatView = memo(function ChatView({
   conversationId = 'lama',
   onProcessingChange,
   onMessageUpdate,
-  isInitiallyProcessing = false
+  isInitiallyProcessing = false,
+  hasAIParticipant: hasAIParticipantProp
 }: {
   conversationId?: string
   onProcessingChange?: (isProcessing: boolean) => void
   onMessageUpdate?: (lastMessage: string) => void
   isInitiallyProcessing?: boolean
+  hasAIParticipant?: boolean
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
-  const { keywords, keywordsJustAppeared } = useChatKeywords(conversationId, messages)
+  const { subjects, subjectsJustAppeared } = useChatSubjects(conversationId)
   const chatHeaderRef = useRef<HTMLDivElement>(null)
 
   // Debug: log messages received from hook
@@ -50,18 +53,24 @@ export const ChatView = memo(function ChatView({
   const [aiStreamingContent, setAiStreamingContent] = useState('')
   const [lastAnalysisMessageCount, setLastAnalysisMessageCount] = useState(0)
   const [showSummary, setShowSummary] = useState(false)
-  const [showKeywordDetail, setShowKeywordDetail] = useState(false)
-  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null)
+  const [showSubjectDetail, setShowSubjectDetail] = useState(false)
+  const [selectedSubject, setSelectedSubject] = useState<any | null>(null)
 
   // Check if this is an AI conversation
-  const hasAIParticipant = messages.some(m => m.isAI) ||
-                           conversationId === 'lama' ||
-                           conversationId === 'ai-chat'
+  // Use the authoritative value from backend conversation metadata
+  const hasAIParticipant = hasAIParticipantProp || false
 
 
   // Analysis is handled automatically by chatWithAnalysis() in ai-assistant-model.ts
   // Keywords and subjects are extracted from each AI response in the background
   // No need for separate analysis trigger from UI
+
+  // Clear AI processing state when conversation changes
+  useEffect(() => {
+    console.log(`[ChatView] Conversation changed to: ${conversationId}, clearing AI state`)
+    setIsAIProcessing(false)
+    setAiStreamingContent('')
+  }, [conversationId])
 
   // Check if welcome message is still being generated on mount
   useEffect(() => {
@@ -78,11 +87,16 @@ export const ChatView = memo(function ChatView({
     
     // Handle thinking indicator (used for all AI messages including welcome)
     const handleThinking = (data: any) => {
-      console.log('[ChatView] AI thinking for:', data.conversationId)
+      console.log(`[ChatView-${conversationId}] 🔔 Received thinking event for: "${data.conversationId}"`)
+      console.log(`[ChatView-${conversationId}] 🔍 My conversationId: "${conversationId}"`)
+      console.log(`[ChatView-${conversationId}] 🔍 Match: ${data.conversationId === conversationId}`)
       if (data.conversationId === conversationId) {
+        console.log(`[ChatView-${conversationId}] ✅ Setting AI processing to TRUE`)
         setIsAIProcessing(true)
         setAiStreamingContent('')
         onProcessingChange?.(true) // Update parent state
+      } else {
+        console.log(`[ChatView-${conversationId}] ❌ Ignoring event for different conversation`)
       }
     }
     
@@ -243,15 +257,15 @@ export const ChatView = memo(function ChatView({
       <div ref={chatHeaderRef}>
         <ChatHeader
           conversationName={conversationName}
-          keywords={keywords}
+          subjects={subjects}
           messageCount={messages.length}
           hasAI={hasAIParticipant}
           showSummary={showSummary}
           onToggleSummary={() => setShowSummary(!showSummary)}
-          onKeywordClick={(keyword) => {
-            console.log('[ChatView] Keyword clicked:', keyword)
-            setSelectedKeyword(keyword)
-            setShowKeywordDetail(true)
+          onSubjectClick={(subject) => {
+            console.log('[ChatView] Subject clicked:', subject)
+            setSelectedSubject(subject)
+            setShowSubjectDetail(true)
           }}
         />
       </div>
@@ -269,16 +283,67 @@ export const ChatView = memo(function ChatView({
           </div>
         )}
 
-        {/* Keyword Detail Panel - Shows at top when visible (same space as summary) */}
-        {showKeywordDetail && selectedKeyword && (
-          <div className="border-b bg-muted/30 max-h-[25vh] overflow-y-auto">
-            <KeywordDetailPanel
-              keyword={selectedKeyword}
-              topicId={conversationId}
-              onClose={() => setShowKeywordDetail(false)}
-            />
-          </div>
-        )}
+        {/* Subject Detail Panel - Shows ALL subjects with the same name */}
+        {showSubjectDetail && selectedSubject && (() => {
+          // Find all subjects with the same name as the selected one
+          const selectedName = selectedSubject.id || selectedSubject.name || 'Subject';
+          const matchingSubjects = subjects.filter(s =>
+            (s.id || s.name) === selectedName
+          );
+
+          return (
+            <div className="border-b bg-muted/30 max-h-[40vh] overflow-y-auto">
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">{selectedName}</h3>
+                    {matchingSubjects.length > 1 && (
+                      <span className="text-xs text-muted-foreground">
+                        {matchingSubjects.length} versions
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowSubjectDetail(false)}
+                  >
+                    ×
+                  </Button>
+                </div>
+
+                {/* List all matching subjects */}
+                <div className="space-y-3">
+                  {matchingSubjects.map((subject, idx) => (
+                    <div key={idx} className="p-3 bg-background/50 rounded border">
+                      <div className="space-y-2">
+                        <div>
+                          <span className="font-medium text-sm">Keywords:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {subject.keywords?.map((kw: string, kwIdx: number) => {
+                              if (kw.length === 64 && /^[0-9a-f]+$/.test(kw)) {
+                                console.warn('[ChatView] Keyword is still a hash:', kw);
+                              }
+                              return (
+                                <Badge key={kwIdx} variant="secondary" className="text-xs">
+                                  {kw}
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span><span className="font-medium">Messages:</span> {subject.messageCount}</span>
+                          <span><span className="font-medium">Last:</span> {new Date(subject.timestamp).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Messages */}
         <MessageView
@@ -291,7 +356,7 @@ export const ChatView = memo(function ChatView({
           isAIProcessing={isAIProcessing}
           aiStreamingContent={aiStreamingContent}
           topicId={conversationId}
-          keywordsJustAppeared={keywordsJustAppeared}
+          subjectsJustAppeared={subjectsJustAppeared}
           chatHeaderRef={chatHeaderRef}
         />
       </CardContent>

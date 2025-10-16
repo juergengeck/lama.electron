@@ -494,6 +494,99 @@ Structured JSON-based protocol for LLM responses using Ollama's native `format` 
 - Generates AI summary referencing all subjects
 - Updates summary when subjects change significantly
 
+## Context-Aware Knowledge Sharing (Feature 019 - PLANNED)
+
+**Status**: Planning complete, design artifacts ready for implementation
+
+### Overview
+Displays context-aware proposals above the chat entry field to suggest relevant past conversations based on subject/keyword matching. Users see a single proposal at a time, with horizontal swipe navigation through ranked proposals. Configurable matching algorithm with initial implementation using Jaccard similarity.
+
+### Data Model
+- **Proposal** (computed, not stored): Links past subject to current subject via matched keywords
+  - `pastSubject`: SHA256IdHash<Subject> - Reference to past subject
+  - `currentSubject`: SHA256IdHash<Subject> - Reference to current subject
+  - `matchedKeywords`: string[] - Keywords shared between subjects
+  - `relevanceScore`: number (0.0-1.0) - Computed relevance via algorithm
+  - `sourceTopicId`: string - Origin conversation
+  - `pastSubjectName`: string - Human-readable label
+  - `createdAt`: number - Past subject timestamp for recency
+
+- **ProposalConfig** (ONE.core versioned object, userEmail as ID):
+  - `matchWeight`: number (0.0-1.0) - Weight for keyword overlap
+  - `recencyWeight`: number (0.0-1.0) - Weight for subject age
+  - `recencyWindow`: integer - Time window in milliseconds for recency boost
+  - `minJaccard`: number (0.0-1.0) - Minimum similarity threshold
+  - `maxProposals`: integer (1-50) - Maximum proposals to return
+  - `updated`: integer - Last config update timestamp
+
+- **DismissedProposal** (session-only, in-memory):
+  - `topicId`: string - Current conversation
+  - `pastSubjectIdHash`: SHA256IdHash<Subject> - Dismissed past subject
+  - `dismissedAt`: number - Dismissal timestamp
+
+### Matching Algorithm (Phase 1: Jaccard Similarity)
+```javascript
+// Jaccard similarity: |intersection| / |union|
+const intersection = currentKeywords.filter(k => pastKeywords.has(k));
+const union = [...new Set([...currentKeywords, ...pastKeywords])];
+const jaccard = intersection.size / union.size;
+
+// Recency boost: Linear decay over recency window
+const age = Date.now() - pastSubject.created;
+const recencyBoost = Math.max(0, 1 - (age / config.recencyWindow));
+
+// Weighted combination
+const relevanceScore = jaccard * config.matchWeight + recencyBoost * config.recencyWeight;
+```
+
+### IPC Handlers for Proposals
+- `proposals:getForTopic` - Get ranked proposals for topic based on current subjects
+- `proposals:updateConfig` - Update user's matching algorithm configuration
+- `proposals:getConfig` - Retrieve current configuration (or defaults)
+- `proposals:dismiss` - Mark proposal as dismissed for current session
+- `proposals:share` - Share proposal's past subject context into conversation
+
+### Integration Points
+- **Depends on Feature 018**: Uses Subject and Keyword objects from topic analysis
+- **Node.js Services**:
+  - `/main/services/proposal-engine.js` - Core matching logic
+  - `/main/services/proposal-ranker.js` - Ranking algorithm
+  - `/main/ipc/handlers/proposals.js` - IPC handler implementations
+- **React UI Components**:
+  - `/electron-ui/src/components/ProposalCard.tsx` - Single proposal display
+  - `/electron-ui/src/components/ProposalCarousel.tsx` - Swipeable container
+  - `/electron-ui/src/hooks/useProposals.ts` - React hook for proposal state
+- **Gesture Library**: react-swipeable (mouse + touch support for desktop)
+
+### Caching Strategy
+- **In-Memory LRU Cache**: Max 50 entries, 60-second TTL
+- **Cache Key**: `${topicId}:${currentSubjectIds.sort().join(',')}`
+- **Invalidation Triggers**:
+  - New subject added to current topic
+  - Proposal config changed
+  - Topic switched
+  - 60-second TTL expired
+
+### Performance Targets
+- Proposal generation: <100ms (includes subject query + matching + ranking)
+- Swipe gesture response: <50ms
+- Cache lookup: <1ms (O(1) map access)
+
+### Key Principles
+- **Proposals are ephemeral**: Computed on-demand, not stored in ONE.core
+- **Config is versioned**: ProposalConfig stored as versioned object (userEmail as ID)
+- **Session-scoped dismissals**: DismissedProposal cleared on app restart
+- **Real-time updates**: Proposals regenerate when current subjects change
+- **Fail-fast**: No proposals when no subjects exist (no empty state handling)
+
+### Documentation
+- Spec: `/specs/019-above-the-chat/spec.md`
+- Plan: `/specs/019-above-the-chat/plan.md`
+- Research: `/specs/019-above-the-chat/research.md`
+- Data Model: `/specs/019-above-the-chat/data-model.md`
+- Contracts: `/specs/019-above-the-chat/contracts/ipc-proposals.json`
+- Quickstart: `/specs/019-above-the-chat/quickstart.md`
+
 ## Single ONE.core Architecture
 
 **CRITICAL**: This Electron app runs ONE ONE.core instance in Node.js ONLY:

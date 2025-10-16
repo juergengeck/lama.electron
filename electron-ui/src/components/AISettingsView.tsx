@@ -38,6 +38,10 @@ export function AISettingsView() {
     try {
       setLoading(true)
       const modelList = await lamaBridge.getAvailableModels()
+      console.log('[AISettingsView] Loaded models:', modelList)
+      modelList.forEach((m: ModelInfo) => {
+        console.log(`[AISettingsView] Model ${m.id}: modelType=${m.modelType}, isLoaded=${m.isLoaded}, size=${m.size}`)
+      })
       setModels(modelList)
     } catch (error) {
       console.error('Failed to load models:', error)
@@ -77,13 +81,44 @@ export function AISettingsView() {
       const result = await window.electronAPI?.invoke('onecore:secureRetrieve', {
         key: 'claude_api_key'
       })
-      
+
       if (result?.success && result.value) {
         setClaudeApiKey(result.value)
         setApiKeyStatus('valid')
+
+        // If we have a saved API key, ensure AI contacts exist for all Claude models
+        console.log('[AISettingsView] Found existing Claude API key, ensuring AI contacts...')
+        await ensureClaudeContacts()
       }
     } catch (error) {
       console.error('Failed to load Claude API key:', error)
+    }
+  }
+
+  const ensureClaudeContacts = async () => {
+    try {
+      // Discover Claude models from API
+      const modelsResult = await window.electronAPI?.invoke('ai:discoverClaudeModels')
+
+      if (modelsResult?.success && modelsResult.data?.models) {
+        console.log(`[AISettingsView] Creating AI contacts for ${modelsResult.data.models.length} Claude models...`)
+
+        // Create contacts for each Claude model discovered from the API
+        for (const model of modelsResult.data.models) {
+          try {
+            const contactResult = await window.electronAPI?.invoke('ai:getOrCreateContact', {
+              modelId: model.id
+            })
+            if (contactResult?.success) {
+              console.log(`[AISettingsView] Created AI contact for ${model.name}`)
+            }
+          } catch (err) {
+            console.warn(`[AISettingsView] Failed to create contact for ${model.name}:`, err)
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[AISettingsView] Failed to ensure Claude contacts:', error)
     }
   }
   
@@ -92,7 +127,7 @@ export function AISettingsView() {
       setApiKeyStatus('invalid')
       return
     }
-    
+
     setApiKeyStatus('testing')
     try {
       // Store API key securely in ONE.core's encrypted storage via IPC
@@ -101,16 +136,20 @@ export function AISettingsView() {
         value: claudeApiKey,
         encrypted: true
       })
-      
+
       if (result?.success) {
         // Test the API key with Claude
         const testResult = await window.electronAPI?.invoke('llm:testApiKey', {
           provider: 'anthropic',
           apiKey: claudeApiKey
         })
-        
+
         if (testResult?.success) {
           setApiKeyStatus('valid')
+
+          // Ensure AI contacts for all Claude models
+          await ensureClaudeContacts()
+
           await loadModels() // Refresh to show Claude models as available
         } else {
           setApiKeyStatus('invalid')

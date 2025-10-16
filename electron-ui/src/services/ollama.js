@@ -66,6 +66,7 @@ export function parseOllamaModel(model) {
         name: model.name,
         displayName,
         size: `${sizeGB} GB`,
+        sizeBytes: model.size, // Numeric size in bytes for programmatic use
         description,
         capabilities,
         contextLength,

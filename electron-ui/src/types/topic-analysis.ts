@@ -10,6 +10,7 @@
 export interface Subject {
   $type$: 'Subject';
   id: string;           // Format: `${topicId}:${sortedKeywords.join('-')}`
+  name: string;         // Human-readable 1-2 word name (e.g., "Pizza Delivery")
   topic: string;        // Hash reference to parent Topic
   keywords: string[];   // Sorted array of keywords identifying this subject
   messageCount: number; // Number of messages related to this subject

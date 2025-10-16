@@ -33,8 +33,12 @@ export function useLamaMessages(conversationId: string) {
 
   // Load on mount and conversation change
   useEffect(() => {
+    // Clear messages before loading to prevent stale data flash
+    console.log('[useLamaMessages] 🧹 Clearing messages before load for:', conversationId)
+    setMessages([])
     loadMessages()
-  }, [loadMessages])
+    // Note: loadMessages in deps is redundant with conversationId but required for lint
+  }, [conversationId, loadMessages])
 
   // Listen for new messages - this is THE key part
   useEffect(() => {

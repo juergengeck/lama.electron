@@ -71,14 +71,14 @@ export const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `Extract subjects and concepts fr
 Format:
 {
   "subjects": [{
-    "name": "subject-name",
+    "name": "1-2 word descriptive name",
     "isNew": true,
     "keyConcepts": [{"keyword": "keyword", "confidence": 0.8}]
   }],
   "summary": "brief summary"
 }
 
-Use lowercase hyphenated terms.`;
+IMPORTANT: Each subject's "name" should be a concise 1-2 word label that captures the main topic (e.g., "Pizza Delivery", "Work Schedule", "Family Plans"). Use title case for names. Keywords should be lowercase single words.`;
 
 /**
  * Validate LLM response (business logic checks)

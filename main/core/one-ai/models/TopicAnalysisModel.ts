@@ -247,7 +247,7 @@ export default class TopicAnalysisModel extends Model {
             lastSeen: now
         };
 
-        console.log('[TopicAnalysisModel] ✅ Created new keyword with subject:', { term: normalizedTerm, subjectIdHash, subjects: keywordObj.subjects });
+        console.log('[TopicAnalysisModel] ✅ Created new keyword with subject:', { term: normalizedTerm, topicId, subjectIdHash, subjects: keywordObj.subjects });
         await this.channelManager.postToChannel(topicId, keywordObj);
         return keywordObj;
     }

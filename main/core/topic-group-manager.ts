@@ -129,7 +129,9 @@ class TopicGroupManager {
     // For Group: Create channels for local participants (ourselves and AI)
     for (const participantId of participantIds) {
       const isOurself = participantId === this.nodeOneCore.ownerId;
-      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some((c: any) => c.personId === participantId);
+      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some((c: any) =>
+        c.personId === participantId
+      );
 
       // Only create channels for local participants (ourselves and AI)
       // Remote participants must create their own channels
@@ -486,7 +488,9 @@ class TopicGroupManager {
     // For Group: Create channels for local participants (ourselves and AI)
     for (const participantId of participantIds) {
       const isOurself = participantId === this.nodeOneCore.ownerId;
-      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some((c: any) => c.personId === participantId);
+      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some((c: any) =>
+        c.personId === participantId
+      );
 
       // Only create channels for local participants (ourselves and AI)
       // Remote participants must create their own channels

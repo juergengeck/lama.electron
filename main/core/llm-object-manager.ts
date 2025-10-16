@@ -28,62 +28,14 @@ class LLMObjectManager {
   async initialize(): Promise<any> {
     if (this.initialized) return;
 
-    try {
-      console.log('[LLMObjectManager] Loading existing LLM objects from storage...');
+    console.log('[LLMObjectManager] Initializing (cache will be populated by AIAssistantModel)');
+    this.initialized = true;
 
-      // Use the channelManager to iterate over LLM objects if available
-      if (!this.nodeOneCore?.channelManager) {
-        console.log('[LLMObjectManager] ChannelManager not available yet, skipping initialization');
-        this.initialized = true;
-        return;
-      }
-
-      // Collect all LLM objects from storage using the channel manager
-      const llmObjects = [];
-      try {
-        // Use the lama channel to store/retrieve LLM objects
-        const iterator = this.nodeOneCore.channelManager.objectIteratorWithType('LLM', {
-          channelId: 'lama'
-        });
-
-        for await (const llmObj of iterator) {
-          if (llmObj && llmObj.data) {
-            llmObjects.push(llmObj.data);
-          }
-        }
-      } catch (iterError: any) {
-        console.log('[LLMObjectManager] No LLM objects found in storage:', iterError.message);
-      }
-
-      if (llmObjects && llmObjects.length > 0) {
-        console.log(`[LLMObjectManager] Found ${llmObjects.length} existing LLM objects`);
-
-        // Cache all existing LLM objects
-        for (const llm of llmObjects) {
-          if (llm.personId && llm.name) {
-            // Map the name to a proper model ID
-            const modelId = llm.modelType === 'local' ? `ollama:${llm.name}` : llm.name;
-            this.llmObjects.set(modelId, {
-              modelId: modelId,
-              modelName: llm.name,
-              personId: llm.personId,
-              isAI: true // Always true for LLM objects as source of truth
-            });
-            const personIdStr = llm.personId ? llm.personId.toString().substring(0, 8) : 'unknown';
-            console.log(`[LLMObjectManager] Cached LLM: ${modelId} with person ${personIdStr}...`);
-          }
-        }
-      } else {
-        console.log('[LLMObjectManager] No existing LLM objects found');
-      }
-
-      this.initialized = true;
-      console.log(`[LLMObjectManager] ✅ Initialized with ${this.llmObjects.size} LLM objects`);
-    } catch (error) {
-      console.error('[LLMObjectManager] Failed to initialize:', error);
-      // Continue anyway - cache will be populated on demand
-      this.initialized = true;
-    }
+    // NOTE: We don't load LLM objects from storage here.
+    // AIAssistantModel.loadExistingAIContacts() will populate the cache by:
+    // 1. Iterating through all contacts (Someone objects)
+    // 2. For each AI contact, calling createLLMObject() which caches the LLM
+    // This ensures the cache is synchronized with actual AI contacts
   }
 
   /**
@@ -229,6 +181,27 @@ class LLMObjectManager {
 
     console.log(`[LLMObjectManager] Result: ${String(personIdStr).substring(0, 8)}... is AI: false`)
     return false;
+  }
+
+  /**
+   * Get model ID for a given person ID (reverse lookup)
+   * Only checks the in-memory cache
+   */
+  getModelIdForPersonId(personId: any): string | null {
+    if (!personId) return null;
+    const personIdStr = personId.toString();
+
+    // Search through llmObjects map (modelId -> LLM object with personId)
+    for (const [modelId, llmObj] of this.llmObjects) {
+      const llm = llmObj as any;
+      if (llm.personId && llm.personId.toString() === personIdStr) {
+        console.log(`[LLMObjectManager] Found model ${modelId} for person ${String(personIdStr).substring(0, 8)}...`);
+        return modelId;
+      }
+    }
+
+    console.log(`[LLMObjectManager] No model found for person ${String(personIdStr).substring(0, 8)}...`);
+    return null;
   }
   
   /**

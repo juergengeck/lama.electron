@@ -193,6 +193,45 @@ export const KeywordDetailPanel: React.FC<KeywordDetailPanelProps> = ({
       </CardHeader>
 
       <CardContent className="pt-0 space-y-6">
+        {/* Keywords with Subject Counts */}
+        {subjects.length > 0 && (() => {
+          // Extract all keywords from subjects and count how many subjects each appears in
+          const keywordCounts = new Map<string, number>();
+          subjects.forEach(subject => {
+            const keywords = subject.keywordCombination?.split('+') || [];
+            keywords.forEach(kw => {
+              keywordCounts.set(kw, (keywordCounts.get(kw) || 0) + 1);
+            });
+          });
+
+          const sortedKeywords = Array.from(keywordCounts.entries())
+            .sort((a, b) => b[1] - a[1]); // Sort by count descending
+
+          return (
+            <div>
+              <h3 className="text-sm font-medium text-gray-700 mb-3">
+                Keywords ({sortedKeywords.length})
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {sortedKeywords.map(([keyword, count]) => (
+                  <Badge
+                    key={keyword}
+                    variant="secondary"
+                    className="text-xs"
+                  >
+                    {keyword}
+                    {count > 1 && (
+                      <span className="ml-1 text-[10px] opacity-70">
+                        ({count})
+                      </span>
+                    )}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Topic References */}
         {keywordData.topicReferences.length > 0 && (
           <div>

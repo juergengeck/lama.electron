@@ -1,6 +1,6 @@
 /**
  * Feed-Forward Training Infrastructure Recipes for ONE.core
- * Defines object types for Supply/Demand knowledge sharing and trust scoring
+ * Defines object types for Supply/Demand knowledge sharing, trust scoring, and capability assemblies
  */
 
 const SupplyRecipe = {
@@ -222,12 +222,49 @@ const TrainingCorpusEntryRecipe = {
     ]
 };
 
+const AssemblyRecipe = {
+    $type$: 'Recipe' as const,
+    name: 'Assembly',
+    rule: [
+        {
+            // What capability is offered - THIS IS THE ID
+            itemprop: 'supply',
+            itemtype: {
+                type: 'referenceToId',
+                allowedTypes: new Set(['Supply'])
+            },
+            isId: true
+        },
+        {
+            // SPECIFIC VERSION of the instance (version hash, not ID hash)
+            itemprop: 'instance',
+            itemtype: {
+                type: 'referenceToObj',
+                allowedTypes: new Set(['Instance'])
+            }
+        },
+        {
+            // What constraints must be satisfied
+            itemprop: 'demand',
+            itemtype: {
+                type: 'referenceToId',
+                allowedTypes: new Set(['Demand'])
+            }
+        },
+        {
+            itemprop: 'created',
+            itemtype: { type: 'integer' }
+        }
+    ]
+};
+
 const FeedForwardRecipes = [
     SupplyRecipe,
     DemandRecipe,
     SupplyDemandMatchRecipe,
     TrustScoreRecipe,
-    TrainingCorpusEntryRecipe
+    TrainingCorpusEntryRecipe,
+    AssemblyRecipe
 ];
 
 export { FeedForwardRecipes };

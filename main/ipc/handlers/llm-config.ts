@@ -155,6 +155,10 @@ export async function handleSetOllamaConfig(
     const hash = typeof result === 'string' ? result : result.idHash;
     console.log('[IPC:setOllamaConfig] Stored LLM config with hash:', hash);
 
+    // Post to channel so it can be retrieved later
+    await nodeOneCore.channelManager.postToChannel('lama', llmObject);
+    console.log('[IPC:setOllamaConfig] Posted LLM config to lama channel');
+
     // If setting as active, deactivate other configs
     if (request.setAsActive) {
       // TODO: Implement deactivation of other configs

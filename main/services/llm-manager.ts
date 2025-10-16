@@ -172,8 +172,8 @@ class LLMManager extends EventEmitter {
     }
   }
 
-  async init(): Promise<any> {
-    if (this.isInitialized) {
+  async init(force = false): Promise<any> {
+    if (this.isInitialized && !force) {
       console.log('[LLMManager] Already initialized')
       return
     }
@@ -270,36 +270,9 @@ class LLMManager extends EventEmitter {
     // Discover Ollama models dynamically
     await this.discoverOllamaModels()
 
-    // Register Claude models
-    const claudeModels = [
-      {
-        id: 'claude:claude-3-5-sonnet',
-        name: 'Claude 3.5 Sonnet',
-        provider: 'anthropic',
-        description: 'Advanced reasoning and analysis',
-        contextLength: 200000,
-        maxTokens: 8192
-      },
-      {
-        id: 'claude:claude-3-5-haiku',
-        name: 'Claude 3.5 Haiku',
-        provider: 'anthropic',
-        description: 'Fast and efficient',
-        contextLength: 200000,
-        maxTokens: 8192
-      }
-    ]
-
-    claudeModels.forEach(model => {
-      this.models.set(model.id, {
-        ...model,
-        capabilities: ['chat', 'analysis', 'reasoning'],
-        parameters: {
-          temperature: 0.7,
-          maxTokens: model.maxTokens
-        }
-      })
-    })
+    // Skip Claude model discovery during init - requires ONE.core
+    // Will be called after ONE.core is initialized (after user login)
+    console.log('[LLMManager] Skipping Claude discovery during init (requires ONE.core)')
 
     console.log(`[LLMManager] Registered ${this.models.size} models`)
 
@@ -326,6 +299,7 @@ class LLMManager extends EventEmitter {
             description: `${parsedModel.description} (${parsedModel.size})`,
             capabilities: ['chat', 'completion'],
             contextLength: 8192,
+            size: parsedModel.sizeBytes, // Numeric size in bytes for sorting/display
             parameters: {
               modelName: parsedModel.name, // The actual Ollama model name
               temperature: 0.7,
@@ -340,6 +314,85 @@ class LLMManager extends EventEmitter {
       }
     } catch (error) {
       console.log('[LLMManager] Failed to discover Ollama models:', (error as Error).message)
+    }
+  }
+
+  async discoverClaudeModels(providedApiKey?: string): Promise<any> {
+    try {
+      let apiKey = providedApiKey
+
+      // If no API key provided, try to get from secure storage
+      if (!apiKey) {
+        const oneCoreHandlers = await import('../ipc/handlers/one-core.js')
+        const apiKeyResult: any = await oneCoreHandlers.default.secureRetrieve({} as any, { key: 'claude_api_key' })
+
+        if (!apiKeyResult?.success || !apiKeyResult.value) {
+          console.log('[LLMManager] No Claude API key configured, skipping model discovery')
+          return
+        }
+
+        apiKey = apiKeyResult.value
+      }
+
+      console.log('[LLMManager] Discovering Claude models with API key:', apiKey?.substring(0, 20) + '...')
+
+      // Query Anthropic API for available models
+      const response: any = await fetch('https://api.anthropic.com/v1/models', {
+        method: 'GET',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        }
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('[LLMManager] Failed to fetch Claude models from API:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText
+        })
+        return
+      }
+
+      const data = await response.json()
+      console.log('[LLMManager] Raw API response:', data)
+
+      if (data.data && Array.isArray(data.data)) {
+        console.log(`[LLMManager] Discovered ${data.data.length} Claude models from API`)
+
+        for (const model of data.data) {
+          const modelId = `claude:${model.id}`
+
+          // Generate human-readable name from model ID if display_name not provided
+          let displayName = model.display_name
+          if (!displayName) {
+            // Transform "claude-3-5-sonnet-20241022" into "Claude 3.5 Sonnet"
+            displayName = model.id
+              .replace(/^claude-/, 'Claude ')
+              .replace(/-(\d+)$/, '') // Remove date suffix
+              .replace(/-/g, ' ')
+              .replace(/\b\w/g, (char: string) => char.toUpperCase()) // Capitalize each word
+          }
+
+          this.models.set(modelId, {
+            id: modelId,
+            name: displayName,
+            provider: 'anthropic',
+            description: `Claude model: ${model.id}`,
+            capabilities: ['chat', 'analysis', 'reasoning'],
+            contextLength: model.max_tokens || 200000,
+            parameters: {
+              temperature: 0.7,
+              maxTokens: 8192
+            }
+          })
+
+          console.log(`[LLMManager] Registered Claude model: ${modelId} as "${displayName}"`)
+        }
+      }
+    } catch (error) {
+      console.log('[LLMManager] Failed to discover Claude models:', (error as Error).message)
     }
   }
 
@@ -684,44 +737,27 @@ class LLMManager extends EventEmitter {
       // Then extract analysis SEPARATELY using structured output
 
       // Generate response with streaming
+      // NOTE: chat() will process tool calls automatically, so we call it directly
       let fullResponse = ''
-      let cleanResponse = ''  // Response without JSON blocks
-      console.log('[LLMManager] Streaming response to user...')
+      console.log('[LLMManager] chatWithAnalysis: About to call this.chat()')
+      console.log('[LLMManager] chatWithAnalysis: modelId =', modelId)
+      console.log('[LLMManager] chatWithAnalysis: messages.length =', messages.length)
+      console.log('[LLMManager] chatWithAnalysis: options.onStream =', typeof options.onStream)
 
-      await this.chat(messages, modelId, {
-        ...options,
-        onStream: (chunk: string) => {
-          fullResponse += chunk
+      // Call chat() which handles tool execution, and pass through streaming options
+      fullResponse = await this.chat(messages, modelId, options) as string
 
-          // Filter out JSON blocks before streaming to UI
-          // Remove anything that looks like JSON (both with and without code fences)
-          let filteredChunk = chunk
+      console.log('[LLMManager] chatWithAnalysis: chat() returned, fullResponse.length =', fullResponse.length)
 
-          // Only pass through non-JSON content to UI
-          if (options.onStream && !chunk.includes('{') && !chunk.includes('}')) {
-            options.onStream(chunk)
-            cleanResponse += chunk
-          } else if (options.onStream) {
-            // Check if we're in the middle of JSON - if so, don't stream
-            const tempResponse = fullResponse
-            const jsonMatch = tempResponse.match(/\{[\s\S]*$/);
-            if (!jsonMatch) {
-              // Not in JSON block yet, stream the clean part
-              options.onStream(chunk)
-              cleanResponse += chunk
-            }
-            // Otherwise skip streaming this chunk (it's JSON)
-          }
-        }
-      })
+      // After chat() has processed tool calls, extract clean response for analysis
+      let cleanResponse = fullResponse
 
-      // Extract the clean response (everything before JSON block)
-      const jsonBlockMatch = fullResponse.match(/\n*\{[\s\S]*\}\s*$/);
+      // Extract the clean response (everything before JSON block for topic analysis)
+      // Only filter out topic analysis JSON (has "subjects" field), not tool call JSON
+      const jsonBlockMatch = fullResponse.match(/\n*\{[\s\S]*"subjects"[\s\S]*\}\s*$/);
       if (jsonBlockMatch) {
         cleanResponse = fullResponse.substring(0, jsonBlockMatch.index).trim()
-        console.log('[LLMManager] Filtered out embedded JSON from response')
-      } else {
-        cleanResponse = fullResponse
+        console.log('[LLMManager] Filtered out embedded analysis JSON from response')
       }
 
       console.log('[LLMManager] Response streaming complete, now extracting analysis...')
@@ -889,20 +925,32 @@ class LLMManager extends EventEmitter {
   }
 
   async chatWithClaude(model: any, messages: any, options: any = {}): Promise<any> {
-    const { chatWithClaude } = await import('../../electron-ui/src/services/claude.js')
-    
-    const apiKey = process.env.ANTHROPIC_API_KEY || this.getStoredApiKey('claude')
-    if (!apiKey) {
+    const { chatWithClaude } = await import('./claude.js')
+
+    // Get API key from secure storage
+    const oneCoreHandlers = await import('../ipc/handlers/one-core.js')
+    const apiKeyResult: any = await oneCoreHandlers.default.secureRetrieve({} as any, { key: 'claude_api_key' })
+
+    if (!apiKeyResult?.success || !apiKeyResult.value) {
       throw new Error('Claude API key not configured')
     }
-    
+
+    const apiKey = apiKeyResult.value
+
+    // Extract base model ID - stored as claude:claude-3-5-sonnet-20241022
+    // Need to send just: claude-3-5-sonnet-20241022
+    const baseModelId = model.id.startsWith('claude:') ? model.id.substring(7) : model.id
+
+    console.log(`[LLMManager] Calling Claude with model ID: ${baseModelId}`)
+
     return await chatWithClaude(
-      model.id.replace('claude:', ''),
+      baseModelId,
       messages,
       {
         apiKey,
         temperature: model.parameters.temperature,
-        max_tokens: model.parameters.maxTokens
+        max_tokens: model.parameters.maxTokens,
+        onStream: options.onStream
       }
     )
   }
@@ -941,7 +989,12 @@ class LLMManager extends EventEmitter {
       description: model.description,
       contextLength: model.contextLength || 4096,
       maxTokens: model.parameters?.maxTokens || 2048,
-      capabilities: model.capabilities || []
+      capabilities: model.capabilities || [],
+      // Determine modelType: local for Ollama, remote for API-based services
+      modelType: model.provider === 'ollama' ? 'local' : 'remote',
+      size: model.size, // Include size if available
+      isLoaded: model.isLoaded || false, // Include load status
+      isDefault: model.isDefault || false // Include default status
     }))
   }
   

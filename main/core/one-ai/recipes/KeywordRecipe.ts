@@ -14,7 +14,7 @@ export const KeywordRecipe = {
         {
             itemprop: 'term',
             itemtype: { type: 'string' },
-            isId: true // Term IS the ID - deterministic lookup by term
+            isId: true // Term is the unique identifier
         },
         {
             itemprop: 'frequency',

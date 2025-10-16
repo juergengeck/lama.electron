@@ -11,6 +11,7 @@
   word-wrap: break-word;
   animation: fadeIn 0.3s ease;
   width: fit-content;
+  position: relative;
 }
 
 /* When message contains a pre block or table, allow it to expand */
@@ -117,6 +118,37 @@
   position: relative;
   overflow-x: auto;
   max-width: 100%;
+}
+
+/* Message actions in upper right corner */
+.message-actions-top-right {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+}
+
+.action-button-top {
+  padding: 4px;
+  border-radius: 4px;
+  border: none;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  opacity: 0.6;
+}
+
+.action-button-top:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.4);
+  transform: translateY(-1px);
 }
 
 /* Other's messages - top-left corner less rounded */

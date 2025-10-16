@@ -24,6 +24,8 @@ declare module '@OneObjectInterfaces' {
         createdAt: number;
         lastSeenAt: number;
         archived?: boolean;
+        likes?: number;
+        dislikes?: number;
     }
 
     // Keyword extracted from message content
