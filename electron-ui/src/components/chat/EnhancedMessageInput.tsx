@@ -38,6 +38,7 @@ export interface EnhancedMessageInputProps {
   placeholder?: string;
   disabled?: boolean;
   theme?: 'light' | 'dark';
+  conversationId?: string; // Used to detect conversation changes for auto-focus
 }
 
 // Subject hashtag extractor (simplified web version)
@@ -248,7 +249,8 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   onHashtagClick,
   placeholder = "Type a message...",
   disabled = false,
-  theme = 'light'
+  theme = 'light',
+  conversationId
 }) => {
   const [messageText, setMessageText] = useState('');
   const [attachments, setAttachments] = useState<EnhancedAttachment[]>([]);
@@ -266,7 +268,14 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const subjectExtractor = new WebSubjectExtractor();
   const hashtagSuggester = new WebHashtagSuggester();
-  
+
+  // Auto-focus input when conversation changes
+  useEffect(() => {
+    if (textareaRef.current && !disabled) {
+      textareaRef.current.focus();
+    }
+  }, [conversationId, disabled]);
+
   // Handle text input changes and hashtag detection
   const handleTextChange = useCallback(async (text: string) => {
     setMessageText(text);
@@ -427,8 +436,13 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   
   // Send message
   const handleSend = useCallback(async () => {
-    console.log('[EnhancedMessageInput] handleSend called, messageText:', messageText, 'attachments:', attachments.length);
-    if (!messageText.trim() && attachments.length === 0) {
+    // Capture current state without clearing yet
+    const textToSend = messageText;
+    const attachmentsToSend = attachments;
+
+    console.log('[EnhancedMessageInput] handleSend called, messageText:', textToSend, 'attachments:', attachmentsToSend.length);
+
+    if (!textToSend.trim() && attachmentsToSend.length === 0) {
       console.log('[EnhancedMessageInput] Empty message, not sending');
       return;
     }
@@ -437,11 +451,10 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
       console.log('[EnhancedMessageInput] Setting upload state and calling onSendMessage');
       setIsUploading(true);
 
-      // Capture message and attachments before clearing
-      const textToSend = messageText;
-      const attachmentsToSend = attachments;
+      await onSendMessage(textToSend, attachmentsToSend);
+      console.log('[EnhancedMessageInput] onSendMessage completed successfully');
 
-      // Clear input BEFORE sending
+      // Only clear after successful send
       setMessageText('');
       setAttachments([]);
       setShowSuggestions(false);
@@ -451,16 +464,13 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
         textareaRef.current.style.height = 'auto';
         textareaRef.current.focus();
       }
-
-      await onSendMessage(textToSend, attachmentsToSend);
-      console.log('[EnhancedMessageInput] onSendMessage completed successfully');
     } catch (error) {
       console.error('[EnhancedMessageInput] Send failed:', error);
       alert('Failed to send message: ' + (error instanceof Error ? error.message : 'Unknown error'));
     } finally {
       setIsUploading(false);
     }
-  }, [messageText, attachments, onSendMessage]);
+  }, [messageText, attachments, onSendMessage])
   
   // Handle key down (onKeyPress is deprecated)
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

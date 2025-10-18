@@ -150,13 +150,29 @@ export class AIAssistantModel {
   /**
    * Ensure default AI chats (Hi and LAMA) exist with welcome messages
    * This is the SINGLE entry point for creating AI default chats
+   *
+   * CRITICAL: This method serves two purposes:
+   * 1. Register existing 'hi' and 'lama' topics if they exist (even without a default model)
+   * 2. Create new ones if they don't exist (requires a default model)
    */
   async ensureDefaultChats(): Promise<void> {
     console.log('[AIAssistantModel] Ensuring default AI chats...')
 
+    // FIRST: Try to register existing topics even without a default model
+    // This handles the case where LAMA exists but wasn't found during scanning
+    const hiExists = await this.checkAndRegisterExistingTopic('hi')
+    const lamaExists = await this.checkAndRegisterExistingTopic('lama')
+
+    // If both exist, we're done - they've been registered
+    if (hiExists && lamaExists) {
+      console.log('[AIAssistantModel] Both Hi and LAMA already exist and are registered')
+      return
+    }
+
+    // SECOND: Create missing topics (requires default model)
     const model = this.getDefaultModel()
     if (!model) {
-      console.log('[AIAssistantModel] No default model - cannot create default chats')
+      console.log('[AIAssistantModel] No default model - cannot create missing default chats')
       return
     }
 
@@ -167,18 +183,66 @@ export class AIAssistantModel {
       return
     }
 
-    // Create/ensure both Hi and LAMA topics
-    await this.ensureHiChat(modelId, aiPersonId)
-
-    // LAMA uses a separate AI contact with the -private model variant
-    const privateModelId = modelId + '-private'
-    const privateAiPersonId = await this.ensureAIContactForModel(privateModelId)
-    if (!privateAiPersonId) {
-      console.error('[AIAssistantModel] Could not get private AI person ID for LAMA')
-      return
+    // Create Hi if it doesn't exist
+    if (!hiExists) {
+      await this.ensureHiChat(modelId, aiPersonId)
     }
 
-    await this.ensureLamaChat(privateModelId, privateAiPersonId)
+    // Create LAMA if it doesn't exist (uses private model variant)
+    if (!lamaExists) {
+      const privateModelId = modelId + '-private'
+      const privateAiPersonId = await this.ensureAIContactForModel(privateModelId)
+      if (!privateAiPersonId) {
+        console.error('[AIAssistantModel] Could not get private AI person ID for LAMA')
+        return
+      }
+      await this.ensureLamaChat(privateModelId, privateAiPersonId)
+    }
+  }
+
+  /**
+   * Check if a topic exists and register it if found
+   * Returns true if the topic exists, false otherwise
+   */
+  private async checkAndRegisterExistingTopic(topicId: string): Promise<boolean> {
+    try {
+      const topic = await this.nodeOneCore.topicModel.topics.queryById(topicId)
+      if (topic && (topic as any).group) {
+        // Topic exists - try to determine its model from group members
+        const { getIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+        const group = await getIdObject((topic as any).group)
+
+        if ((group as any).members) {
+          for (const memberId of (group as any).members) {
+            let modelId = this.getModelIdForPersonId(memberId)
+
+            // CRITICAL: For LAMA, the group has the -private Person
+            // getModelIdForPersonId returns the -private model ID
+            // We need to keep it as-is for LAMA
+            if (modelId) {
+              // Found the AI participant - register the topic with the ACTUAL model (including -private suffix)
+              this.registerAITopic(topicId, modelId)
+              console.log(`[AIAssistantModel] Registered existing topic '${topicId}' with model: ${modelId}`)
+              return true
+            }
+          }
+        }
+
+        // Topic exists but no AI participant found
+        // This might be an orphaned topic - still register it with default model if available
+        const defaultModel = this.getDefaultModel()
+        if (defaultModel) {
+          const modelId = typeof defaultModel === 'string' ? defaultModel : defaultModel.id
+          const finalModelId = topicId === 'lama' ? `${modelId}-private` : modelId
+          this.registerAITopic(topicId, finalModelId)
+          console.log(`[AIAssistantModel] Registered orphaned topic '${topicId}' with default model: ${finalModelId}`)
+          return true
+        }
+      }
+    } catch (e) {
+      // Topic doesn't exist
+    }
+    return false
   }
 
   /**
@@ -273,66 +337,7 @@ What can I help you with today?`
     }
   }
 
-  /**
-   * Create LAMA topic and send welcome message
-   * DEPRECATED: Use ensureDefaultChats() instead
-   */
-  async createLamaTopicWithWelcome(): Promise<any> {
-    try {
-      console.log('[AIAssistantModel] 🚀🚀🚀 createLamaTopicWithWelcome() called!')
-
-      if (!this.nodeOneCore.topicModel) {
-        console.log('[AIAssistantModel] TopicModel not ready for welcome message')
-        return
-      }
-
-      if (!this.nodeOneCore.channelManager) {
-        console.log('[AIAssistantModel] ChannelManager not ready for welcome message')
-        return
-      }
-
-      // Check if LAMA topic already exists
-      const existingTopic = await this.nodeOneCore.topicModel.topics.queryById('lama')
-      let topicRoom
-
-      if (!existingTopic) {
-        // Create LAMA topic if it doesn't exist
-        console.log('[AIAssistantModel] Creating LAMA topic...')
-        if (!this.nodeOneCore.topicGroupManager) {
-          throw new Error('TopicGroupManager not initialized - cannot create LAMA topic')
-        }
-
-        // TODO: Fix topicGroupManager type
-        await (this.nodeOneCore.topicGroupManager as any).createGroupTopic('LAMA', 'lama', [])
-
-        // Create the channel
-        console.log('[AIAssistantModel] Creating LAMA channel...')
-        await this.nodeOneCore.channelManager.createChannel('lama', this.nodeOneCore.ownerId)
-      } else {
-        console.log('[AIAssistantModel] LAMA topic already exists, checking for messages...')
-      }
-
-      // Enter topic room
-      topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
-
-      // Check if there are any messages
-      const messages = await topicRoom.retrieveAllMessages()
-      console.log(`[AIAssistantModel] LAMA has ${(messages as any)?.length} existing messages`)
-
-      // Send welcome message if empty or very first message is not from AI
-      const needsWelcome = (messages as any)?.length === 0 ||
-                          ((messages as any)?.length > 0 && !(messages[0] as any).sender)
-
-      if (needsWelcome) {
-        console.log('[AIAssistantModel] LAMA needs welcome message, sending...')
-        await this.handleNewTopic('lama', topicRoom)
-      } else {
-        console.log(`[AIAssistantModel] LAMA already has ${(messages as any)?.length} messages, skipping welcome`)
-      }
-    } catch (error) {
-      console.error('[AIAssistantModel] Error setting up LAMA with welcome:', error)
-    }
-  }
+  // REMOVED: createLamaTopicWithWelcome() - deprecated, use ensureDefaultChats() instead
 
   /**
    * Load existing AI contacts by checking Person profiles against available models
@@ -440,6 +445,7 @@ What can I help you with today?`
       for (const channelInfo of allChannels) {
         try {
           const topicId = channelInfo.id
+          console.log(`[AIAssistantModel] 🔍 Scanning channel: ${topicId}`)
 
           // Skip if already registered
           if (this.topicModelMap.has(topicId)) {
@@ -452,7 +458,6 @@ What can I help you with today?`
           try {
             topic = await this.nodeOneCore.topicModel.topics.queryById(topicId)
           } catch (e) {
-            console.log(`[AIAssistantModel] Could not query topic ${topicId}:`, e)
             continue
           }
 
@@ -460,15 +465,15 @@ What can I help you with today?`
             continue
           }
 
-          // Check if any participant in the Group object is an AI person
+          // Check if any participant is an AI person
           let aiModelId = null
 
-          // Try to get the group members
-          if (topic.group) {
+          // Try to get the group members from Group object
+          if ((topic as any).group) {
             // Get the Group object
             const { getIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
             try {
-              const group = await getIdObject(topic.group)
+              const group = await getIdObject((topic as any).group)
 
               // Check group members
               if ((group as any).members) {
@@ -476,13 +481,38 @@ What can I help you with today?`
                   const modelId = this.getModelIdForPersonId(memberId)
                   if (modelId) {
                     aiModelId = modelId
-                    console.log(`[AIAssistantModel] Found AI participant in ${topicId}: ${modelId}`)
+                    console.log(`[AIAssistantModel] Found AI participant in ${topicId} (via Group): ${modelId}`)
                     break
                   }
                 }
               }
             } catch (e) {
               console.warn(`[AIAssistantModel] Could not get group for topic ${topicId}:`, e)
+            }
+          }
+
+          // FALLBACK: If no Group object, try to find AI participant by checking messages in the channel
+          // This handles legacy topics created before Group objects were used
+          if (!aiModelId && !((topic as any).group)) {
+            console.log(`[AIAssistantModel] Topic ${topicId} has no Group, checking messages for AI participant...`)
+            try {
+              const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom(topicId)
+              const messages = await topicRoom.retrieveAllMessages()
+
+              // Check senders in messages to find AI participant
+              for (const msg of messages) {
+                const msgSender = (msg as any).data?.sender || (msg as any).author
+                if (msgSender) {
+                  const modelId = this.getModelIdForPersonId(msgSender)
+                  if (modelId) {
+                    aiModelId = modelId
+                    console.log(`[AIAssistantModel] Found AI participant in ${topicId} (via messages): ${modelId}`)
+                    break
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn(`[AIAssistantModel] Could not check messages for topic ${topicId}:`, e)
             }
           }
 
@@ -515,12 +545,7 @@ What can I help you with today?`
    * Check if a topic is an AI topic
    */
   isAITopic(topicId: any): any {
-    const isAI = this.topicModelMap.has(topicId)
-    console.log(`[AIAssistantModel] 🔍 DEBUG isAITopic("${topicId}") = ${isAI}`)
-    if (isAI) {
-      console.log(`[AIAssistantModel] 🔍 DEBUG topicModelMap keys: [${Array.from(this.topicModelMap.keys()).join(', ')}]`)
-    }
-    return isAI
+    return this.topicModelMap.has(topicId)
   }
 
   /**
@@ -685,37 +710,17 @@ What can I help you with today?`
       }, topicId) // Pass topicId for analysis
 
       const response = (result as any)?.response
-      
-      if (response) {
-        // Send the response to the topic
-        await topicRoom.sendMessage(response as string, aiPersonId, aiPersonId)
-        console.log(`[AIAssistantModel] Sent AI response to topic ${topicId}`)
 
-        // Notify UI about the complete message
-        for (const window of BrowserWindow.getAllWindows()) {
-          window.webContents.send('message:updated', {
-            conversationId,
-            message: {
-              id: messageId,
-              conversationId,
-              text: response,
-              senderId: aiPersonId,
-              isAI: true,
-              timestamp: new Date().toISOString(),
-              status: 'sent'
-            }
-          })
-        }
+      // Debug: Log what we got from chatWithAnalysis
+      console.log('[AIAssistantModel] chatWithAnalysis result:', {
+        hasResponse: !!(result as any)?.response,
+        hasAnalysis: !!(result as any)?.analysis,
+        analysisKeys: (result as any)?.analysis ? Object.keys((result as any).analysis) : []
+      })
 
-        // Debug: Log what we got from chatWithAnalysis
-        console.log('[AIAssistantModel] chatWithAnalysis result:', {
-          hasResponse: !!(result as any)?.response,
-          hasAnalysis: !!(result as any)?.analysis,
-          analysisKeys: (result as any)?.analysis ? Object.keys((result as any).analysis) : []
-        })
-
-        // Process analysis in background (non-blocking)
-        if ((result as any)?.analysis) {
+      // ALWAYS process analysis first (even if response is empty)
+      // This ensures subjects/keywords are extracted from EVERY message
+      if ((result as any)?.analysis) {
           setImmediate(async () => {
             try {
               console.log('[AIAssistantModel] Processing analysis in background...')
@@ -811,11 +816,33 @@ What can I help you with today?`
               // Don't throw - this is background processing
             }
           })
+      }
+
+      // Now send the response message (if we have one)
+      if (response) {
+        // Send the response to the topic
+        await topicRoom.sendMessage(response as string, aiPersonId, aiPersonId)
+        console.log(`[AIAssistantModel] Sent AI response to topic ${topicId}`)
+
+        // Notify UI about the complete message
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send('message:updated', {
+            conversationId,
+            message: {
+              id: messageId,
+              conversationId,
+              text: response,
+              senderId: aiPersonId,
+              isAI: true,
+              timestamp: new Date().toISOString(),
+              status: 'sent'
+            }
+          })
         }
 
         return response
       }
-      
+
       return null
     } catch (error) {
       console.error('[AIAssistantModel] Error processing message:', error)
@@ -1127,6 +1154,18 @@ What can I help you with today?`
   async handleNewTopic(channelId: any, topicRoom: any): Promise<any> {
     const startTime = Date.now()
     console.log(`[AIAssistantModel] 🎯 Handling new topic: ${channelId} at ${new Date().toISOString()}`)
+
+    // Emit thinking indicator BEFORE starting async work
+    // This ensures the UI shows a spinner immediately when welcome generation starts
+    const windows = BrowserWindow.getAllWindows()
+    for (const window of windows) {
+      window.webContents.send('message:thinking', {
+        conversationId: channelId,
+        messageId: `ai-welcome-${Date.now()}`,
+        isAI: true
+      })
+    }
+    console.log(`[AIAssistantModel] 🎯 Emitted message:thinking for ${channelId}`)
 
     // Mark this topic as having welcome generation in progress
     const welcomePromise = (async () => {

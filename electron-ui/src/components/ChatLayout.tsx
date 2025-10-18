@@ -14,12 +14,14 @@ import {
 import { InputDialog } from './InputDialog'
 import { UserSelectionDialog } from './UserSelectionDialog'
 import { GroupChatDialog } from './GroupChatDialog'
+import { ParticipantAvatars } from './ParticipantAvatars'
 
 interface Conversation {
   id: string
   name: string
   type?: 'direct' | 'group'
-  participants?: string[]
+  participants: string[]  // Array of participant person IDs
+  participantCount?: number
   lastMessage?: string
   lastMessageTime?: Date | string
   modelName?: string
@@ -43,7 +45,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   const [conversationToRename, setConversationToRename] = useState<string | null>(null)
   const [showAddUsersDialog, setShowAddUsersDialog] = useState(false)
   const [conversationToAddUsers, setConversationToAddUsers] = useState<string | null>(null)
-  const [sidebarWidth, setSidebarWidth] = useState(256)
+  const [sidebarWidth, setSidebarWidth] = useState(300)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [windowWidth, setWindowWidth] = useState(window.innerWidth)
 
@@ -61,11 +63,11 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       // Adjust sidebar width based on window size
       if (!isCollapsed) {
         if (newWidth < 1024) {
-          setSidebarWidth(Math.min(200, newWidth * 0.25))
+          setSidebarWidth(Math.max(280, Math.min(300, newWidth * 0.25)))
         } else if (newWidth < 1440) {
-          setSidebarWidth(Math.min(256, newWidth * 0.2))
+          setSidebarWidth(300)
         } else {
-          setSidebarWidth(Math.min(320, newWidth * 0.18))
+          setSidebarWidth(Math.min(350, newWidth * 0.2))
         }
       }
     }
@@ -119,9 +121,11 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         const uiConversations: Conversation[] = conversations.map((conv: any) => ({
           id: conv.id,
           name: conv.name || 'Unnamed Chat',
+          participants: conv.participants || [],
+          participantCount: conv.participantCount || 0,
           lastMessage: conv.lastMessage?.text || '',
           lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
-          modelName: conv.modelName,
+          modelName: conv.modelName, // No fallback - if missing, backend needs to provide it
           hasAIParticipant: conv.hasAIParticipant || false,
           isAITopic: conv.isAITopic || false
         }))
@@ -208,9 +212,11 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       const uiConversations: Conversation[] = conversations.map((conv: any) => ({
         id: conv.id,
         name: conv.name || 'Unnamed Chat',
+        participants: conv.participants || [],
+        participantCount: conv.participantCount || 0,
         lastMessage: conv.lastMessage?.text || '',
         lastMessageTime: new Date(conv.lastMessageTime || conv.createdAt || Date.now()),
-        modelName: conv.modelName || 'AI Assistant',
+        modelName: conv.modelName, // No fallback - if missing, backend needs to provide it
         hasAIParticipant: conv.hasAIParticipant || false,
         isAITopic: conv.isAITopic || false
       }))
@@ -342,6 +348,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
 
   // Create new group conversation with selected users
   const handleCreateGroupConversation = async (selectedUserIds: string[], chatName?: string) => {
+    console.log('[ChatLayout] 🟢 handleCreateGroupConversation called with:', { selectedUserIds, chatName, chatNameType: typeof chatName })
     try {
       if (!window.electronAPI) {
         throw new Error('Electron API not available')
@@ -349,6 +356,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
 
       // Generate conversation ID and name
       const conversationName = chatName || `Group Chat ${conversations.length + 1}`
+      console.log('[ChatLayout] 🟢 Conversation name determined:', { chatName, conversationName })
       // Use conversation name as deterministic topic ID
       const cleanName = conversationName
         .toLowerCase()
@@ -439,6 +447,26 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
   )
   console.log('[ChatLayout] Filtered conversations:', filteredConversations.length)
 
+  // Strip markdown formatting from text for preview
+  const stripMarkdown = (text: string): string => {
+    return text
+      // Remove headers (### text)
+      .replace(/^#{1,6}\s+/gm, '')
+      // Remove bold (**text** or __text__)
+      .replace(/(\*\*|__)(.*?)\1/g, '$2')
+      // Remove italic (*text* or _text_)
+      .replace(/(\*|_)(.*?)\1/g, '$2')
+      // Remove inline code (`code`)
+      .replace(/`([^`]+)`/g, '$1')
+      // Remove links [text](url)
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+      // Remove list markers (- or * or 1.)
+      .replace(/^[\s]*[-*+]\s+/gm, '')
+      .replace(/^[\s]*\d+\.\s+/gm, '')
+      // Trim whitespace
+      .trim()
+  }
+
   // Format time for display
   const formatTime = (time?: Date | string): string => {
     if (!time) return ''
@@ -484,14 +512,14 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         className="border-r border-border bg-card flex flex-col flex-shrink-0 transition-all duration-300"
         style={{
           width: isCollapsed ? 48 : sidebarWidth,
-          minWidth: isCollapsed ? '48px' : `${Math.min(150, windowWidth * 0.15)}px`,
-          maxWidth: isCollapsed ? '48px' : `${Math.min(400, windowWidth * 0.3)}px`
+          minWidth: isCollapsed ? '48px' : '280px',
+          maxWidth: isCollapsed ? '48px' : `${Math.min(450, windowWidth * 0.35)}px`
         }}
       >
         {/* Header */}
-        <div className={`${isCollapsed ? 'p-1' : 'p-4'} border-b border-border`}>
-          <div className={`flex items-center justify-between ${isCollapsed ? '' : 'mb-3'}`}>
-            {!isCollapsed && <h2 className="text-lg font-semibold">Conversations</h2>}
+        <div className={`${isCollapsed ? 'p-1' : 'p-3'} border-b border-border`}>
+          <div className={`flex items-center justify-between ${isCollapsed ? '' : 'mb-2'}`}>
+            {!isCollapsed && <h2 className="text-sm font-semibold">Conversations</h2>}
             <div className={`flex items-center gap-1 ${isCollapsed ? 'mx-auto' : ''}`}>
               {!isCollapsed && (
                 <DropdownMenu>
@@ -527,14 +555,14 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
               </Button>
             </div>
           </div>
-          
+
           {/* Search */}
           {!isCollapsed && (
             <Input
-              placeholder="Search conversations..."
+              placeholder="Search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8"
+              className="h-7 text-xs"
             />
           )}
         </div>
@@ -542,7 +570,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
         <>
           {/* Conversation list */}
           <ScrollArea className="flex-1">
-            <div className={isCollapsed ? "space-y-1" : "p-2 space-y-1"}>
+            <div className={isCollapsed ? "py-2 space-y-1" : "p-2 space-y-1"}>
               {filteredConversations.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   {isCollapsed ? (
@@ -580,32 +608,32 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                     <div
                       key={conv.id}
                       onClick={() => setSelectedConversation(conv.id)}
-                      className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                      className={`group flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
                         selectedConversation === conv.id
-                          ? 'bg-primary/10 border-2 border-primary/20'
-                          : 'hover:bg-muted border-2 border-transparent'
+                          ? 'bg-primary/10 border border-primary/30'
+                          : 'hover:bg-muted/50 border border-transparent'
                       }`}
                     >
                       {/* Avatar */}
-                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                         {processingConversations.has(conv.id) ? (
-                          <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                          <Loader2 className="w-4 h-4 text-primary animate-spin" />
                         ) : (
-                          <Bot className="w-5 h-5 text-primary" />
+                          <Bot className="w-4 h-4 text-primary" />
                         )}
                       </div>
 
                       {/* Content */}
                       <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <h3 className="font-medium text-sm truncate">{conv.name}</h3>
+                      <div className="flex items-center justify-between gap-1 mb-0.5">
+                        <h3 className="font-medium text-xs truncate">{conv.name}</h3>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
                               onClick={(e) => e.stopPropagation()}
                               size="icon"
                               variant="ghost"
-                              className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                              className="h-5 w-5 flex-shrink-0 opacity-0 group-hover:opacity-100"
                             >
                               <MoreVertical className="h-3 w-3" />
                             </Button>
@@ -646,24 +674,26 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
                       </div>
 
                       {conv.lastMessage && (
-                        <p className="text-xs text-muted-foreground mb-1 line-clamp-2">
-                          {conv.lastMessage.length > 50
-                            ? conv.lastMessage.substring(0, 50) + '...'
-                            : conv.lastMessage
-                          }
+                        <p className="text-[10px] text-muted-foreground mb-0.5 line-clamp-1">
+                          {(() => {
+                            const cleaned = stripMarkdown(conv.lastMessage)
+                            return cleaned.length > 40
+                              ? cleaned.substring(0, 40) + '...'
+                              : cleaned
+                          })()}
                         </p>
                       )}
 
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{formatTime(conv.lastMessageTime)}</span>
+                      <div className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
                         <div className="flex items-center gap-1">
+                          <span>{formatTime(conv.lastMessageTime)}</span>
                           {conv.lastMessage && (
                             <CheckCheck className="h-3 w-3 text-primary/70" />
                           )}
-                          {conv.modelName && (
-                            <span className="text-primary">{conv.modelName}</span>
-                          )}
                         </div>
+                        {conv.modelName && (
+                          <span className="text-primary text-[10px] font-medium">{conv.modelName}</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -684,8 +714,8 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
 
                 const handleMouseMove = (e: MouseEvent) => {
                   const diff = e.clientX - startX
-                  const minWidth = Math.min(150, windowWidth * 0.15)
-                  const maxWidth = Math.min(400, windowWidth * 0.3)
+                  const minWidth = 280
+                  const maxWidth = Math.min(450, windowWidth * 0.35)
                   const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + diff))
                   setSidebarWidth(newWidth)
                 }
@@ -713,6 +743,7 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
             onProcessingChange={handleProcessingChange}
             onMessageUpdate={handleMessageUpdate}
             hasAIParticipant={conversations.find(c => c.id === selectedConversation)?.hasAIParticipant}
+            onAddUsers={() => openAddUsersDialog(selectedConversation)}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -756,7 +787,10 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
       title="Add Users to Chat"
       description="Select users to add to this conversation"
       onSubmit={handleAddUsers}
-      excludeUserIds={[]} // TODO: Get current participants to exclude them
+      excludeUserIds={conversationToAddUsers
+        ? (conversations.find(c => c.id === conversationToAddUsers)?.participants.map(p => p.id) || [])
+        : []
+      }
     />
 
     {/* New Group Chat Dialog */}

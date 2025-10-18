@@ -21,19 +21,20 @@ export async function createSubject(
   confidence: any,
   keywordTerms: string[] = []
 ) {
-  // Calculate Keyword ID hashes from terms
+  // Import createKeyword to store actual Keyword objects
+  const { createKeyword } = await import('./Keyword.js');
   const { calculateIdHashOfObj } = await import('@refinio/one.core/lib/util/object.js');
   const keywordIdHashes = [];
 
   for (const term of keywordTerms) {
-    // Create a minimal Keyword ID object to calculate its ID hash
-    // Only ID properties are needed for calculateIdHashOfObj
-    const keywordIdObj = {
-      $type$: 'Keyword' as const,
-      term: term.toLowerCase().trim()
-    };
-    const keywordIdHash = await calculateIdHashOfObj(keywordIdObj as any);
-    keywordIdHashes.push(keywordIdHash);
+    const normalizedTerm = term.toLowerCase().trim();
+
+    // CRITICAL: Store the Keyword object BEFORE referencing it
+    // This creates the vheads file needed for ID hash lookup
+    const keywordResult = await createKeyword(normalizedTerm, 1, 0.8, []);
+
+    // Calculate ID hash from the stored keyword
+    keywordIdHashes.push(keywordResult.idHash);
   }
 
   const now = Date.now();

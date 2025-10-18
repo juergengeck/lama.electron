@@ -32,6 +32,7 @@ import feedForwardHandlers from './handlers/feed-forward.js';
 import { registerLlmConfigHandlers } from './handlers/llm-config.js';
 // @ts-ignore - TS file with named export
 import { proposalHandlers } from './handlers/proposals.js';
+import mcpHandlers from './handlers/mcp.js';
 
 // Node error type
 interface NodeError extends Error {
@@ -245,6 +246,12 @@ class IPCController {
     this.handle('proposals:dismiss', proposalHandlers['proposals:dismiss']);
     this.handle('proposals:share', proposalHandlers['proposals:share']);
 
+    // MCP handlers
+    this.handle('mcp:listServers', mcpHandlers.listServers);
+    this.handle('mcp:addServer', mcpHandlers.addServer);
+    this.handle('mcp:updateServer', mcpHandlers.updateServer);
+    this.handle('mcp:removeServer', mcpHandlers.removeServer);
+
     // Export handlers
     this.handle('export:file', exportHandlers.exportFile);
     this.handle('export:fileAuto', exportHandlers.exportFileAuto);
@@ -282,6 +289,9 @@ class IPCController {
     this.handle('onecore:secureStore', oneCoreHandlers.secureStore);
     this.handle('onecore:secureRetrieve', oneCoreHandlers.secureRetrieve);
     this.handle('onecore:clearStorage', oneCoreHandlers.clearStorage);
+    this.handle('onecore:hasPersonName', oneCoreHandlers.hasPersonName);
+    this.handle('onecore:setPersonName', oneCoreHandlers.setPersonName);
+    this.handle('onecore:updateMood', oneCoreHandlers.updateMood);
 
     // Topic feedback handler
     this.handle('topics:recordFeedback', topicHandlers.recordSubjectFeedback);

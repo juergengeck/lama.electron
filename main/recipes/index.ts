@@ -10,6 +10,8 @@ import { SubjectRecipe } from '../core/one-ai/recipes/SubjectRecipe.js'
 import { SummaryRecipe } from '../core/one-ai/recipes/SummaryRecipe.js'
 import { KeywordAccessStateRecipe } from '../core/one-ai/recipes/KeywordAccessState.js'
 import { ProposalConfigRecipe } from './proposal-recipes.js'
+import { MCPRecipes } from './mcp-recipes.js'
+import { AvatarPreferenceRecipe } from './avatar-recipes.js'
 // import { FeedForwardRecipes } from './feed-forward-recipes.js'
 
 // LLM Recipe - represents an AI model/assistant
@@ -148,7 +150,9 @@ const LamaRecipes = [
     KeywordRecipe,
     SummaryRecipe,
     KeywordAccessStateRecipe,
-    ProposalConfigRecipe
+    ProposalConfigRecipe,
+    AvatarPreferenceRecipe,
+    ...MCPRecipes
     // ...FeedForwardRecipes
 ]
 

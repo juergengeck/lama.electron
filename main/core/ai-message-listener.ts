@@ -17,7 +17,6 @@ class AIMessageListener {
   aiAssistantModel: AIAssistantModel | null;
   unsubscribe: (() => void) | null;
   debounceTimers: Map<string, NodeJS.Timeout>;
-  topicModelMap: Map<string, string>;
   DEBOUNCE_MS: number;
   pollInterval: NodeJS.Timeout | null;
 
@@ -27,7 +26,6 @@ class AIMessageListener {
     this.aiAssistantModel = null // Will be set after AIAssistantModel is initialized
     this.unsubscribe = null
     this.debounceTimers = new Map()
-    this.topicModelMap = new Map() // Track topic->model mappings like LAMA
     this.DEBOUNCE_MS = 800 // Increased delay to ensure user message displays first
     this.pollInterval = null
 }
@@ -191,32 +189,34 @@ class AIMessageListener {
   
   /**
    * Register a topic as an AI topic with model mapping
+   * @deprecated - AIAssistantModel is the source of truth, delegate to it
    */
   registerAITopic(topicId: any, modelId: any): any {
-    (this.topicModelMap as any)?.set(topicId, modelId)
-    console.log(`[AIMessageListener] Registered AI topic: ${topicId} with model: ${modelId}`)
-    console.log(`[AIMessageListener] Topic model map now has ${this.topicModelMap.size} entries`)
+    console.log(`[AIMessageListener] DEPRECATED: registerAITopic called, should use AIAssistantModel.registerAITopic instead`)
+    // Delegate to AIAssistantModel if available
+    if (this.aiAssistantModel) {
+      this.aiAssistantModel.registerAITopic(topicId, modelId)
+    } else {
+      console.warn(`[AIMessageListener] Cannot register topic ${topicId} - AIAssistantModel not available`)
+    }
   }
-  
+
   /**
    * Check if a topic is an AI topic
+   * AIAssistantModel is the source of truth - always delegate to it
    */
   isAITopic(topicId: any): any {
-    // Default channel always has AI participation
-    if (topicId === 'default') {
-      return true
-    }
-    
-    // First check local map
-    if (this.topicModelMap.has(topicId)) {
-      return true
-    }
-    
-    // Also check AIAssistantModel's map if available
+    // AIAssistantModel is the source of truth
     if (this.aiAssistantModel && this.aiAssistantModel.isAITopic) {
       return this.aiAssistantModel.isAITopic(topicId)
     }
-    
+
+    // Fallback for 'default' channel if AIAssistantModel not available yet
+    if (topicId === 'default') {
+      return true
+    }
+
+    console.warn(`[AIMessageListener] AIAssistantModel not available, cannot check if ${topicId} is AI topic`)
     return false
   }
   

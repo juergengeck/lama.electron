@@ -183,8 +183,8 @@ function App() {
         return <JournalView />
       case 'contacts':
         return <ContactsView onNavigateToChat={async (topicId, contactName) => {
-          // Add or update the conversation in localStorage
-          const savedConversations = await ipcStorage.getItem('lama-conversations')
+          // Add or update the conversation in browser localStorage (not IPC secure storage)
+          const savedConversations = localStorage.getItem('lama-conversations')
           let conversations = []
 
           try {
@@ -211,7 +211,7 @@ function App() {
 
             // Add to beginning of list
             conversations.unshift(newConversation)
-            await ipcStorage.setItem('lama-conversations', JSON.stringify(conversations))
+            localStorage.setItem('lama-conversations', JSON.stringify(conversations))
             console.log('[App] Created new conversation for contact:', contactName)
           }
 

@@ -171,6 +171,47 @@ declare module '@OneObjectInterfaces' {
         updatedAt: number;
     }
 
+    // MCPServer - Configuration for an MCP server
+    export interface MCPServer {
+        $type$: 'MCPServer';
+        name: string; // ID field - unique server identifier
+        command: string;
+        args: string[];
+        description: string;
+        enabled: boolean;
+        createdAt: number;
+        updatedAt: number;
+    }
+
+    // MCPServerConfig - User's MCP configuration object
+    export interface MCPServerConfig {
+        $type$: 'MCPServerConfig';
+        userEmail: string; // ID field - user identifier
+        servers: SHA256IdHash<MCPServer>[];
+        updatedAt: number;
+    }
+
+    // ProposalConfig - Configuration for proposal matching algorithm
+    export interface ProposalConfig {
+        $type$: 'ProposalConfig';
+        userEmail: string; // ID field - user identifier
+        matchWeight: number;
+        recencyWeight: number;
+        recencyWindow: number;
+        minJaccard: number;
+        maxProposals: number;
+        updatedAt: number;
+    }
+
+    // AvatarPreference - Stores avatar color preference for a person
+    export interface AvatarPreference {
+        $type$: 'AvatarPreference';
+        personId: string; // ID field - Person ID hash
+        color: string; // Hex color code
+        mood?: 'happy' | 'sad' | 'angry' | 'calm' | 'excited' | 'tired' | 'focused' | 'neutral'; // Current mood
+        updatedAt: number; // Unix timestamp
+    }
+
     // Import AffirmationCertificate from ONE.models - it's already defined there
 
     // Extend ONE.core's ID object interfaces (for objects that can be retrieved by ID)
@@ -191,5 +232,9 @@ declare module '@OneObjectInterfaces' {
         MessageAssertion: MessageAssertion;
         XMLMessageAttachment: XMLMessageAttachment;
         SystemPromptTemplate: SystemPromptTemplate;
+        MCPServer: MCPServer;
+        MCPServerConfig: MCPServerConfig;
+        ProposalConfig: ProposalConfig;
+        AvatarPreference: AvatarPreference;
     }
 }

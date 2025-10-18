@@ -10,6 +10,9 @@ import credentialsManager from '../../services/credentials-manager.js';
 import type { IpcMainInvokeEvent } from 'electron';
 import type { PersonDescriptionTypes } from '@refinio/one.models/lib/recipes/Leute/PersonDescriptions.js';
 import type { CommunicationEndpointTypes } from '@refinio/one.models/lib/recipes/Leute/CommunicationEndpoints.js';
+import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import { getObjectByIdHash } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import type { AvatarPreference } from '@OneObjectInterfaces';
 
 // Type guards for ONE.core recipe union types
 function isPersonName(obj: PersonDescriptionTypes): obj is Extract<PersonDescriptionTypes, { $type$: 'PersonName' }> {
@@ -57,6 +60,90 @@ interface Contact {
   isConnected: boolean;
   trusted: boolean;
   lastSeen: string;
+  color: string;
+}
+
+// Generate deterministic avatar color from person ID
+function generateAvatarColor(personId: string): string {
+  // Predefined set of vibrant, distinguishable colors
+  const colors = [
+    '#ef4444', // red
+    '#f97316', // orange
+    '#f59e0b', // amber
+    '#84cc16', // lime
+    '#10b981', // emerald
+    '#14b8a6', // teal
+    '#06b6d4', // cyan
+    '#3b82f6', // blue
+    '#6366f1', // indigo
+    '#8b5cf6', // violet
+    '#a855f7', // purple
+    '#ec4899', // pink
+    '#f43f5e', // rose
+  ];
+
+  // Simple hash function for deterministic color selection
+  let hash = 0;
+  for (let i = 0; i < personId.length; i++) {
+    hash = ((hash << 5) - hash) + personId.charCodeAt(i);
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+
+  return colors[Math.abs(hash) % colors.length];
+}
+
+// Map mood to color
+function getMoodColor(mood: string): string {
+  const moodColors: Record<string, string> = {
+    'happy': '#f59e0b',    // amber - warm, cheerful
+    'sad': '#3b82f6',      // blue - calm, melancholic
+    'angry': '#ef4444',    // red - intense, heated
+    'calm': '#14b8a6',     // teal - peaceful, balanced
+    'excited': '#ec4899',  // pink - energetic, vibrant
+    'tired': '#8b5cf6',    // violet - muted, subdued
+    'focused': '#10b981',  // emerald - sharp, concentrated
+    'neutral': '#6366f1'   // indigo - balanced, default
+  };
+
+  return moodColors[mood] || moodColors['neutral'];
+}
+
+// Get or create avatar preference for a person
+async function getAvatarColor(personId: string): Promise<string> {
+  try {
+    // Try to retrieve existing preference
+    const result = await getObjectByIdHash<AvatarPreference>(personId as any);
+    if (result && result.obj) {
+      const pref = result.obj;
+      // If mood is set, use mood-based color
+      if (pref.mood) {
+        return getMoodColor(pref.mood);
+      }
+      // Otherwise use stored color
+      if (pref.color) {
+        return pref.color;
+      }
+    }
+  } catch (e) {
+    // Preference doesn't exist, will create one
+  }
+
+  // Generate and store new preference
+  const color = generateAvatarColor(personId);
+  const preference: AvatarPreference = {
+    $type$: 'AvatarPreference',
+    personId,
+    color,
+    updatedAt: Date.now()
+  };
+
+  try {
+    await storeVersionedObject(preference);
+  } catch (e) {
+    console.warn('[OneCoreHandler] Failed to store avatar preference:', e);
+  }
+
+  return color;
 }
 
 // Function to invalidate cache when contacts change
@@ -439,45 +526,19 @@ const oneCoreHandlers = {
 
           let displayName: string | null = null
 
-          // Profile is a ProfileModel instance, need to access its properties correctly
+          // Profile is a ProfileModel instance - use ONE.core API (descriptionsOfType)
           if (profile) {
-            // Debug what type of object profile is
-            if (isAI) {
-              console.log(`[OneCoreHandler] AI Profile for ${String(personId).substring(0, 8)}: type=${typeof profile}, constructor=${profile?.constructor?.name}`)
-              console.log(`[OneCoreHandler]   - nickname: ${(profile as any).nickname}`)
-              console.log(`[OneCoreHandler]   - personDescriptions type: ${typeof profile.personDescriptions}`)
-              if (profile.personDescriptions) {
-                console.log(`[OneCoreHandler]   - personDescriptions isArray: ${Array.isArray(profile.personDescriptions)}`)
-                console.log(`[OneCoreHandler]   - personDescriptions length: ${profile.personDescriptions?.length}`)
-                if (profile.personDescriptions.length > 0) {
-                  console.log(`[OneCoreHandler]   - personDescriptions[0]: ${JSON.stringify(profile.personDescriptions[0])}`)
-                }
-              }
-            }
-
-            // Try personDescriptions - this is an array on the ProfileModel
-            if (profile.personDescriptions && Array.isArray(profile.personDescriptions)) {
-              const nameDesc = profile.personDescriptions.find(isPersonName)
-              if (nameDesc && 'name' in nameDesc) {
-                displayName = nameDesc.name
+            // Use ProfileModel.descriptionsOfType() - the ONE.core way
+            try {
+              const personNames = profile.descriptionsOfType('PersonName')
+              if (personNames && personNames.length > 0) {
+                displayName = personNames[0].name
                 console.log(`[OneCoreHandler] Found PersonName for ${String(personId).substring(0, 8)}: ${displayName}`)
+              } else {
+                console.log(`[OneCoreHandler] No PersonName found in profile for ${String(personId).substring(0, 8)}`)
               }
-            }
-            // If personDescriptions is a method, call it
-            else if (typeof profile.personDescriptions === 'function') {
-              try {
-                const personDescFunc = profile.personDescriptions as () => Promise<any>;
-                const descriptions = await personDescFunc();
-                const nameDesc = descriptions?.find((d: any) =>
-                  d.$type$ === 'PersonName' && d.name
-                )
-                if (nameDesc?.name) {
-                  displayName = nameDesc.name
-                  console.log(`[OneCoreHandler] Found PersonName (via method) for ${String(personId).substring(0, 8)}: ${displayName}`)
-                }
-              } catch (e: any) {
-                console.log('[OneCoreHandler] Could not get personDescriptions:', e.message)
-              }
+            } catch (e: any) {
+              console.log(`[OneCoreHandler] Error getting PersonName for ${String(personId).substring(0, 8)}: ${e.message}`)
             }
           } else {
             console.log(`[OneCoreHandler] No profile found for ${String(personId).substring(0, 8)}`)
@@ -526,6 +587,9 @@ const oneCoreHandlers = {
           // Following one.leute pattern - don't check connection status for contacts
           // Contacts exist regardless of connection state
 
+          // Get persistent avatar color
+          const color = await getAvatarColor(personId);
+
           contacts.push({
             id: personId, // Use Person ID as the contact ID for P2P channels
             personId: personId,
@@ -539,7 +603,8 @@ const oneCoreHandlers = {
             status: isOwner ? 'owner' : 'offline',
             isConnected: isOwner ? true : false,
             trusted: true,
-            lastSeen: new Date().toISOString()
+            lastSeen: new Date().toISOString(),
+            color
           })
         } catch (error) {
           console.warn('[OneCoreHandler] Error processing contact:', error)
@@ -814,37 +879,19 @@ const oneCoreHandlers = {
   },
 
   /**
-   * Clear storage - delegate to app:clearData for consistency
+   * Clear storage - calls shared clearAppDataShared function
    */
   async clearStorage(event: IpcMainInvokeEvent): Promise<IpcResponse> {
-    console.log('[OneCoreHandler] Clear storage request - delegating to app:clearData')
+    console.log('[OneCoreHandler] Clear storage request - calling clearAppDataShared')
 
     try {
-      // Import electron to access ipcMain
-      const { ipcMain } = await import('electron')
+      // Import and call the shared function directly
+      const { clearAppDataShared } = await import('../../../lama-electron-shadcn.js')
 
-      // Create a mock event object for the app:clearData handler
-      const mockEvent = { sender: event.sender }
+      const result = await clearAppDataShared()
 
-      // Call the existing app:clearData handler directly
-      const { app } = await import('electron')
-      const mainModule = await import('../../../lama-electron-shadcn.js')
-
-      // Find and call the app:clearData handler
-      const handler = ipcMain.listeners('app:clearData')?.[0] as any
-      if (handler) {
-        const result = await handler(mockEvent)
-        return result
-      } else {
-        // Fallback: just clear browser storage
-        const { session } = await import('electron')
-        await session.defaultSession.clearStorageData({
-          storages: ['indexdb', 'localstorage', 'cookies', 'cachestorage', 'websql']
-        })
-        await session.defaultSession.clearCache()
-
-        return { success: true }
-      }
+      console.log('[OneCoreHandler] clearAppDataShared result:', result)
+      return result
     } catch (error) {
       console.error('[OneCoreHandler] Failed to clear storage:', error)
       return {
@@ -879,6 +926,206 @@ const oneCoreHandlers = {
       }
     } catch (error) {
       console.error('[OneCoreHandler] Failed to restart Node instance:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Update user's mood (updates avatar color accordingly)
+   */
+  async updateMood(event: IpcMainInvokeEvent, { mood }: { mood: string }): Promise<IpcResponse> {
+    console.log(`[OneCoreHandler] Update mood: ${mood}`)
+
+    try {
+      if (!nodeOneCore.initialized || !nodeOneCore.leuteModel) {
+        return {
+          success: false,
+          error: 'Node.js ONE.core not initialized'
+        }
+      }
+
+      // Get current user's person ID
+      const me = await nodeOneCore.leuteModel.me()
+      const personId = await me.mainIdentity()
+
+      if (!personId) {
+        return {
+          success: false,
+          error: 'Could not get user person ID'
+        }
+      }
+
+      // Get existing preference or create new one
+      let preference: AvatarPreference | null = null;
+      try {
+        const result = await getObjectByIdHash<AvatarPreference>(personId as any);
+        if (result && result.obj) {
+          preference = result.obj;
+        }
+      } catch (e) {
+        // Preference doesn't exist
+      }
+
+      // Create updated preference
+      const updatedPref: AvatarPreference = {
+        $type$: 'AvatarPreference',
+        personId,
+        color: preference?.color || generateAvatarColor(personId),
+        mood: mood as any,
+        updatedAt: Date.now()
+      };
+
+      // Store updated preference
+      await storeVersionedObject(updatedPref);
+
+      // Invalidate contacts cache so mood change reflects immediately
+      invalidateContactsCache();
+
+      return {
+        success: true,
+        data: {
+          mood,
+          color: getMoodColor(mood)
+        }
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to update mood:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Check if the current user has a PersonName set in their profile
+   */
+  async hasPersonName(event: IpcMainInvokeEvent): Promise<IpcResponse> {
+    console.log('[OneCoreHandler] Checking if user has PersonName')
+
+    try {
+      if (!nodeOneCore.initialized || !nodeOneCore.leuteModel) {
+        return {
+          success: false,
+          error: 'Node.js ONE.core not initialized'
+        }
+      }
+
+      // Get current user
+      const me = await nodeOneCore.leuteModel.me()
+      const profile = await me.mainProfile()
+
+      if (!profile) {
+        return {
+          success: true,
+          hasName: false
+        }
+      }
+
+      // Check for PersonName in profile descriptions
+      try {
+        const personNames = profile.descriptionsOfType('PersonName')
+        const hasName = personNames && personNames.length > 0 && personNames[0].name
+
+        return {
+          success: true,
+          hasName: !!hasName,
+          name: hasName ? personNames[0].name : null
+        }
+      } catch (e) {
+        return {
+          success: true,
+          hasName: false
+        }
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to check PersonName:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Set PersonName for the current user's profile
+   */
+  async setPersonName(event: IpcMainInvokeEvent, { name }: { name: string }): Promise<IpcResponse> {
+    console.log('[OneCoreHandler] Setting PersonName:', name)
+
+    try {
+      if (!nodeOneCore.initialized || !nodeOneCore.leuteModel) {
+        return {
+          success: false,
+          error: 'Node.js ONE.core not initialized'
+        }
+      }
+
+      if (!name || name.trim().length === 0) {
+        return {
+          success: false,
+          error: 'Name cannot be empty'
+        }
+      }
+
+      // Get current user
+      const me = await nodeOneCore.leuteModel.me()
+      const personId = await me.mainIdentity()
+
+      if (!personId) {
+        return {
+          success: false,
+          error: 'Could not get user person ID'
+        }
+      }
+
+      // Get or create profile
+      let profile = await me.mainProfile()
+
+      if (!profile) {
+        // Create new profile
+        const { default: ProfileModel } = await import('@refinio/one.models/lib/models/Leute/ProfileModel.js')
+        profile = await ProfileModel.constructWithNewProfile(personId, personId, 'default')
+        console.log('[OneCoreHandler] Created new profile for user')
+      }
+
+      // Create PersonName description
+      const personName = {
+        $type$: 'PersonName' as const,
+        name: name.trim()
+      }
+
+      // Remove existing PersonName if present
+      if (profile.personDescriptions) {
+        profile.personDescriptions = profile.personDescriptions.filter(
+          (desc: any) => desc.$type$ !== 'PersonName'
+        )
+      } else {
+        profile.personDescriptions = []
+      }
+
+      // Add new PersonName
+      profile.personDescriptions.push(personName)
+
+      // Save profile
+      await profile.saveAndLoad()
+
+      console.log('[OneCoreHandler] PersonName set successfully:', name)
+
+      // Invalidate contacts cache
+      invalidateContactsCache()
+
+      return {
+        success: true,
+        data: {
+          name: name.trim()
+        }
+      }
+    } catch (error) {
+      console.error('[OneCoreHandler] Failed to set PersonName:', error)
       return {
         success: false,
         error: (error as Error).message

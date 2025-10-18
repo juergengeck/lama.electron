@@ -64,6 +64,6 @@ declare module '@OneObjectInterfaces' {
         recencyWindow: number; // milliseconds - time window for recency boost
         minJaccard: number; // 0.0 to 1.0 - minimum Jaccard similarity threshold
         maxProposals: number; // 1-50 - maximum number of proposals to return
-        updated: number; // Unix timestamp of last update
+        updatedAt: number; // Unix timestamp of last update
     }
 }

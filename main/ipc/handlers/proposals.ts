@@ -48,7 +48,7 @@ const DEFAULT_CONFIG: ProposalConfig = {
   recencyWindow: 30 * 24 * 60 * 60 * 1000, // 30 days
   minJaccard: 0.2,
   maxProposals: 10,
-  updated: Date.now(),
+  updatedAt: Date.now(),
 };
 
 /**
@@ -74,6 +74,8 @@ async function getForTopic(
 }> {
   const startTime = Date.now();
 
+  console.log('[ProposalHandlers] 🎯 getForTopic called:', { topicId, hasCurrentSubjects: !!currentSubjects, forceRefresh });
+
   try {
     if (!topicId) {
       throw new Error('TOPIC_NOT_FOUND: topicId is required');
@@ -82,25 +84,48 @@ async function getForTopic(
     // Get current subjects if not provided
     let subjectIdHashes = currentSubjects;
     if (!subjectIdHashes || subjectIdHashes.length === 0) {
+      console.log('[ProposalHandlers] No subjects provided, querying TopicAnalysisModel...');
       // Query subjects for topic from TopicAnalysisModel
       if (!nodeOneCoreInstance.topicAnalysisModel) {
-        throw new Error('NO_SUBJECTS: TopicAnalysisModel not initialized');
+        console.log('[ProposalHandlers] ℹ️  TopicAnalysisModel not initialized');
+        // Return empty results - this is not an error condition
+        return {
+          proposals: [],
+          count: 0,
+          cached: false,
+          computeTimeMs: Date.now() - startTime,
+        };
       }
       try {
         const subjects = (await nodeOneCoreInstance.topicAnalysisModel.getSubjects(topicId)) as any[];
+        console.log('[ProposalHandlers] Retrieved subjects:', subjects?.length || 0);
         if (!subjects || subjects.length === 0) {
-          throw new Error('NO_SUBJECTS: Current topic has no identified subjects yet');
+          console.log('[ProposalHandlers] ℹ️  No subjects found for topic:', topicId);
+          // Return empty results - this is expected for new conversations
+          return {
+            proposals: [],
+            count: 0,
+            cached: false,
+            computeTimeMs: Date.now() - startTime,
+          };
         }
         // Calculate ID hashes for all subjects
         subjectIdHashes = await Promise.all(
           subjects.map((subject) => calculateIdHashOfObj(subject as any))
         );
+        console.log('[ProposalHandlers] Calculated ID hashes for', subjectIdHashes.length, 'subjects');
       } catch (error: any) {
-        if (error.message.startsWith('NO_SUBJECTS')) {
-          throw error;
-        }
-        throw new Error(`NO_SUBJECTS: Failed to query subjects - ${error.message}`);
+        console.error('[ProposalHandlers] Error querying subjects:', error);
+        // Return empty results - don't throw, just log the error
+        return {
+          proposals: [],
+          count: 0,
+          cached: false,
+          computeTimeMs: Date.now() - startTime,
+        };
       }
+    } else {
+      console.log('[ProposalHandlers] Using provided subjects:', subjectIdHashes.length);
     }
 
     // Check cache first (unless forceRefresh)
@@ -122,22 +147,30 @@ async function getForTopic(
 
     // Get current user config
     const config = await getCurrentConfig();
+    console.log('[ProposalHandlers] Using config:', { minJaccard: config.minJaccard, matchWeight: config.matchWeight, maxProposals: config.maxProposals });
 
     // Generate proposals using lazy-initialized engine
+    console.log('[ProposalHandlers] Initializing ProposalEngine...');
     const engine = getProposalEngine();
+    console.log('[ProposalHandlers] ✅ ProposalEngine initialized, calling getProposalsForTopic...');
     const proposals = await engine.getProposalsForTopic(topicId, subjectIdHashes, config);
+    console.log('[ProposalHandlers] ProposalEngine returned', proposals.length, 'proposals');
 
     // Rank proposals
+    console.log('[ProposalHandlers] Ranking proposals...');
     const rankedProposals = proposalRanker.rankProposals(proposals, config);
+    console.log('[ProposalHandlers] Ranked proposals:', rankedProposals.length);
 
     // Filter against dismissed proposals
     const filtered = rankedProposals.filter(
       (p) => !dismissedProposals.has(`${topicId}:${p.pastSubject}`)
     );
+    console.log('[ProposalHandlers] Filtered proposals (after dismissals):', filtered.length);
 
     // Cache results
     proposalCache.set(topicId, subjectIdHashes, filtered);
 
+    console.log('[ProposalHandlers] ✅ Returning', filtered.length, 'proposals in', Date.now() - startTime, 'ms');
     return {
       proposals: filtered,
       count: filtered.length,
@@ -145,7 +178,8 @@ async function getForTopic(
       computeTimeMs: Date.now() - startTime,
     };
   } catch (error: any) {
-    console.error('[ProposalHandlers] Error in getForTopic:', error);
+    console.error('[ProposalHandlers] ❌ Error in getForTopic:', error);
+    console.error('[ProposalHandlers] Error stack:', error.stack);
     throw new Error(`COMPUTATION_ERROR: ${error.message}`);
   }
 }
@@ -195,7 +229,7 @@ async function updateConfig(
     const updatedConfig: ProposalConfig = {
       ...currentConfig,
       ...config,
-      updated: Date.now(),
+      updatedAt: Date.now(),
     };
 
     // Store as versioned object
@@ -235,7 +269,7 @@ async function getConfig(
 }> {
   try {
     const config = await getCurrentConfig();
-    const isDefault = config.updated === DEFAULT_CONFIG.updated;
+    const isDefault = config.updatedAt === DEFAULT_CONFIG.updatedAt;
 
     return {
       config,

@@ -489,7 +489,7 @@ Structured JSON-based protocol for LLM responses using Ollama's native `format` 
 - Cache hit rate tracking and optimization
 
 **Auto-Analysis**:
-- Triggers after 5 messages in conversation
+- Triggers after every message (immediate analysis)
 - Identifies subjects by keyword combinations
 - Generates AI summary referencing all subjects
 - Updates summary when subjects change significantly

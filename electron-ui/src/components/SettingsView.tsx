@@ -8,13 +8,14 @@ import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Settings, User, Shield, Globe, Cpu, HardDrive,
-  Moon, Sun, Save, RefreshCw, LogOut, Brain, Download, CheckCircle, Circle, Zap, MessageSquare, Code, Key, AlertTriangle, Users, Trash2, Database, Hash, Clock, Package, Eye, ChevronDown, ChevronRight, Copy, FileText, Monitor
+  Moon, Sun, Save, RefreshCw, LogOut, Brain, Download, CheckCircle, Circle, Zap, MessageSquare, Code, Key, AlertTriangle, Users, Trash2, Database, Hash, Clock, Package, Eye, ChevronDown, ChevronRight, Copy, FileText, Monitor, Smile, Frown, Angry, Wind, Sparkles, Coffee, Target, Minus
 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { lamaBridge } from '@/bridge/lama-bridge'
 import { ipcStorage } from '@/services/ipc-storage'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import InstancesView from './InstancesView'
+import { MCPSettings } from './settings/MCPSettings'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,7 +74,9 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
   const [apiKeyStatus, setApiKeyStatus] = useState<'unconfigured' | 'testing' | 'valid' | 'invalid'>('unconfigured')
   const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
   const [ollamaStatus, setOllamaStatus] = useState<'unconfigured' | 'testing' | 'valid' | 'invalid'>('unconfigured')
-  
+  const [currentMood, setCurrentMood] = useState<string | null>(null)
+  const [savingMood, setSavingMood] = useState(false)
+
   // System objects state
   const [systemObjects, setSystemObjects] = useState<{
     keys: SystemObject[]
@@ -680,6 +683,34 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
     }
   }
 
+  const getMoodIcon = (mood: string) => {
+    switch (mood) {
+      case 'happy': return <Smile className="h-4 w-4" />
+      case 'sad': return <Frown className="h-4 w-4" />
+      case 'angry': return <Angry className="h-4 w-4" />
+      case 'calm': return <Wind className="h-4 w-4" />
+      case 'excited': return <Sparkles className="h-4 w-4" />
+      case 'tired': return <Coffee className="h-4 w-4" />
+      case 'focused': return <Target className="h-4 w-4" />
+      case 'neutral': return <Minus className="h-4 w-4" />
+      default: return <Circle className="h-4 w-4" />
+    }
+  }
+
+  const handleUpdateMood = async (mood: string | null) => {
+    setSavingMood(true)
+    try {
+      const result = await window.electronAPI?.invoke('onecore:updateMood', { mood })
+      if (result?.success) {
+        setCurrentMood(mood)
+      }
+    } catch (error) {
+      console.error('Failed to update mood:', error)
+    } finally {
+      setSavingMood(false)
+    }
+  }
+
   const formatSize = (size: number) => {
     if (size === 0) return 'API-based'
     if (size >= 1e9) return `${(size / 1e9).toFixed(1)}B params`
@@ -757,6 +788,55 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
                   <code className="text-xs bg-muted p-2 rounded flex-1">{settings.profile.publicKey}</code>
                   <Button variant="outline" size="sm">Export</Button>
                 </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <Label className="mb-2 block">Avatar Mood</Label>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Set your current mood to change your avatar color
+                </p>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { value: 'happy', label: 'Happy' },
+                    { value: 'sad', label: 'Sad' },
+                    { value: 'angry', label: 'Angry' },
+                    { value: 'calm', label: 'Calm' },
+                    { value: 'excited', label: 'Excited' },
+                    { value: 'tired', label: 'Tired' },
+                    { value: 'focused', label: 'Focused' },
+                    { value: 'neutral', label: 'Neutral' }
+                  ].map((mood) => (
+                    <Button
+                      key={mood.value}
+                      variant={currentMood === mood.value ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handleUpdateMood(mood.value)}
+                      disabled={savingMood}
+                      className="flex items-center gap-2"
+                    >
+                      {getMoodIcon(mood.value)}
+                      <span className="text-xs">{mood.label}</span>
+                    </Button>
+                  ))}
+                </div>
+                {currentMood && (
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">
+                      Current: {currentMood.charAt(0).toUpperCase() + currentMood.slice(1)}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleUpdateMood(null)}
+                      disabled={savingMood}
+                      className="text-xs"
+                    >
+                      Clear Mood
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1009,6 +1089,9 @@ export function SettingsView({ onLogout, onNavigate }: SettingsViewProps) {
               </div>
             </CardContent>
           </Card>
+
+          {/* MCP Server Configuration */}
+          <MCPSettings />
 
           {/* Privacy Settings */}
           <Card>

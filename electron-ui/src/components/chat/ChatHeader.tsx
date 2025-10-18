@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { MessageSquare, ChevronLeft, ChevronRight, MoreHorizontal, Brain } from 'lucide-react'
+import { MessageSquare, ChevronLeft, ChevronRight, MoreHorizontal, Brain, UserPlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -25,6 +25,8 @@ interface ChatHeaderProps {
   hasAI?: boolean
   onToggleSummary?: () => void
   showSummary?: boolean
+  onAddUsers?: () => void
+  conversationId?: string
   className?: string
 }
 
@@ -36,6 +38,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   hasAI = false,
   onToggleSummary,
   showSummary = false,
+  onAddUsers,
+  conversationId,
   className = ''
 }) => {
   console.log('[ChatHeader] Rendering with:', { conversationName, subjects: subjects?.length || 0, hasAI, messageCount })
@@ -133,6 +137,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {onAddUsers && (
+                <DropdownMenuItem onClick={onAddUsers}>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Add Users
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={async () => {
                 try {
                   console.log('[ChatHeader] Export Chat clicked for conversation:', conversationName);

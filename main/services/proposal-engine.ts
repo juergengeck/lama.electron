@@ -28,7 +28,7 @@ export interface ProposalConfig {
   recencyWindow: number;
   minJaccard: number;
   maxProposals: number;
-  updated: number;
+  updatedAt: number;
 }
 
 export interface Subject {
@@ -97,13 +97,27 @@ export class ProposalEngine {
     // Generate proposals for each current subject
     const proposals: Proposal[] = [];
 
+    console.log(`[ProposalEngine] Starting with ${currentSubjectObjects.length} current subjects, ${eligiblePastSubjects.length} eligible past subjects, minJaccard: ${config.minJaccard}`);
+
     for (const currentSubject of currentSubjectObjects) {
+      console.log(`[ProposalEngine] Current subject "${currentSubject.id}" has ${currentSubject.keywords?.length || 0} keywords`);
+
       for (const pastSubject of eligiblePastSubjects) {
-        // Calculate Jaccard similarity
-        const jaccard = this.calculateJaccard(
-          currentSubject.keywords,
-          pastSubject.keywords
+        console.log(`[ProposalEngine] Comparing with past subject "${pastSubject.id}" from topic "${pastSubject.topic}" (${pastSubject.keywords?.length || 0} keywords)`);
+
+        // Resolve keyword terms from ID hashes for both subjects
+        const currentKeywordTerms = await this.resolveKeywordTerms(currentSubject.keywords);
+        const pastKeywordTerms = await this.resolveKeywordTerms(pastSubject.keywords);
+
+        console.log(`[ProposalEngine] Keyword terms - Current: [${currentKeywordTerms.join(', ')}], Past: [${pastKeywordTerms.join(', ')}]`);
+
+        // Calculate Jaccard similarity on TERMS (not hashes)
+        const jaccard = this.calculateJaccardFromTerms(
+          currentKeywordTerms,
+          pastKeywordTerms
         );
+
+        console.log(`[ProposalEngine] Jaccard: ${jaccard.toFixed(3)} (threshold: ${config.minJaccard}) - ${jaccard >= config.minJaccard ? 'MATCH' : 'skip'}`);
 
         // Skip if below threshold
         if (jaccard < config.minJaccard) {
@@ -119,10 +133,10 @@ export class ProposalEngine {
         const relevanceScore =
           jaccard * config.matchWeight + recencyBoost * config.recencyWeight;
 
-        // Get matched keywords (intersection)
-        const matchedKeywords = await this.getMatchedKeywords(
-          currentSubject.keywords,
-          pastSubject.keywords
+        // Get matched keywords (intersection of terms)
+        const matchedKeywords = this.getMatchedKeywordTerms(
+          currentKeywordTerms,
+          pastKeywordTerms
         );
 
         // Calculate current and past subject ID hashes
@@ -141,14 +155,73 @@ export class ProposalEngine {
         };
 
         proposals.push(proposal);
+        console.log(`[ProposalEngine] ✅ Generated proposal: "${pastSubject.id}" -> "${currentSubject.id}" (score: ${proposal.relevanceScore.toFixed(3)}, keywords: ${matchedKeywords.length})`);
       }
     }
+
+    console.log(`[ProposalEngine] Proposal generation complete: ${proposals.length} proposals generated`);
 
     return proposals;
   }
 
   /**
-   * Calculate Jaccard similarity between two keyword sets
+   * Resolve keyword ID hashes to actual keyword terms
+   */
+  private async resolveKeywordTerms(keywordIdHashes: SHA256IdHash<any>[]): Promise<string[]> {
+    const terms: string[] = [];
+    for (const idHash of keywordIdHashes || []) {
+      try {
+        const result = await getObjectByIdHash(idHash);
+        if (result && result.obj && result.obj.term) {
+          terms.push(result.obj.term.toLowerCase().trim());
+        }
+      } catch (error) {
+        console.error(`[ProposalEngine] Error resolving keyword ${idHash}:`, error);
+      }
+    }
+    return terms;
+  }
+
+  /**
+   * Calculate Jaccard similarity between two sets of keyword TERMS (strings)
+   * Formula: |intersection| / |union|
+   */
+  private calculateJaccardFromTerms(
+    termsA: string[],
+    termsB: string[]
+  ): number {
+    if (termsA.length === 0 || termsB.length === 0) {
+      return 0;
+    }
+
+    const setA = new Set(termsA);
+    const setB = new Set(termsB);
+
+    // Calculate intersection
+    const intersection = new Set([...setA].filter((k) => setB.has(k)));
+
+    // Calculate union
+    const union = new Set([...setA, ...setB]);
+
+    return intersection.size / union.size;
+  }
+
+  /**
+   * Get matched keyword terms (intersection of two term sets)
+   */
+  private getMatchedKeywordTerms(
+    termsA: string[],
+    termsB: string[]
+  ): string[] {
+    const setA = new Set(termsA);
+    const setB = new Set(termsB);
+
+    // Return intersection
+    return [...setA].filter((k) => setB.has(k));
+  }
+
+  /**
+   * Calculate Jaccard similarity between two keyword ID hash sets (DEPRECATED - use calculateJaccardFromTerms)
    * Formula: |intersection| / |union|
    */
   private calculateJaccard(

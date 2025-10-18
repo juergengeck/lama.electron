@@ -155,7 +155,6 @@ export function UserSelectionDialog({
                   >
                     <Checkbox
                       checked={selectedUserIds.includes(contact.id)}
-                      onCheckedChange={() => handleUserToggle(contact.id)}
                     />
 
                     <div className="flex-1 min-w-0">

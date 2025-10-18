@@ -142,10 +142,45 @@ export function MessageView({
     }
   }, [subjectsJustAppeared, chatHeaderRef])
 
+  // Track previous streaming state to detect when streaming just ended
+  const prevStreamingRef = useRef(false)
+  const hasScrolledInitiallyRef = useRef(false)
+
+  // Reset scroll tracking when topic changes
+  useEffect(() => {
+    hasScrolledInitiallyRef.current = false
+    setIsUserScrolledUp(false)
+  }, [topicId])
+
   // Auto-scroll to bottom when new messages arrive or during streaming
   useEffect(() => {
     // During streaming, always scroll (ignore user scroll position)
     const isStreaming = isAIProcessing || aiStreamingContent
+    const wasStreaming = prevStreamingRef.current
+
+    // Update ref for next render
+    prevStreamingRef.current = isStreaming
+
+    // If streaming just ended (was streaming but now not), don't scroll
+    // The final message is already visible from the streaming view
+    if (wasStreaming && !isStreaming) {
+      console.log('[MessageView] Streaming ended, skipping scroll')
+      return
+    }
+
+    // On first render with messages, scroll immediately to bottom
+    if (messages.length > 0 && !hasScrolledInitiallyRef.current) {
+      hasScrolledInitiallyRef.current = true
+      requestAnimationFrame(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({
+            behavior: 'instant',
+            block: 'end'
+          })
+        }
+      })
+      return
+    }
 
     // If user has scrolled up and not streaming, don't auto-scroll
     if (isUserScrolledUp && !isStreaming) return
@@ -442,6 +477,7 @@ export function MessageView({
         onHashtagClick={handleHashtagClick}
         placeholder={placeholder}
         theme="dark"
+        conversationId={topicId}
       />
     </div>
   )

@@ -1,0 +1,241 @@
+/**
+ * Attachment IPC Handlers
+ */
+
+import attachmentService from '../../services/attachment-service.js'
+import stateManager from '../../state/manager.js'
+import type { IpcMainInvokeEvent } from 'electron'
+import BlobDescriptorCache from '../../services/blob-descriptor-cache.js'
+import nodeOneCore from '../../core/node-one-core.js'
+
+// Shared BlobDescriptor cache instance
+const blobDescriptorCache = new BlobDescriptorCache()
+
+interface AttachmentMetadata {
+  name: string
+  mimeType?: string
+  type?: string
+  size: number
+}
+
+interface AttachmentData {
+  data: string | Buffer | Uint8Array | ArrayBuffer
+  metadata: AttachmentMetadata
+}
+
+interface AttachmentRequest {
+  hash: string
+}
+
+interface MultipleAttachmentsRequest {
+  attachments: AttachmentData[]
+}
+
+interface IpcResponse<T = any> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+const attachmentHandlers = {
+  /**
+   * Store an attachment
+   */
+  async storeAttachment(event: IpcMainInvokeEvent, { data, metadata }: AttachmentData): Promise<IpcResponse> {
+    console.log('[AttachmentHandler] Store attachment:', metadata.name)
+
+    try {
+      // TODO: Proper IoM setup instead of auth check
+      // For now, allow attachment storage without auth
+
+      // Convert base64 or array to Buffer
+      let buffer: Buffer
+      if (typeof data === 'string') {
+        // Base64 encoded
+        buffer = Buffer.from(data, 'base64')
+      } else if (Buffer.isBuffer(data)) {
+        // Already a Buffer
+        buffer = data
+      } else if (data instanceof ArrayBuffer) {
+        // ArrayBuffer
+        buffer = Buffer.from(data)
+      } else if (data instanceof Uint8Array) {
+        // Uint8Array
+        buffer = Buffer.from(data)
+      } else {
+        throw new Error('Invalid attachment data type')
+      }
+
+      // Store in ONE.core - pass mimeType as type for consistency
+      const result = await attachmentService.storeAttachment(buffer, {
+        name: metadata.name,
+        type: metadata.mimeType || metadata.type,
+        size: metadata.size
+      })
+
+      return {
+        success: true,
+        data: result
+      }
+    } catch (error) {
+      console.error('[AttachmentHandler] Error storing attachment:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Get an attachment by hash
+   */
+  async getAttachment(event: IpcMainInvokeEvent, { hash }: AttachmentRequest): Promise<IpcResponse> {
+    console.log('[AttachmentHandler] Get attachment:', hash)
+
+    try {
+      // TODO: Proper IoM setup instead of auth check
+      // For now, allow attachment retrieval without auth
+
+      // Get from ONE.core
+      const attachment = await attachmentService.getAttachment(hash)
+
+      // Convert buffer to base64 for IPC transfer
+      const base64Data = attachment.data.toString('base64')
+
+      return {
+        success: true,
+        data: {
+          data: base64Data,
+          metadata: attachment.metadata
+        }
+      }
+    } catch (error) {
+      console.error('[AttachmentHandler] Error getting attachment:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Get attachment metadata only
+   */
+  async getAttachmentMetadata(event: IpcMainInvokeEvent, { hash }: AttachmentRequest): Promise<IpcResponse> {
+    console.log('[AttachmentHandler] Get attachment metadata:', hash)
+
+    try {
+      const metadata = attachmentService.getAttachmentMetadata(hash)
+
+      return {
+        success: true,
+        data: metadata
+      }
+    } catch (error) {
+      console.error('[AttachmentHandler] Error getting metadata:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Store multiple attachments
+   */
+  async storeAttachments(event: IpcMainInvokeEvent, { attachments }: MultipleAttachmentsRequest): Promise<IpcResponse> {
+    console.log('[AttachmentHandler] Store multiple attachments:', attachments.length)
+
+    try {
+      // TODO: Proper IoM setup instead of auth check
+      // For now, allow bulk attachment storage without auth
+
+      const results: any[] = []
+
+      for (const attachment of attachments) {
+        try {
+          // Convert data
+          let buffer: Buffer
+          if (typeof attachment.data === 'string') {
+            buffer = Buffer.from(attachment.data, 'base64')
+          } else if (Buffer.isBuffer(attachment.data)) {
+            buffer = attachment.data
+          } else if (attachment.data instanceof ArrayBuffer) {
+            buffer = Buffer.from(attachment.data)
+          } else if (attachment.data instanceof Uint8Array) {
+            buffer = Buffer.from(attachment.data)
+          } else {
+            throw new Error('Invalid attachment data type')
+          }
+
+          // Store
+          const result = await attachmentService.storeAttachment(buffer, attachment.metadata)
+          results.push(result)
+        } catch (error) {
+          console.error(`[AttachmentHandler] Failed to store ${attachment.metadata.name}:`, error)
+          results.push({
+            error: (error as Error).message,
+            name: attachment.metadata.name
+          })
+        }
+      }
+
+      return {
+        success: true,
+        data: results
+      }
+    } catch (error) {
+      console.error('[AttachmentHandler] Error storing attachments:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  },
+
+  /**
+   * Get BlobDescriptor object by hash (with caching)
+   * Returns full BlobDescriptor with data for image display
+   */
+  async getBlobDescriptor(event: IpcMainInvokeEvent, { hash }: AttachmentRequest): Promise<IpcResponse> {
+    console.log('[AttachmentHandler] Get BlobDescriptor:', hash)
+
+    try {
+      // Try cache first, then fetch from ONE.core
+      const blobDescriptor = await blobDescriptorCache.get(
+        hash,
+        async (h) => await nodeOneCore.getObject(h)
+      )
+
+      if (!blobDescriptor) {
+        return {
+          success: false,
+          error: `BlobDescriptor not found for hash: ${hash}`
+        }
+      }
+
+      // Convert ArrayBuffer data to base64 for IPC transfer
+      let base64Data: string | undefined
+      if (blobDescriptor.data) {
+        const buffer = Buffer.from(blobDescriptor.data)
+        base64Data = buffer.toString('base64')
+      }
+
+      return {
+        success: true,
+        data: {
+          ...blobDescriptor,
+          data: base64Data  // Replace ArrayBuffer with base64 string for IPC
+        }
+      }
+    } catch (error) {
+      console.error('[AttachmentHandler] Error getting BlobDescriptor:', error)
+      return {
+        success: false,
+        error: (error as Error).message
+      }
+    }
+  }
+}
+
+export default attachmentHandlers;

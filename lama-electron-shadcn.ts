@@ -374,8 +374,8 @@ ipcMain.handle('create-udp-socket', async (event: Electron.IpcMainInvokeEvent, o
 
 // Crypto handlers are now registered via IPCController
 
-// Handler for clearing app data
-ipcMain.handle('app:clearData', async (event: Electron.IpcMainInvokeEvent) => {
+// Shared function for clearing app data - used by both app:clearData and onecore:clearStorage
+async function clearAppDataShared(): Promise<{ success: boolean; message?: string; error?: string }> {
   console.log('[ClearData] Starting app data reset...');
 
   try {
@@ -441,22 +441,39 @@ ipcMain.handle('app:clearData', async (event: Electron.IpcMainInvokeEvent) => {
     console.log('[ClearData] Deleting data folders...');
 
     const oneDbPath = path.join(process.cwd(), 'OneDB');
+    const userDataPath = app.getPath('userData');
 
-    // Delete OneDB directory - the ONLY storage location
-    const dataDirs = [
-      { path: oneDbPath, name: 'OneDB' }
-    ];
+    console.log('[ClearData] OneDB path:', oneDbPath);
+    console.log('[ClearData] OneDB exists:', fs.existsSync(oneDbPath));
 
-    for (const dir of dataDirs) {
-      if (fs.existsSync(dir.path)) {
-        try {
-          fs.rmSync(dir.path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-          console.log(`[ClearData] Deleted ${dir.name} directory`);
-        } catch (error) {
-          console.error(`[ClearData] Error deleting ${dir.name}:`, error);
+    // Delete OneDB - CRITICAL for removing all chat history
+    if (fs.existsSync(oneDbPath)) {
+      try {
+        // List contents before deletion for debugging
+        const oneDbContents = fs.readdirSync(oneDbPath);
+        console.log(`[ClearData] OneDB contains ${oneDbContents.length} items:`, oneDbContents);
+
+        // Delete the entire directory
+        fs.rmSync(oneDbPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+
+        // Verify it's gone
+        if (fs.existsSync(oneDbPath)) {
+          console.error('[ClearData] OneDB STILL EXISTS after deletion!');
+          throw new Error('Failed to delete OneDB directory');
+        } else {
+          console.log('[ClearData] ✅ OneDB directory successfully deleted');
         }
+      } catch (error) {
+        console.error('[ClearData] CRITICAL ERROR deleting OneDB:', error);
+        throw error; // Re-throw to fail the whole operation
       }
+    } else {
+      console.log('[ClearData] OneDB directory does not exist - nothing to delete');
     }
+
+    // IMPORTANT: userData directory cannot be deleted while app is running
+    // We'll create a cleanup script that runs BEFORE the app restarts
+    console.log('[ClearData] Will delete userData on restart: ' + userDataPath);
 
     // Step 5: Clear application state
     console.log('[ClearData] Resetting application state...');
@@ -471,26 +488,9 @@ ipcMain.handle('app:clearData', async (event: Electron.IpcMainInvokeEvent) => {
       console.error('[ClearData] Error clearing state manager:', error);
     }
 
-    // Step 6: Clear module cache to ensure fresh restart
-    console.log('[ClearData] Clearing module cache...');
-
-    // Clear the require cache for key modules
-    const modulePathsToDelete = [
-      './main/core/node-one-core.js',
-      './main/services/node-provisioning.js',
-      './main/state/manager.js',
-      './main/app.js'
-    ];
-
-    for (const modulePath of modulePathsToDelete) {
-      try {
-        const fullPath = path.join(__dirname, modulePath);
-        delete require.cache[require.resolve(fullPath)];
-        console.log(`[ClearData] Cleared cache for ${modulePath}`);
-      } catch (error) {
-        // Module might not be in cache yet, that's ok
-      }
-    }
+    // Step 6: Module cache clearing skipped for ESM
+    // ESM modules are cached differently and will be reloaded on app restart
+    console.log('[ClearData] Module cache will be cleared on app restart');
 
     console.log('[ClearData] All data cleared successfully');
 
@@ -499,17 +499,46 @@ ipcMain.handle('app:clearData', async (event: Electron.IpcMainInvokeEvent) => {
       mainWindow?.webContents.send('app:dataCleared');
     }
 
-    // Step 7: Restart the application with a clean state
+    // Step 7: Delete userData directory immediately while app is still running
+    console.log('[ClearData] Deleting userData directory: ' + userDataPath);
+
+    // Try to delete userData immediately (may fail for some files in use)
+    try {
+      if (fs.existsSync(userDataPath)) {
+        // Get all subdirectories and files
+        const items = fs.readdirSync(userDataPath);
+
+        // Delete each item recursively
+        for (const item of items) {
+          const itemPath = path.join(userDataPath, item);
+          try {
+            const stat = fs.statSync(itemPath);
+            if (stat.isDirectory()) {
+              fs.rmSync(itemPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+              console.log(`[ClearData] Deleted directory: ${item}`);
+            } else {
+              fs.unlinkSync(itemPath);
+              console.log(`[ClearData] Deleted file: ${item}`);
+            }
+          } catch (e) {
+            console.warn(`[ClearData] Could not delete ${item}:`, (e as Error).message);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[ClearData] Error clearing userData directory:', error);
+    }
+
+    // Step 8: Restart the application
     console.log('[ClearData] Scheduling application restart...');
 
-    // Give a bit more time to ensure everything is cleaned up
+    // Give a bit of time to ensure everything is cleaned up
     setTimeout(() => {
       console.log('[ClearData] Restarting application now...');
 
-      // Use app.relaunch with no arguments to start fresh
+      // Use app.relaunch() in both development and production
+      // This properly restarts the Electron app
       app.relaunch();
-
-      // Exit with code 0 to indicate successful termination
       app.exit(0);
     }, 1000);
 
@@ -527,7 +556,15 @@ ipcMain.handle('app:clearData', async (event: Electron.IpcMainInvokeEvent) => {
 
     return { success: false, error: error instanceof Error ? error.message : 'Failed to clear app data' };
   }
+}
+
+// Handler for clearing app data - wraps shared function
+ipcMain.handle('app:clearData', async (event: Electron.IpcMainInvokeEvent) => {
+  return await clearAppDataShared();
 });
+
+// Export the shared function so it can be called from other handlers
+export { clearAppDataShared };
 
 // Auto-login test function for debugging - DISABLED to avoid redundant control flows
 async function autoLoginTest(): Promise<void> {

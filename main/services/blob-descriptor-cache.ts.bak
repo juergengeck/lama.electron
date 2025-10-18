@@ -1,0 +1,113 @@
+/**
+ * BlobDescriptor Cache
+ *
+ * Caches BlobDescriptor objects fetched from ONE.core storage.
+ * BlobDescriptors are immutable (content-addressed), so can be cached indefinitely.
+ */
+
+import type { SHA256Hash } from '@refinio/one.core/lib/util/type-checks.js';
+
+interface BlobDescriptor {
+    $type$: 'BlobDescriptor';
+    data: ArrayBuffer;
+    type: string;
+    name?: string;
+    size: number;
+    lastModified?: number;
+}
+
+class BlobDescriptorCache {
+    private cache: Map<string, any> = new Map();
+    private pending: Map<string, Promise<any>> = new Map();
+
+    /**
+     * Get BlobDescriptor by hash, with caching
+     * @param hash - Hash of the BlobDescriptor
+     * @param fetchFn - Custom function to fetch the object (defaults to ONE.core getObject)
+     */
+    async get(hash: string, fetchFn?: (hash: string) => Promise<any>): Promise<any> {
+        const hashStr = String(hash);
+
+        // Check cache first
+        if (this.cache.has(hashStr)) {
+            return this.cache.get(hashStr)!;
+        }
+
+        // Check if already fetching
+        if (this.pending.has(hashStr)) {
+            return this.pending.get(hashStr)!;
+        }
+
+        // Fetch from ONE.core using provided function or default
+        const promise = fetchFn
+            ? fetchFn(hashStr)
+            : this.fetchBlobDescriptor(hashStr);
+
+        this.pending.set(hashStr, promise);
+
+        try {
+            const descriptor = await promise;
+            this.cache.set(hashStr, descriptor);
+            return descriptor;
+        } finally {
+            this.pending.delete(hashStr);
+        }
+    }
+
+    /**
+     * Fetch BlobDescriptor from ONE.core storage (default implementation)
+     */
+    private async fetchBlobDescriptor(hash: string): Promise<any> {
+        // Load Node.js platform first
+        await import('@refinio/one.core/lib/system/load-nodejs.js');
+
+        // Import ONE.core storage functions
+        const { getObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+
+        // Fetch the object
+        const descriptor = await getObject(hash as any);
+
+        if (descriptor.$type$ !== 'BlobDescriptor') {
+            throw new Error(`Object ${hash} is not a BlobDescriptor (got ${descriptor.$type$})`);
+        }
+
+        return descriptor;
+    }
+
+    /**
+     * Convert BlobDescriptor to base64 data URL for display
+     */
+    toDataUrl(descriptor: BlobDescriptor): string {
+        const bytes = new Uint8Array(descriptor.data);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return `data:${descriptor.type};base64,${Buffer.from(binary, 'binary').toString('base64')}`;
+    }
+
+    /**
+     * Prefetch multiple BlobDescriptors
+     */
+    async prefetch(hashes: Array<SHA256Hash<BlobDescriptor> | string>): Promise<void> {
+        await Promise.all(hashes.map(hash => this.get(hash)));
+    }
+
+    /**
+     * Clear cache (for testing/debugging)
+     */
+    clear(): void {
+        this.cache.clear();
+        this.pending.clear();
+    }
+
+    /**
+     * Get cache size
+     */
+    size(): number {
+        return this.cache.size;
+    }
+}
+
+// Singleton instance
+export default new BlobDescriptorCache();

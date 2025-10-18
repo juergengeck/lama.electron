@@ -38,7 +38,7 @@ export const ProposalConfigRecipe = {
             itemtype: { type: 'integer' } // Maximum proposals to return
         },
         {
-            itemprop: 'updated',
+            itemprop: 'updatedAt',
             itemtype: { type: 'integer' } // Last update timestamp
         },
         {

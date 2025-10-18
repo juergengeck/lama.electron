@@ -270,9 +270,8 @@ class LLMManager extends EventEmitter {
     // Discover Ollama models dynamically
     await this.discoverOllamaModels()
 
-    // Skip Claude model discovery during init - requires ONE.core
-    // Will be called after ONE.core is initialized (after user login)
-    console.log('[LLMManager] Skipping Claude discovery during init (requires ONE.core)')
+    // Discover Claude models during init (reads API key from secure storage)
+    await this.discoverClaudeModels()
 
     console.log(`[LLMManager] Registered ${this.models.size} models`)
 
@@ -477,13 +476,13 @@ class LLMManager extends EventEmitter {
 
     console.log(`[LLMManager] Chat with ${(model as any).id} (${messages.length} messages), ${this.mcpTools.size} MCP tools available`)
     console.log(`[LLMManager] ABOUT TO ENHANCE MESSAGES`)
-    
+
     // Add tool descriptions to system message
     const enhancedMessages = this.enhanceMessagesWithTools(messages)
     console.log(`[LLMManager] ENHANCEMENT COMPLETE`)
-    
+
     let response
-    
+
     if ((model as any).provider === 'ollama') {
       response = await this.chatWithOllama(model as any, enhancedMessages, options)
     } else if ((model as any).provider === 'lmstudio') {
@@ -493,10 +492,18 @@ class LLMManager extends EventEmitter {
     } else {
       throw new Error(`Unsupported provider: ${(model as any).provider}`)
     }
-    
+
+    // Build context for tool execution
+    const context = {
+      modelId: effectiveModelId,
+      isPrivateModel: effectiveModelId.endsWith('-private'),
+      topicId: options.topicId,
+      personId: options.personId
+    }
+
     // Process tool calls if present
-    response = await this.processToolCalls(response)
-    
+    response = await this.processToolCalls(response, context)
+
     return response
   }
 
@@ -564,35 +571,36 @@ class LLMManager extends EventEmitter {
     return enhanced
   }
 
-  async processToolCalls(response: any): Promise<any> {
+  async processToolCalls(response: any, context?: any): Promise<any> {
     console.log('[LLMManager] Checking for tool calls in response...')
     console.log('[LLMManager] Response preview:', response?.substring(0, 200))
-    
+
     // Check for tool calls in response - try both with and without backticks
     let toolCallMatch = response?.match(/```json\s*({[\s\S]*?})\s*```/)
     if (!toolCallMatch) {
-      // Try without backticks for plain JSON response
-      toolCallMatch = response?.match(/^(\{.*"tool".*\})/)
+      // Try without backticks for plain JSON response (anywhere in the response)
+      toolCallMatch = response?.match(/(\{[^}]*"tool"[^}]*"parameters"[^}]*\})/)
       if (toolCallMatch) {
         console.log('[LLMManager] Found plain JSON tool call')
       }
     }
-    
+
     if (!toolCallMatch) {
       console.log('[LLMManager] No tool call found in response')
       return response || ''
     }
-    
+
     console.log('[LLMManager] Found potential tool call:', toolCallMatch[0])
-    
+
     try {
       const toolCall = JSON.parse(toolCallMatch[1])
       if (toolCall.tool) {
         console.log(`[LLMManager] Executing tool: ${toolCall.tool} with params:`, toolCall.parameters)
-        
+
         const result: any = await mcpManager.executeTool(
           toolCall.tool,
-          toolCall.parameters || {}
+          toolCall.parameters || {},
+          context // Pass context for memory tools
         )
         
         console.log('[LLMManager] Tool execution result:', JSON.stringify(result).substring(0, 200))

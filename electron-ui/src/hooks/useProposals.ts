@@ -80,21 +80,17 @@ export function useProposals({
         setCurrentIndex(0); // Reset to first proposal
 
         // Log performance metrics
-        if (response.computeTimeMs) {
+        if (response.count === 0) {
+          console.log('[useProposals] No proposals found for topic:', topicId);
+        } else if (response.computeTimeMs) {
           console.log(
             `[useProposals] Fetched ${response.count} proposals in ${response.computeTimeMs}ms (cached: ${response.cached})`
           );
         }
       } catch (err: any) {
-        // Silently handle NO_SUBJECTS error (expected when conversation is new)
-        if (err.message && err.message.includes('NO_SUBJECTS')) {
-          console.log('[useProposals] No subjects yet for topic:', topicId);
-          setProposals([]);
-        } else {
-          console.error('[useProposals] Error fetching proposals:', err);
-          setError(err.message || 'Failed to fetch proposals');
-          setProposals([]);
-        }
+        console.error('[useProposals] Error fetching proposals:', err);
+        setError(err.message || 'Failed to fetch proposals');
+        setProposals([]);
       } finally {
         setLoading(false);
       }

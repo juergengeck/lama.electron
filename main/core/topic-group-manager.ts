@@ -51,6 +51,12 @@ class TopicGroupManager {
 
     console.log(`[TopicGroupManager] Creating conversation group for topic: ${topicId}`);
 
+    // CRITICAL: Do not create groups if we don't have an owner ID yet
+    if (!this.nodeOneCore.ownerId) {
+      console.error('[TopicGroupManager] Cannot create group - nodeOneCore.ownerId is not set!');
+      throw new Error('Cannot create group without owner ID');
+    }
+
     try {
       // Get all participants
       const participants: any = await this.getDefaultParticipants(aiPersonId);
@@ -113,71 +119,11 @@ class TopicGroupManager {
 
   /**
    * Add participants to a conversation group
-   * In one.leute architecture: each participant has their own channel with the same topic ID
-   * We create channels for ALL participants to ensure proper message flow
+   * @deprecated Use addParticipantsToTopic() instead
    */
   async addParticipantsToGroup(topicId: any, participantIds: any): Promise<any> {
-    const groupIdHash = this.conversationGroups.get(topicId);
-    if (!groupIdHash) {
-      throw new Error(`No group found for topic ${topicId}`);
-    }
-
-    console.log(`[TopicGroupManager] Adding ${participantIds.length} participants to topic ${topicId}`);
-
-    // Create additional channels based on conversation type
-    // For P2P: The main channel is null-owner (created above), but we can create individual channels too
-    // For Group: Create channels for local participants (ourselves and AI)
-    for (const participantId of participantIds) {
-      const isOurself = participantId === this.nodeOneCore.ownerId;
-      const isAI = this.nodeOneCore.aiAssistantModel?.getAllContacts().some((c: any) =>
-        c.personId === participantId
-      );
-
-      // Only create channels for local participants (ourselves and AI)
-      // Remote participants must create their own channels
-      const shouldCreateChannel = isOurself || isAI;
-
-      if (shouldCreateChannel && participantId && this.nodeOneCore.channelManager) {
-        try {
-          // Check if channel already exists before creating
-          const hasChannel = await this.nodeOneCore.channelManager.hasChannel(topicId, participantId);
-
-          if (!hasChannel) {
-            // Create a channel owned by this participant
-            await this.nodeOneCore.channelManager.createChannel(topicId, participantId);
-            const participantType = isAI ? 'AI' : (isOurself ? 'local' : 'remote');
-            console.log(`[TopicGroupManager] Created channel for ${participantType} participant ${String(participantId).substring(0, 8)}`);
-          } else {
-            console.log(`[TopicGroupManager] Channel already exists for participant ${String(participantId).substring(0, 8)}`);
-          }
-
-          // Grant the group access to this participant's channel
-          const channelHash: any = await calculateIdHashOfObj({
-            $type$: 'ChannelInfo',
-            id: topicId,
-            owner: participantId
-          });
-
-          await createAccess([{
-            id: channelHash,
-            person: [],
-            group: [groupIdHash],
-            mode: SET_ACCESS_MODE.ADD
-          }]);
-
-          console.log(`[TopicGroupManager] Granted group access to channel owned by ${String(participantId).substring(0, 8)}`);
-        } catch (error) {
-          console.warn(`[TopicGroupManager] Channel creation for ${String(participantId).substring(0, 8)} failed:`, (error as Error).message);
-        }
-      } else if (!isOurself && !isAI) {
-        console.log(`[TopicGroupManager] Skipping channel creation for remote participant ${String(participantId).substring(0, 8)} - they will create it themselves`);
-      }
-    }
-
-    // IMPORTANT: Do NOT grant person-based access to the Group object itself
-    // This would cause CHUM to try to sync the Group object, which is rejected
-    // Groups stay local - only IdAccess objects referencing them are shared (for channel access)
-    console.log(`[TopicGroupManager] Note: Not syncing group to participants - groups are local objects`);
+    console.log(`[TopicGroupManager] addParticipantsToGroup() called - delegating to addParticipantsToTopic()`);
+    return this.addParticipantsToTopic(topicId, participantIds);
   }
 
   /**
@@ -283,11 +229,12 @@ class TopicGroupManager {
    */
   async addRemoteParticipantToGroup(topicId: any, groupIdHash: any, remotePersonId: any): Promise<any> {
     console.log(`[TopicGroupManager] Adding ${String(remotePersonId).substring(0, 8)} to group for topic ${topicId}`);
-    
+
     try {
       // Retrieve the existing group object
-      const { getIdObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
-      const existingGroup: any = await getIdObject(groupIdHash);
+      const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+      const result: any = await getObjectByIdHash(groupIdHash);
+      const existingGroup: any = result.obj;
       
       if (!existingGroup) {
         throw new Error(`Group ${groupIdHash} not found`);
@@ -547,58 +494,115 @@ class TopicGroupManager {
     return topic;
   }
 
-  /**
-   * Scan for groups we're members of and ensure we have channels
-   * This should be called periodically or on CHUM sync
-   */
-  async scanAndEnsureGroupChannels(): Promise<any> {
-    console.log('[TopicGroupManager] Scanning for group memberships...');
-
-    try {
-      // TODO: getObjectsWithType is no longer available in the new vendor packages
-      // Need to implement a different approach to scan for all Group objects
-      // For now, we'll skip scanning for existing groups
-      /*
-      const { getObjectsWithType } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
-
-      // Find all Group objects we have access to
-      const groups: any = await getObjectsWithType('Group');
-
-      for (const group of groups) {
-        // Check if we're a member of this group
-        if (group.person && group.person.includes(this.nodeOneCore.ownerId)) {
-          // Extract topic ID from group name (format: "conversation-{topicId}")
-          if (group.name && group.name.startsWith('conversation-')) {
-            const topicId = group.name?.substring('conversation-'.length);
-
-            // Calculate the group's ID hash
-            const groupIdHash: any = await calculateIdHashOfObj(group);
-
-            console.log(`[TopicGroupManager] Found membership in group for topic ${topicId}`);
-
-            // Ensure we have our channel for this topic
-            await this.ensureParticipantChannel(topicId, groupIdHash);
-
-            // Cache the group
-            this.conversationGroups.set(topicId, groupIdHash);
-          }
-        }
-      }
-      */
-
-      console.log('[TopicGroupManager] Group channel scan complete');
-    } catch (error) {
-      console.error('[TopicGroupManager] Failed to scan for group channels:', error);
-    }
-  }
 
   /**
    * Add participants to existing topic's group
    */
   async addParticipantsToTopic(topicId: any, participants: any): Promise<any> {
-    const groupIdHash = this.conversationGroups.get(topicId);
+    console.log(`[TopicGroupManager] ========== ADD PARTICIPANTS START ==========`);
+    console.log(`[TopicGroupManager] Topic: ${topicId}`);
+    console.log(`[TopicGroupManager] Adding participants:`, participants.map((p: any) => String(p).substring(0, 8)));
+
+    let groupIdHash = this.conversationGroups.get(topicId);
+    console.log(`[TopicGroupManager] Cache lookup result: ${groupIdHash ? String(groupIdHash).substring(0, 8) : 'NOT FOUND'}`);
+
+    // Handle legacy topics that don't have groups yet
     if (!groupIdHash) {
-      throw new Error(`No group found for topic ${topicId}`);
+      console.log(`[TopicGroupManager] No group found for topic ${topicId}, creating one now (legacy topic)`);
+
+      // Get current topic participants if available
+      let currentParticipants: any[] = [this.nodeOneCore.ownerId];
+
+      try {
+        // Try to get the AI model for this topic
+        if (this.nodeOneCore.aiAssistantModel) {
+          const modelId = this.nodeOneCore.aiAssistantModel.getModelIdForTopic(topicId);
+          if (modelId) {
+            const aiContacts = this.nodeOneCore.aiAssistantModel.getAllContacts();
+            const aiContact = aiContacts.find((c: any) => c.modelId === modelId);
+            if (aiContact) {
+              currentParticipants.push((aiContact as any).personId);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`[TopicGroupManager] Could not get current participants for legacy topic:`, (e as Error).message);
+      }
+
+      // Create a group for this legacy topic with current participants PLUS new participants
+      const allParticipants = [...currentParticipants, ...participants];
+      console.log(`[TopicGroupManager] Creating NEW group with ${allParticipants.length} participants`);
+
+      const groupName = `conversation-${topicId}`;
+      const group = {
+        $type$: 'Group' as const,
+        name: groupName,
+        person: allParticipants
+      };
+
+      const storedGroup: any = await storeVersionedObject(group as any);
+      groupIdHash = storedGroup.idHash;
+
+      console.log(`[TopicGroupManager] ✅ Stored NEW group with ID hash: ${String(groupIdHash).substring(0, 8)}`);
+      console.log(`[TopicGroupManager] Group participants:`, allParticipants.map((p: any) => String(p).substring(0, 8)));
+
+      // Cache the group
+      this.conversationGroups.set(topicId, groupIdHash);
+      console.log(`[TopicGroupManager] ✅ Cached group hash ${String(groupIdHash).substring(0, 8)} for topic ${topicId}`);
+
+      console.log(`[TopicGroupManager] Created group for legacy topic ${topicId} with ${allParticipants.length} participants`);
+    } else {
+      console.log(`[TopicGroupManager] Group EXISTS in cache: ${String(groupIdHash).substring(0, 8)}`);
+
+      // Group exists - retrieve it, add new participants, store new version
+      const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+      console.log(`[TopicGroupManager] Retrieving group from storage using ID hash: ${String(groupIdHash).substring(0, 8)}`);
+
+      const result: any = await getObjectByIdHash(groupIdHash);
+      const existingGroup: any = result.obj;
+
+      if (!existingGroup) {
+        throw new Error(`Group ${String(groupIdHash).substring(0, 8)} not found`);
+      }
+
+      console.log(`[TopicGroupManager] Retrieved existing group with ${existingGroup.person?.length || 0} participants`);
+      console.log(`[TopicGroupManager] Existing participants:`, (existingGroup.person || []).map((p: any) => String(p).substring(0, 8)));
+
+      // Filter out participants that are already in the group
+      const currentMembers = existingGroup.person || [];
+      const newMembers = participants.filter((p: any) => !currentMembers.includes(p));
+
+      if (newMembers.length === 0) {
+        console.log(`[TopicGroupManager] All participants already in group for topic ${topicId}`);
+        console.log(`[TopicGroupManager] ========== ADD PARTICIPANTS END (no changes) ==========`);
+        return;
+      }
+
+      console.log(`[TopicGroupManager] Adding ${newMembers.length} NEW members to group`);
+
+      // Create new version with added participants
+      const updatedGroup = {
+        $type$: 'Group' as const,
+        name: existingGroup.name,
+        person: [...currentMembers, ...newMembers]
+      };
+
+      console.log(`[TopicGroupManager] Storing UPDATED group with ${updatedGroup.person.length} participants`);
+      const storedGroup: any = await storeVersionedObject(updatedGroup as any);
+      const newGroupIdHash = storedGroup.idHash;
+
+      console.log(`[TopicGroupManager] ✅ Stored UPDATED group with NEW ID hash: ${String(newGroupIdHash).substring(0, 8)}`);
+      console.log(`[TopicGroupManager] OLD group hash: ${String(groupIdHash).substring(0, 8)}`);
+      console.log(`[TopicGroupManager] NEW group hash: ${String(newGroupIdHash).substring(0, 8)}`);
+      console.log(`[TopicGroupManager] Updated group participants:`, updatedGroup.person.map((p: any) => String(p).substring(0, 8)));
+
+      // Update cache with new version
+      this.conversationGroups.set(topicId, newGroupIdHash);
+      console.log(`[TopicGroupManager] ✅ Updated cache: topic ${topicId} -> ${String(newGroupIdHash).substring(0, 8)}`);
+
+      console.log(`[TopicGroupManager] Updated group for topic ${topicId}: added ${newMembers.length} new participants (total: ${updatedGroup.person.length})`);
+
+      groupIdHash = newGroupIdHash;
     }
 
     // Grant access to the new participants
@@ -609,7 +613,112 @@ class TopicGroupManager {
       mode: SET_ACCESS_MODE.ADD
     }]);
 
-    console.log(`[TopicGroupManager] Added ${participants.length} participants to topic ${topicId}`);
+    console.log(`[TopicGroupManager] ✅ Granted access to ${participants.length} participants for group ${String(groupIdHash).substring(0, 8)}`);
+    console.log(`[TopicGroupManager] ========== ADD PARTICIPANTS END ==========`);
+  }
+
+  /**
+   * Query IdAccess objects to find the group for a topic
+   * This is the persistent way to find groups - IdAccess stores the topic→group relationship
+   * @param {string} topicId - The topic ID
+   * @returns {Promise<SHA256IdHash<Group> | null>} The group ID hash or null if not found
+   */
+  async getGroupForTopic(topicId: any): Promise<SHA256IdHash<any> | null> {
+    console.log(`[TopicGroupManager] Querying IdAccess for group in topic: ${topicId}`);
+
+    // First check cache
+    if (this.conversationGroups.has(topicId)) {
+      const cachedGroupIdHash = this.conversationGroups.get(topicId);
+      console.log(`[TopicGroupManager] Found cached group: ${String(cachedGroupIdHash).substring(0, 8)}`);
+      return cachedGroupIdHash!;
+    }
+
+    try {
+      // Calculate the channel ID hash for this topic (owner = our person ID)
+      const channelIdHash: any = await calculateIdHashOfObj({
+        $type$: 'ChannelInfo',
+        id: topicId,
+        owner: this.nodeOneCore.ownerId
+      });
+
+      console.log(`[TopicGroupManager] Calculated channel ID hash: ${String(channelIdHash).substring(0, 8)}`);
+
+      // Query IdAccess objects by channel ID using reverse map
+      const { getAllEntries } = await import('@refinio/one.core/lib/reverse-map-query.js');
+      const { getObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js');
+
+      const idAccessHashes: any = await getAllEntries(channelIdHash, 'IdAccess');
+      console.log(`[TopicGroupManager] Found ${idAccessHashes.length} IdAccess objects for channel`);
+
+      // Find the first IdAccess with a group
+      for (const idAccessHash of idAccessHashes) {
+        const result: any = await getObject(idAccessHash);
+        const idAccess: any = result.obj;
+
+        if (idAccess && idAccess.group && idAccess.group.length > 0) {
+          const groupIdHash = idAccess.group[0];
+          console.log(`[TopicGroupManager] Found group in IdAccess: ${String(groupIdHash).substring(0, 8)}`);
+
+          // Cache it for future lookups
+          this.conversationGroups.set(topicId, groupIdHash);
+
+          return groupIdHash;
+        }
+      }
+
+      console.log(`[TopicGroupManager] No group found in IdAccess objects for topic ${topicId}`);
+      return null;
+    } catch (error) {
+      console.error(`[TopicGroupManager] Error querying IdAccess:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get all participants for a topic from its group
+   * @param {string} topicId - The topic ID
+   * @returns {Promise<string[]>} Array of participant person IDs
+   */
+  async getTopicParticipants(topicId: any): Promise<string[]> {
+    console.log(`[TopicGroupManager] ========== GET PARTICIPANTS START ==========`);
+    console.log(`[TopicGroupManager] Topic: ${topicId}`);
+
+    // Query IdAccess to find the group (this works across restarts)
+    const groupIdHash = await this.getGroupForTopic(topicId);
+
+    if (!groupIdHash) {
+      console.log(`[TopicGroupManager] ⚠️  No group found for topic - needs to be created`);
+      console.log(`[TopicGroupManager] ========== GET PARTICIPANTS END (no group) ==========`);
+      throw new Error(`No group found for topic ${topicId}`);
+    }
+
+    console.log(`[TopicGroupManager] Retrieving group from storage using ID hash: ${String(groupIdHash).substring(0, 8)}`);
+
+    const { getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+    const result: any = await getObjectByIdHash(groupIdHash);
+    const group: any = result.obj;
+
+    if (!group) {
+      console.log(`[TopicGroupManager] ⚠️  Group object not found in storage - removing from cache`);
+      this.conversationGroups.delete(topicId);
+      console.log(`[TopicGroupManager] ========== GET PARTICIPANTS END (not found) ==========`);
+      throw new Error(`Group ${String(groupIdHash).substring(0, 8)} not found in storage`);
+    }
+
+    console.log(`[TopicGroupManager] Retrieved group with ${group.person?.length || 0} participants`);
+    console.log(`[TopicGroupManager] Participants:`, (group.person || []).map((p: any) => String(p).substring(0, 8)));
+
+    if (!group.person || group.person.length === 0) {
+      console.log(`[TopicGroupManager] ⚠️  BROKEN GROUP DETECTED: Group ${String(groupIdHash).substring(0, 8)} has no participants`);
+      console.log(`[TopicGroupManager] This is a legacy bug - removing from cache so it will be recreated`);
+      this.conversationGroups.delete(topicId);
+      console.log(`[TopicGroupManager] ========== GET PARTICIPANTS END (broken group) ==========`);
+      throw new Error(`No group found for topic ${topicId}`);
+    }
+
+    console.log(`[TopicGroupManager] ✅ Returning ${group.person.length} participants`);
+    console.log(`[TopicGroupManager] ========== GET PARTICIPANTS END ==========`);
+    return group.person;
   }
 
   /**

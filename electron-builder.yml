@@ -1,0 +1,99 @@
+appId: com.lama.one
+productName: lama.one
+directories:
+  output: release
+  buildResources: assets
+files:
+  - "dist/**/*"
+  - "node_modules/**/*"
+  - "package.json"
+  - "!dist/mac*/**/*"
+  - "!dist/win*/**/*"
+  - "!dist/linux*/**/*"
+  - "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
+  - "!.editorconfig"
+  - "!**/._*"
+  - "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}"
+  - "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}"
+  - "!**/{appveyor.yml,.travis.yml,circle.yml}"
+  - "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+  - "!electron-ui/node_modules/**/*"
+  - "!electron-ui/src/**/*"
+  - "!electron-ui/public/**/*"
+  - "!electron-ui/*.{json,js,ts,tsx,html,md}"
+  - "!tests/**/*"
+  - "!specs/**/*"
+  - "!reference/**/*"
+  - "!scripts/**/*"
+  - "!.git/**/*"
+  - "!.github/**/*"
+  - "!*.md"
+
+# Include prebuilt UI
+extraResources:
+  - from: electron-ui/dist
+    to: electron-ui/dist
+    filter: ["**/*"]
+
+# Windows configuration
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}.${ext}
+  icon: assets/icons/icon.ico
+
+# NSIS installer configuration for single-file installer
+nsis:
+  oneClick: true  # One-click installer (no wizard)
+  perMachine: false  # Install for current user only (no admin rights needed)
+  allowToChangeInstallationDirectory: false  # Single-file installer, no directory choice
+  deleteAppDataOnUninstall: false  # Preserve user data on uninstall
+  artifactName: ${productName}-${version}-Installer.${ext}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: lama.one
+
+# Portable app configuration as alternative
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}
+
+# macOS configuration
+mac:
+  category: public.app-category.productivity
+  icon: assets/icons/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.plist
+  # Using development certificate (for local testing only)
+  # For distribution, get "Developer ID Application" certificate
+  identity: "Apple Development: Juergen Geck (98SBS9L3U9)"
+  target:
+    - dmg
+    - zip
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# Linux configuration
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: assets/icons
+  category: Office
+  synopsis: Local AI Messaging Assistant
+  desktop:
+    entry:
+      Name: lama.one
+      Comment: Local AI Messaging Assistant
+      Categories: Office;Chat;InstantMessaging;

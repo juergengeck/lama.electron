@@ -149,7 +149,8 @@ async function chatWithOllama(
     // Non-streaming response (for structured outputs)
     if (!useStreaming) {
       const json = await response.json()
-      const content = json.message?.content || ''
+      // Handle different response formats
+      let content = json.message?.content || json.thinking || ''
       console.log(`[Ollama] Non-streaming response: ${content.substring(0, 200)}...`)
       if (!content) {
         throw new Error('Ollama generated no response')
@@ -179,9 +180,19 @@ async function chatWithOllama(
 
         try {
           const json = JSON.parse(line)
-          // Chat endpoint uses 'message.content' instead of 'response'
+          // Handle different response formats:
+          // 1. Regular models: json.message.content
+          // 2. Reasoning models (gpt-oss, deepseek-r1): json.thinking
+          let content = ''
+
           if (json.message && json.message.content) {
-            const content = json.message.content
+            content = json.message.content
+          } else if (json.thinking) {
+            // Reasoning models use 'thinking' field
+            content = json.thinking
+          }
+
+          if (content) {
             fullResponse += content
 
             // Stream to callback if provided
@@ -205,8 +216,16 @@ async function chatWithOllama(
     if (buffer.trim()) {
       try {
         const json = JSON.parse(buffer)
+        let content = ''
+
         if (json.message && json.message.content) {
-          const content = json.message.content
+          content = json.message.content
+        } else if (json.thinking) {
+          // Reasoning models use 'thinking' field
+          content = json.thinking
+        }
+
+        if (content) {
           fullResponse += content
           if ((options as any).onStream) {
             (options as any).onStream(content, false)

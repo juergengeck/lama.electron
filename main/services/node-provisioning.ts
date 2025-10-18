@@ -304,9 +304,18 @@ class NodeProvisioning {
       }
       throw new Error(`Failed to initialize Node.js ONE.core instance: ${result.error}`)
     }
-    
+
     console.log('[NodeProvisioning] Node.js ONE.core initialized with ID:', result.ownerId)
-    
+
+    // Initialize memory tools with NodeOneCore reference
+    try {
+      const { default: mcpManager } = await import('./mcp-manager.js')
+      mcpManager.setNodeOneCore(nodeOneCore)
+      console.log('[NodeProvisioning] Memory tools initialized with NodeOneCore')
+    } catch (error) {
+      console.warn('[NodeProvisioning] Failed to initialize memory tools:', error)
+    }
+
     // Skip heavy configuration during init - use minimal setup
     // Full capabilities can be enabled on-demand
   }

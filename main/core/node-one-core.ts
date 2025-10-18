@@ -226,16 +226,6 @@ class NodeOneCore implements INodeOneCore {
       // Initialize models in proper order
       await this.initializeModels()
 
-      // NOW that ONE.core is initialized, discover Claude models (requires secure storage)
-      console.log('[NodeOneCore] Discovering Claude models from API (post-init)...')
-      try {
-        const { default: llmManager } = await import('../services/llm-manager.js')
-        await llmManager.discoverClaudeModels()
-        console.log('[NodeOneCore] ✅ Claude models discovered successfully')
-      } catch (error) {
-        console.warn('[NodeOneCore] Failed to discover Claude models (non-critical):', (error as Error).message)
-      }
-
       console.log(`[NodeOneCore] Initialized successfully`)
 
       return {
@@ -1336,38 +1326,18 @@ class NodeOneCore implements INodeOneCore {
           // Contact discovery happens automatically through CHUM sync
           // LeuteModel will receive the peer's profile through CHUM and create the contact
           console.log(`[NodeOneCore] Contact will be discovered through CHUM sync`)
-
-          // When a new CHUM connection is established, scan for groups
-          // This ensures we create our channels for any groups we're part of
-          if (this.topicGroupManager) {
-            setTimeout(async () => {
-              console.log('[NodeOneCore] New CHUM connection - scanning for group channels...')
-              await this.topicGroupManager!.scanAndEnsureGroupChannels()
-            }, 2000) // Small delay to allow sync to complete
-          }
         }
       }
     })
-    
+
     // Set up message sync handling for AI responses
     await this.setupMessageSync()
 
     // Create channels for existing conversations so Node receives CHUM updates
     await this.createChannelsForExistingConversations()
 
-    // Scan for group memberships and ensure we have channels
-    if (this.topicGroupManager) {
-      await this.topicGroupManager.scanAndEnsureGroupChannels()
-
-      // Set up periodic scanning for new groups (every 30 seconds)
-      setInterval(async () => {
-        try {
-          await this.topicGroupManager.scanAndEnsureGroupChannels()
-        } catch (error) {
-          console.error('[NodeOneCore] Failed to scan for group channels:', error)
-        }
-      }, 30000)
-    }
+    // Groups are created during topic creation via createGroupTopic()
+    // No retroactive scanning - topics create their own groups
 
     // AI contacts are set up by AIAssistantModel.init() during setupMessageSync()
     // No need to duplicate contact creation here
@@ -1479,6 +1449,12 @@ class NodeOneCore implements INodeOneCore {
       console.log('[NodeOneCore] ✅ Topic Analysis Model initialized')
     }
 
+    // Discover Claude models BEFORE AIAssistantModel initialization
+    // This ensures Claude models are available when loadExistingAIContacts() runs
+    console.log('[NodeOneCore] Discovering Claude models before AI Assistant init...')
+    await llmManager.discoverClaudeModels()
+    console.log('[NodeOneCore] ✅ Claude models discovered')
+
     // Initialize AI Assistant Model to orchestrate everything
     if (!this.aiAssistantModel) {
       this.aiAssistantModel = new AIAssistantModel(this)
@@ -1490,6 +1466,15 @@ class NodeOneCore implements INodeOneCore {
       this.aiMessageListener.setAIAssistantModel(this.aiAssistantModel)
       console.log('[NodeOneCore] ✅ Connected AIAssistantModel to message listener')
     }
+
+    // Groups are created when topics are created via createGroupTopic()
+    // No retroactive group creation - that's legacy garbage
+
+    // Register NodeOneCore with MCPManager to enable memory tools
+    console.log('[NodeOneCore] Registering memory tools with MCP Manager...')
+    const { default: mcpManager } = await import('../services/mcp-manager.js')
+    mcpManager.setNodeOneCore(this)
+    console.log('[NodeOneCore] ✅ Memory tools registered with MCP Manager')
 
     // Initialize Refinio API Server as part of this ONE.core instance
     // TODO: Re-enable after fixing packages/refinio.api imports

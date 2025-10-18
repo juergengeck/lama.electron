@@ -319,6 +319,7 @@ export const SubjectChatView: React.FC<SubjectChatViewProps> = ({
               placeholder="Type a message... (use #hashtags for Subjects)"
               disabled={sending}
               theme="dark"
+              conversationId={conversationId}
             />
           </div>
         </TabsContent>

@@ -115,7 +115,7 @@ export default class TopicAnalysisModel extends Model {
 
         const now = Date.now();
         const keywordObj = {
-            $type$: 'Keyword',
+            $type$: 'Keyword' as const,
             term: term.toLowerCase().trim(),
             frequency: frequency || 1,
             subjects: [],
@@ -124,13 +124,18 @@ export default class TopicAnalysisModel extends Model {
             lastSeen: now
         };
 
-        // Post to the conversation's channel
+        // CRITICAL: Store as versioned object FIRST - creates vheads file for ID hash lookups
+        const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+        const result = await storeVersionedObject(keywordObj);
+        console.log('[TopicAnalysisModel] ✅ Stored Keyword with idHash:', result.idHash, 'term:', keywordObj.term);
+
+        // Post to the conversation's channel for sync
         await this.channelManager.postToChannel(
             topicId,
             keywordObj
         );
 
-        return keywordObj;
+        return { ...keywordObj, idHash: result.idHash, hash: result.hash };
     }
 
     /**
@@ -141,7 +146,7 @@ export default class TopicAnalysisModel extends Model {
 
         const now = Date.now();
         const keywordObj = {
-            $type$: 'Keyword',
+            $type$: 'Keyword' as const,
             term: term.toLowerCase().trim(),
             frequency: frequency || 1,
             subjects: subjectIds || [],
@@ -150,13 +155,18 @@ export default class TopicAnalysisModel extends Model {
             lastSeen: now
         };
 
-        // Post to the conversation's channel
+        // CRITICAL: Store as versioned object FIRST - creates vheads file for ID hash lookups
+        const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+        const result = await storeVersionedObject(keywordObj);
+        console.log('[TopicAnalysisModel] ✅ Stored Keyword with subjects, idHash:', result.idHash, 'term:', keywordObj.term);
+
+        // Post to the conversation's channel for sync
         await this.channelManager.postToChannel(
             topicId,
             keywordObj
         );
 
-        return keywordObj;
+        return { ...keywordObj, idHash: result.idHash, hash: result.hash };
     }
 
     /**
@@ -181,6 +191,11 @@ export default class TopicAnalysisModel extends Model {
                 // Ensure timestamps are integers (fix migration issues)
                 createdAt: typeof existing.createdAt === 'number' ? existing.createdAt : now
             };
+
+            // Store updated version FIRST
+            const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+            await storeVersionedObject(updatedKeyword);
+
             await this.channelManager.postToChannel(topicId, updatedKeyword);
             return updatedKeyword;
         }
@@ -230,6 +245,11 @@ export default class TopicAnalysisModel extends Model {
             } else {
                 console.log('[TopicAnalysisModel] ℹ️  Subject ID hash already in keyword:', { term: normalizedTerm, subjectIdHash });
             }
+
+            // Store updated version FIRST
+            const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+            await storeVersionedObject(updatedKeyword);
+
             await this.channelManager.postToChannel(topicId, updatedKeyword);
             return updatedKeyword;
         }
@@ -247,9 +267,13 @@ export default class TopicAnalysisModel extends Model {
             lastSeen: now
         };
 
-        console.log('[TopicAnalysisModel] ✅ Created new keyword with subject:', { term: normalizedTerm, topicId, subjectIdHash, subjects: keywordObj.subjects });
+        // Store FIRST before posting to channel
+        const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js');
+        const result = await storeVersionedObject(keywordObj);
+
+        console.log('[TopicAnalysisModel] ✅ Created new keyword with subject:', { term: normalizedTerm, topicId, subjectIdHash, subjects: keywordObj.subjects, idHash: result.idHash });
         await this.channelManager.postToChannel(topicId, keywordObj);
-        return keywordObj;
+        return { ...keywordObj, idHash: result.idHash, hash: result.hash };
     }
 
     /**

@@ -17,13 +17,15 @@ export const ChatView = memo(function ChatView({
   onProcessingChange,
   onMessageUpdate,
   isInitiallyProcessing = false,
-  hasAIParticipant: hasAIParticipantProp
+  hasAIParticipant: hasAIParticipantProp,
+  onAddUsers
 }: {
   conversationId?: string
   onProcessingChange?: (isProcessing: boolean) => void
   onMessageUpdate?: (lastMessage: string) => void
   isInitiallyProcessing?: boolean
   hasAIParticipant?: boolean
+  onAddUsers?: () => void
 }) {
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
@@ -257,11 +259,13 @@ export const ChatView = memo(function ChatView({
       <div ref={chatHeaderRef}>
         <ChatHeader
           conversationName={conversationName}
+          conversationId={conversationId}
           subjects={subjects}
           messageCount={messages.length}
           hasAI={hasAIParticipant}
           showSummary={showSummary}
           onToggleSummary={() => setShowSummary(!showSummary)}
+          onAddUsers={onAddUsers}
           onSubjectClick={(subject) => {
             console.log('[ChatView] Subject clicked:', subject)
             setSelectedSubject(subject)

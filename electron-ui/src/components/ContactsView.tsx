@@ -5,8 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Users, UserPlus, Search, Circle, Bot, MessageSquare, Download, CheckCircle } from 'lucide-react'
+import { Users, UserPlus, Search, Circle, Bot, MessageSquare, Download, CheckCircle, User, Edit } from 'lucide-react'
 import { useLama } from '@/hooks/useLama'
+import { ProfileDialog } from './ProfileDialog'
 
 interface ContactsViewProps {
   onNavigateToChat?: (topicId: string, contactName: string) => void
@@ -15,10 +16,13 @@ interface ContactsViewProps {
 export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
   const { bridge } = useLama()
   const [contacts, setContacts] = useState<any[]>([])
+  const [ownerContact, setOwnerContact] = useState<any | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [creatingTopic, setCreatingTopic] = useState<string | null>(null)
   const [loadingModel, setLoadingModel] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false)
+  const [profileDialogRequired, setProfileDialogRequired] = useState(false)
 
   useEffect(() => {
     loadContacts()
@@ -64,8 +68,11 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
         console.log(`[ContactsView]   Contact ${i}: ${c.name || c.displayName} (${c.id?.substring(0, 8)}...) status=${c.status}`)
       })
 
-      // Filter out the owner (You) from the contacts list
+      // Separate owner from other contacts
+      const owner = (allContacts || []).find(c => c.status === 'owner')
       const nonOwnerContacts = (allContacts || []).filter(c => c.status !== 'owner')
+
+      setOwnerContact(owner || null)
 
       // Enrich AI contacts with model information
       const enrichedContacts = await Promise.all(
@@ -187,7 +194,29 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
         return
       }
 
-      const result = await window.electronAPI.invoke('iom:createPairingInvitation')
+      // Check if user has a PersonName set
+      const nameCheck = await window.electronAPI.invoke('onecore:hasPersonName')
+
+      if (!nameCheck.success || !nameCheck.hasName) {
+        // No name set - show dialog as required
+        console.log('[ContactsView] No PersonName set, showing required dialog')
+        setProfileDialogRequired(true)
+        setProfileDialogOpen(true)
+        return
+      }
+
+      // Name is set, proceed with invitation
+      await createInvitation()
+    } catch (error: any) {
+      console.error('[ContactsView] Failed to create invitation:', error)
+      alert(error.message || 'Failed to create invitation')
+    }
+  }
+
+  const createInvitation = async () => {
+    try {
+      // Use 'invitation:create' from devices handler (has better error handling)
+      const result = await window.electronAPI.invoke('invitation:create')
 
       if (result.success && result.invitation) {
         // Copy invitation URL to clipboard
@@ -202,8 +231,57 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
     }
   }
 
+  const handleProfileSaved = () => {
+    // Reload contacts to get updated owner name
+    loadContacts()
+
+    // If this was required for adding a contact, proceed with invitation
+    if (profileDialogRequired) {
+      setProfileDialogRequired(false)
+      createInvitation()
+    }
+  }
+
   return (
     <div className="h-full flex flex-col space-y-4">
+      {/* My Profile Card */}
+      {ownerContact && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <User className="h-5 w-5 text-primary" />
+                <CardTitle>My Profile</CardTitle>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setProfileDialogRequired(false)
+                  setProfileDialogOpen(true)
+                }}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center space-x-3">
+              <Avatar className="h-12 w-12">
+                <AvatarFallback style={{ backgroundColor: ownerContact.color }}>
+                  {(ownerContact.displayName || ownerContact.name || 'ME').substring(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <p className="font-medium">{ownerContact.displayName || ownerContact.name || 'Set your name'}</p>
+                <p className="text-sm text-muted-foreground">{ownerContact.email}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Search and Add Contact */}
       <Card>
         <CardHeader>
@@ -354,6 +432,15 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
           </ScrollArea>
         </CardContent>
       </Card>
+
+      {/* Profile Dialog */}
+      <ProfileDialog
+        open={profileDialogOpen}
+        onOpenChange={setProfileDialogOpen}
+        currentName={ownerContact?.displayName || ownerContact?.name || ''}
+        required={profileDialogRequired}
+        onSave={handleProfileSaved}
+      />
     </div>
   )
 }

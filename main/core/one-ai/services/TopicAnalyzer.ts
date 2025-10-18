@@ -430,9 +430,9 @@ Updated summary:`;
    * Check if analysis is needed based on message count
    */
   shouldAnalyze(messageCount: any, lastAnalysisMessageCount: any): any {
-    // Analyze after every 5 messages or if it's the first analysis
+    // Analyze after every message (was: every 5 messages)
     return !lastAnalysisMessageCount ||
-           (messageCount - lastAnalysisMessageCount) >= 5;
+           (messageCount - lastAnalysisMessageCount) >= 1;
   }
 }
 

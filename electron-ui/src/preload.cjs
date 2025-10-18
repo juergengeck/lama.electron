@@ -117,7 +117,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'node-log'
     ]
     if (validChannels.includes(channel)) {
-      ipcRenderer.on(channel, callback)
+      // Strip the Electron IPC event object, only pass data to callback
+      ipcRenderer.on(channel, (_event, ...args) => callback(...args))
     }
   },
   off: (channel, callback) => {

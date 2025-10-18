@@ -221,7 +221,8 @@ export default function InstancesView() {
     try {
       console.log('[InstancesView] Creating invitation...')
       // Create invitation in Node.js ONE.core instance via IPC
-      const result = await window.electronAPI?.invoke('iom:createPairingInvitation')
+      // Use 'invitation:create' from devices handler (has better error handling)
+      const result = await window.electronAPI?.invoke('invitation:create')
       console.log('[InstancesView] Full invitation result:', JSON.stringify(result, null, 2))
       
       if (result?.success && result.invitation) {

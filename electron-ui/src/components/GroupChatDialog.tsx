@@ -116,7 +116,8 @@ export function GroupChatDialog({
       return
     }
 
-    const finalName = chatName.trim() || `Group Chat (${selectedUserIds.length} members)`
+    const finalName = chatName.trim() || 'Group Chat'
+    console.log('[GroupChatDialog] 🔵 Submitting group chat:', { chatName, trimmed: chatName.trim(), finalName, selectedUserIds })
 
     // Use personId if available, otherwise use contact id
     const participantIds = selectedUserIds.map(userId => {
@@ -124,6 +125,7 @@ export function GroupChatDialog({
       return contact?.personId || userId
     })
 
+    console.log('[GroupChatDialog] 🔵 Calling onSubmit with:', { participantIds, finalName })
     onSubmit(participantIds, finalName)
     onOpenChange(false)
   }
