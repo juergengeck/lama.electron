@@ -2,6 +2,80 @@
 
 This file provides guidance to Claude Code when working with LAMA Electron.
 
+## Architecture: lama.core vs lama.electron
+
+**CRITICAL**: LAMA is split into two packages with clear responsibilities:
+
+### lama.core (Platform-Agnostic Business Logic)
+**Location**: `/Users/gecko/src/lama/lama.core/`
+
+**Contains**:
+- **Handlers** (`handlers/*`) - Pure business logic for all operations (chat, AI, topics, etc.)
+  - Receives dependencies via constructor (NO imports from lama.electron)
+  - Can be used by both Electron (Node.js) and Browser (Web Workers)
+
+- **LLM Services** (`services/*`):
+  - `llm-manager.ts` - LLM provider orchestration
+  - `ollama.ts` - HTTP client for Ollama (works in Node + Browser)
+  - `lmstudio.ts` - HTTP client for LM Studio
+  - `claude.ts` - HTTP client for Anthropic Claude API
+
+- **AI Models** (`models/*`):
+  - `ai-assistant-model.ts` - AI contact/conversation management
+  - `TopicAnalysisModel.ts` - Keyword/subject extraction from conversations
+
+**Dependencies**: ONLY `@refinio/one.core` and `@refinio/one.models`
+
+**NO ambient pattern** - handlers receive all dependencies via constructor parameters
+
+### lama.electron (Platform-Specific Implementation)
+**Location**: `/Users/gecko/src/lama/lama.electron/`
+
+**Contains**:
+- **IPC Handlers** (`main/ipc/handlers/*`) - Thin adapters that:
+  - Create handler instances from lama.core
+  - Inject platform-specific dependencies (nodeOneCore, etc.)
+  - Map Electron IPC calls to handler methods
+
+- **MCP Manager** (`main/services/mcp-manager.ts`) - Network service for MCP tools
+  - Runs in Node.js main process
+  - Browser can connect remotely (not yet implemented)
+
+- **Node ONE.core** (`main/core/node-one-core.ts`) - Full ONE.core instance
+
+- **Node Provisioning** (`main/services/node-provisioning.ts`) - ONE.core initialization
+
+**Key Principle**: lama.electron creates instances of lama.core handlers and passes in dependencies
+
+### Example: How Handlers Work
+
+```typescript
+// lama.core/handlers/ChatHandler.ts
+export class ChatHandler {
+  constructor(
+    private nodeOneCore: any,
+    private stateManager: any
+  ) {}
+
+  async sendMessage(params) {
+    // Pure business logic using injected dependencies
+  }
+}
+
+// lama.electron/main/ipc/handlers/chat.ts
+import { ChatHandler } from '@lama/core/handlers/ChatHandler.js';
+import nodeOneCore from '../../core/node-one-core.js';
+import stateManager from '../../state/manager.js';
+
+const chatHandler = new ChatHandler(nodeOneCore, stateManager);
+
+export default {
+  async sendMessage(event, params) {
+    return await chatHandler.sendMessage(params);
+  }
+};
+```
+
 ## NodeOneCore: Comprehensive ONE.core Instance
 
 **CRITICAL**: The Node.js process runs a FULL ONE.core instance (`NodeOneCore`) with complete capabilities:

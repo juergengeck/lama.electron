@@ -1,180 +1,87 @@
 /**
- * Feed-Forward IPC Handlers
- * Handles all IPC communication for feed-forward knowledge sharing
+ * Feed-Forward IPC Handlers (Thin Adapter)
+ *
+ * Maps Electron IPC calls to FeedForwardHandler methods.
+ * Business logic lives in ../../../lama.core/handlers/FeedForwardHandler.ts
  */
 
+import { FeedForwardHandler } from '@lama/core/handlers/FeedForwardHandler.js';
 import FeedForwardManager from '../../core/feed-forward/manager.js';
 import type { IpcMainInvokeEvent } from 'electron';
 
-// Will be initialized when ONE.core is ready
+// Manager and handler instances
 let manager: FeedForwardManager | null = null;
-
-interface SupplyParams {
-  keywords: string[];
-  contextLevel: number;
-  conversationId: string;
-  metadata?: any;
-}
-
-interface DemandParams {
-  keywords: string[];
-  urgency: number;
-  context: string;
-  criteria?: any;
-  expires?: number;
-  maxResults?: number;
-}
-
-interface MatchParams {
-  demandHash: string;
-  minTrust?: number;
-  limit?: number;
-}
-
-interface TrustUpdateParams {
-  participantId: string;
-  adjustment: number;
-  reason: string;
-  evidence?: any;
-}
-
-interface CorpusParams {
-  since?: number;
-  minQuality?: number;
-  keywords?: string[];
-}
-
-interface SharingParams {
-  conversationId: string;
-  enabled: boolean;
-  retroactive?: boolean;
-}
-
-interface TrustGetParams {
-  participantId: string;
-}
+let feedForwardHandler: FeedForwardHandler | null = null;
 
 /**
- * Initialize feed-forward manager with ONE.core instance
+ * Initialize feed-forward manager and handler with ONE.core instance
  */
 function initializeFeedForward(nodeOneCore: any): void {
   if (!nodeOneCore) {
     throw new Error('ONE.core instance required for feed-forward initialization');
   }
+
   manager = new FeedForwardManager({ nodeOneCore });
+  feedForwardHandler = new FeedForwardHandler(manager);
+}
+
+/**
+ * Get handler instance (throws if not initialized)
+ */
+function getHandler(): FeedForwardHandler {
+  if (!feedForwardHandler) {
+    throw new Error('Feed-forward handler not initialized');
+  }
+  return feedForwardHandler;
 }
 
 /**
  * IPC Handler: Create Supply object
  */
-async function createSupply(event: IpcMainInvokeEvent, params: SupplyParams): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    return await manager.createSupply(params);
-  } catch (error) {
-    console.error('Error creating supply:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error creating supply' };
-  }
+async function createSupply(event: IpcMainInvokeEvent, params: any) {
+  return await getHandler().createSupply(params);
 }
 
 /**
  * IPC Handler: Create Demand object
  */
-async function createDemand(event: IpcMainInvokeEvent, params: DemandParams): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    return await manager.createDemand(params);
-  } catch (error) {
-    console.error('Error creating demand:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error creating demand' };
-  }
+async function createDemand(event: IpcMainInvokeEvent, params: any) {
+  return await getHandler().createDemand(params);
 }
 
 /**
  * IPC Handler: Match Supply with Demand
  */
-async function matchSupplyDemand(event: IpcMainInvokeEvent, params: MatchParams): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    return await manager.matchSupplyDemand(params);
-  } catch (error) {
-    console.error('Error matching supply/demand:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error matching supply/demand' };
-  }
+async function matchSupplyDemand(event: IpcMainInvokeEvent, params: any) {
+  return await getHandler().matchSupplyDemand(params);
 }
 
 /**
  * IPC Handler: Update trust score
  */
-async function updateTrust(event: IpcMainInvokeEvent, params: TrustUpdateParams): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    return await manager.updateTrust(params);
-  } catch (error) {
-    console.error('Error updating trust:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error updating trust' };
-  }
+async function updateTrust(event: IpcMainInvokeEvent, params: any) {
+  return await getHandler().updateTrust(params);
 }
 
 /**
  * IPC Handler: Get corpus stream
  */
-async function getCorpusStream(event: IpcMainInvokeEvent, params: CorpusParams = {}): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    return await manager.getCorpusStream(params);
-  } catch (error) {
-    console.error('Error getting corpus stream:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error getting corpus stream' };
-  }
+async function getCorpusStream(event: IpcMainInvokeEvent, params: any = {}) {
+  return await getHandler().getCorpusStream(params);
 }
 
 /**
  * IPC Handler: Enable/disable sharing
  */
-async function enableSharing(event: IpcMainInvokeEvent, params: SharingParams): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    return await manager.enableSharing(params);
-  } catch (error) {
-    console.error('Error updating sharing:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error updating sharing' };
-  }
+async function enableSharing(event: IpcMainInvokeEvent, params: any) {
+  return await getHandler().enableSharing(params);
 }
 
 /**
  * IPC Handler: Get trust score
  */
-async function getTrustScore(event: IpcMainInvokeEvent, params: TrustGetParams): Promise<any> {
-  if (!manager) {
-    return { success: false, error: 'Feed-forward manager not initialized' };
-  }
-
-  try {
-    const result = await manager.getTrustScore(params.participantId);
-    return { success: true, ...result };
-  } catch (error) {
-    console.error('Error getting trust score:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error getting trust score' };
-  }
+async function getTrustScore(event: IpcMainInvokeEvent, params: any) {
+  return await getHandler().getTrustScore(params);
 }
 
 const feedForwardHandlers = {

@@ -44,7 +44,7 @@ class FeedForwardManager extends EventEmitter {
 
     if (!this.keywordExtractor) {
       // Import the existing keyword extractor
-      const { default: RealTimeKeywordExtractor } = await import('../one-ai/services/RealTimeKeywordExtractor.js')
+      const { default: RealTimeKeywordExtractor } = await import('@lama/core/one-ai/services/RealTimeKeywordExtractor.js')
       this.keywordExtractor = new RealTimeKeywordExtractor()
     }
 

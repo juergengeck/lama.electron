@@ -8,7 +8,7 @@ import electron from 'electron'
 import type { NodeOneCore } from '../types/one-core.js'
 import { AISettingsManager } from './ai-settings-manager.js'
 import LLMObjectManager from './llm-object-manager.js'
-import { ContextEnrichmentService } from './one-ai/services/ContextEnrichmentService.js'
+import { ContextEnrichmentService } from '@lama/core/one-ai/services/ContextEnrichmentService.js'
 import llmManager from '../services/llm-manager.js'
 const { BrowserWindow } = electron
 

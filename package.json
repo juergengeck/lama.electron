@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
+    "@lama/core": "file:../lama.core",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "@refinio/one.core": "file:vendor/refinio-one.core-0.6.1-beta-3.tgz",
     "@refinio/one.models": "file:vendor/refinio-one.models-14.1.0-beta-6.tgz",

@@ -9,8 +9,8 @@ global.WebSocket = WebSocket as any;
 
 import path from 'path';
 import { fileURLToPath } from 'url';
-import AIAssistantModel from './ai-assistant-model.js';
-import TopicAnalysisModel from './one-ai/models/TopicAnalysisModel.js';
+import { AIAssistantModel } from './ai-assistant-model.js';
+import TopicAnalysisModel from '@lama/core/one-ai/models/TopicAnalysisModel.js';
 // QuicVC API server temporarily disabled during TS migration
 // import RefinioApiServer from '../api/refinio-api-server.js';
 import TopicGroupManager from './topic-group-manager.js';
@@ -1467,14 +1467,14 @@ class NodeOneCore implements INodeOneCore {
       console.log('[NodeOneCore] ✅ Connected AIAssistantModel to message listener')
     }
 
-    // Groups are created when topics are created via createGroupTopic()
-    // No retroactive group creation - that's legacy garbage
-
     // Register NodeOneCore with MCPManager to enable memory tools
     console.log('[NodeOneCore] Registering memory tools with MCP Manager...')
     const { default: mcpManager } = await import('../services/mcp-manager.js')
     mcpManager.setNodeOneCore(this)
     console.log('[NodeOneCore] ✅ Memory tools registered with MCP Manager')
+
+    // Groups are created when topics are created via createGroupTopic()
+    // No retroactive group creation - that's legacy garbage
 
     // Initialize Refinio API Server as part of this ONE.core instance
     // TODO: Re-enable after fixing packages/refinio.api imports

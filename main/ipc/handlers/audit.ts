@@ -1,65 +1,21 @@
 /**
- * Audit IPC Handlers
+ * Audit IPC Handlers (Thin Adapter)
  *
- * Handles IPC requests for audit operations including:
- * - QR code generation for attestations
- * - Creating attestations for messages/topics
- * - Retrieving attestations
- * - Exporting topics with attestations
- * - Verifying attestations
+ * Maps Electron IPC calls to AuditHandler methods.
+ * Business logic lives in ../../../lama.core/handlers/AuditHandler.ts
  */
 
+import { AuditHandler } from '@lama/core/handlers/AuditHandler.js';
 import qrGenerator from '../../core/qr-generation.js';
 import { AttestationManager } from '../../core/attestation-manager.js';
 import { TopicExporter } from '../../core/topic-export.js';
 import nodeOneCore from '../../core/node-one-core.js';
 import type { IpcMainInvokeEvent } from 'electron';
 
-// Manager instances (initialized on first use)
+// Service instances
 let attestationManager: AttestationManager | null = null;
 let topicExporter: TopicExporter | null = null;
-
-interface QRParams {
-  messageHash?: string;
-  messageVersion?: string;
-  topicId?: string;
-  attestationType?: string;
-}
-
-interface AttestationParams {
-  messageHash?: string;
-  topicId?: string;
-  auditorId?: string;
-  [key: string]: any;
-}
-
-interface ExportParams {
-  [key: string]: any;
-}
-
-interface VerifyParams {
-  attestationHash: string;
-  messageHash: string;
-}
-
-interface BatchQRParams {
-  messages: any[];
-}
-
-interface ParseQRParams {
-  qrText: string;
-}
-
-interface AttestationStatusParams {
-  messageHash: string;
-}
-
-interface IpcResponse<T = any> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  [key: string]: any;
-}
+let auditHandler: AuditHandler | null = null;
 
 /**
  * Get or create attestation manager
@@ -88,306 +44,75 @@ function getTopicExporter(): TopicExporter | null {
   return topicExporter;
 }
 
+/**
+ * Get handler instance (creates on first use)
+ */
+function getHandler(): AuditHandler {
+  if (!auditHandler) {
+    auditHandler = new AuditHandler(
+      qrGenerator,
+      getAttestationManager(),
+      getTopicExporter()
+    );
+  }
+  return auditHandler;
+}
+
 const auditHandlers = {
   /**
    * Generate QR code for message/topic attestation
-   * Compatible with ONE.core contact invites
    */
-  async generateQR(event: IpcMainInvokeEvent, params: QRParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Generate QR:', params);
-
-    try {
-      const { messageHash, messageVersion, topicId, attestationType = 'message' } = params;
-
-      if (!messageHash && attestationType === 'message') {
-        throw new Error('Message hash required for message QR');
-      }
-
-      let result: any;
-      if (attestationType === 'topic' && topicId) {
-        // Generate QR for topic
-        result = await qrGenerator.generateQRForTopic({
-          topicId,
-          topicHash: messageHash || topicId // Use topicId as fallback
-        });
-      } else {
-        // Generate QR for message
-        result = await qrGenerator.generateQRForMessage({
-          messageHash,
-          messageVersion,
-          topicId,
-          attestationType
-        });
-      }
-
-      return {
-        success: true,
-        qrDataUrl: result.qrDataUrl,
-        qrText: result.qrText,
-        metadata: result.metadata
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error generating QR:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async generateQR(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().generateQR(params);
   },
 
   /**
    * Create attestation for a message
    */
-  async createAttestation(event: IpcMainInvokeEvent, params: AttestationParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Create attestation:', params);
-
-    try {
-      const manager = getAttestationManager();
-      if (!manager) {
-        throw new Error('Attestation manager not available - ONE.core not initialized');
-      }
-
-      const result = await manager.createAttestation(params);
-
-      return {
-        success: true,
-        attestation: result.attestation,
-        certificateHash: result.certificateHash,
-        hash: result.hash
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error creating attestation:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async createAttestation(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().createAttestation(params);
   },
 
   /**
    * Get attestations for message/topic/auditor
    */
-  async getAttestations(event: IpcMainInvokeEvent, params: AttestationParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Get attestations:', params);
-
-    try {
-      const manager = getAttestationManager();
-      if (!manager) {
-        return {
-          success: true,
-          attestations: []
-        };
-      }
-
-      const { messageHash, topicId, auditorId } = params;
-      let attestations: any[] = [];
-
-      if (messageHash) {
-        attestations = await manager.getAttestationsForMessage(messageHash);
-      } else if (topicId) {
-        attestations = await manager.getAttestationsForTopic(topicId);
-      } else if (auditorId) {
-        attestations = await manager.getAttestationsByAuditor(auditorId);
-      }
-
-      return {
-        success: true,
-        attestations
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error getting attestations:', error);
-      return {
-        success: false,
-        error: (error as Error).message,
-        attestations: []
-      };
-    }
+  async getAttestations(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().getAttestations(params);
   },
 
   /**
    * Export topic with attestations
    */
-  async exportTopic(event: IpcMainInvokeEvent, params: ExportParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Export topic:', params);
-
-    try {
-      const exporter = getTopicExporter();
-      if (!exporter) {
-        throw new Error('Topic exporter not available');
-      }
-
-      const result = await exporter.exportTopicWithAttestations(params);
-
-      return {
-        success: true,
-        exportData: result.data,
-        format: result.format,
-        metadata: result.metadata
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error exporting topic:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async exportTopic(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().exportTopic(params);
   },
 
   /**
    * Verify attestation
    */
-  async verifyAttestation(event: IpcMainInvokeEvent, params: VerifyParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Verify attestation:', params);
-
-    try {
-      const manager = getAttestationManager();
-      if (!manager) {
-        throw new Error('Attestation manager not available');
-      }
-
-      const { attestationHash, messageHash } = params;
-
-      const verification = await manager.verifyAttestation(
-        attestationHash,
-        messageHash
-      );
-
-      return {
-        success: true,
-        verification
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error verifying attestation:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async verifyAttestation(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().verifyAttestation(params);
   },
 
   /**
    * Generate batch QR codes for multiple messages
    */
-  async generateBatchQR(event: IpcMainInvokeEvent, params: BatchQRParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Generate batch QR codes');
-
-    try {
-      const { messages } = params;
-
-      if (!messages || !Array.isArray(messages)) {
-        throw new Error('Messages array required');
-      }
-
-      const results = await qrGenerator.generateBatchQRCodes(messages);
-
-      const successCount = results.filter((r: any) => r.success).length;
-      console.log(`[AuditHandler] Generated ${successCount}/${messages.length} QR codes`);
-
-      return {
-        success: true,
-        results,
-        summary: {
-          total: messages.length,
-          successful: successCount,
-          failed: messages.length - successCount
-        }
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error in batch QR generation:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async generateBatchQR(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().generateBatchQR(params);
   },
 
   /**
    * Parse scanned QR code
    */
-  async parseQR(event: IpcMainInvokeEvent, params: ParseQRParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Parse QR code');
-
-    try {
-      const { qrText } = params;
-
-      if (!qrText) {
-        throw new Error('QR text required');
-      }
-
-      const parsed = qrGenerator.parseQRData(qrText);
-
-      return {
-        success: true,
-        parsed
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error parsing QR:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async parseQR(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().parseQR(params);
   },
 
   /**
    * Get attestation status for UI display
    */
-  async getAttestationStatus(event: IpcMainInvokeEvent, params: AttestationStatusParams): Promise<IpcResponse> {
-    console.log('[AuditHandler] Get attestation status');
-
-    try {
-      const manager = getAttestationManager();
-      if (!manager) {
-        return {
-          success: true,
-          status: {
-            hasAttestations: false,
-            attestationCount: 0,
-            fullyAttested: false,
-            partiallyAttested: false,
-            pendingSync: false,
-            auditors: [],
-            signaturesComplete: true,
-            missingSignatures: []
-          }
-        };
-      }
-
-      const { messageHash } = params;
-      const attestations = await manager.getAttestationsForMessage(messageHash);
-
-      // Build status object
-      const status = {
-        hasAttestations: attestations.length > 0,
-        attestationCount: attestations.length,
-        fullyAttested: attestations.length >= 2, // Consider fully attested with 2+ attestations
-        partiallyAttested: attestations.length === 1,
-        pendingSync: false, // Would check sync status in real implementation
-
-        auditors: attestations.map((att: any) => ({
-          id: att.auditorId,
-          name: att.auditorName || 'Unknown',
-          attestedAt: att.timestamp,
-          trustLevel: 3 // Would fetch from trust manager
-        })),
-
-        signaturesComplete: attestations.every((att: any) => att.signature),
-        missingSignatures: attestations
-          .filter((att: any) => !att.signature)
-          .map((att: any) => att.auditorId)
-      };
-
-      return {
-        success: true,
-        status
-      };
-    } catch (error) {
-      console.error('[AuditHandler] Error getting status:', error);
-      return {
-        success: false,
-        error: (error as Error).message
-      };
-    }
+  async getAttestationStatus(event: IpcMainInvokeEvent, params: any) {
+    return await getHandler().getAttestationStatus(params);
   }
 };
 

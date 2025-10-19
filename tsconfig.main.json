@@ -11,12 +11,17 @@
     "strictPropertyInitialization": false,
     "noImplicitThis": false,
     "skipLibCheck": true,
+    "noEmit": false,
     "types": ["node", "electron"],
     "lib": ["ES2022", "DOM"],
     "isolatedModules": false,
     "verbatimModuleSyntax": false,
     "downlevelIteration": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noEmitOnError": false
   },
   "include": [
     "@OneCoreTypes.d.ts",
@@ -46,6 +51,7 @@
     "specs/**",
     "tests/**",
     "packages/**",
-    "reference/**"
+    "reference/**",
+    "../lama.core/**"
   ]
 }

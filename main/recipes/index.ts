@@ -4,11 +4,11 @@
  */
 
 import { addRecipeToRuntime } from '@refinio/one.core/lib/object-recipes.js'
-import { WordCloudSettingsRecipe } from '../core/one-ai/recipes/WordCloudSettingsRecipe.js'
-import { KeywordRecipe } from '../core/one-ai/recipes/KeywordRecipe.js'
-import { SubjectRecipe } from '../core/one-ai/recipes/SubjectRecipe.js'
-import { SummaryRecipe } from '../core/one-ai/recipes/SummaryRecipe.js'
-import { KeywordAccessStateRecipe } from '../core/one-ai/recipes/KeywordAccessState.js'
+import { WordCloudSettingsRecipe } from '@lama/core/one-ai/recipes/WordCloudSettingsRecipe.js'
+import { KeywordRecipe } from '@lama/core/one-ai/recipes/KeywordRecipe.js'
+import { SubjectRecipe } from '@lama/core/one-ai/recipes/SubjectRecipe.js'
+import { SummaryRecipe } from '@lama/core/one-ai/recipes/SummaryRecipe.js'
+import { KeywordAccessStateRecipe } from '@lama/core/one-ai/recipes/KeywordAccessState.js'
 import { ProposalConfigRecipe } from './proposal-recipes.js'
 import { MCPRecipes } from './mcp-recipes.js'
 import { AvatarPreferenceRecipe } from './avatar-recipes.js'

@@ -157,12 +157,9 @@ class IPCController {
       return { success: true, data: testData };
     });
 
-    // IOM handlers
+    // IOM handlers (refactored - now delegates to one.models)
     this.handle('iom:getInstances', iomHandlers.getIOMInstances);
-    this.handle('iom:getReplicationEvents', iomHandlers.getReplicationEvents);
-    this.handle('iom:getDataStats', iomHandlers.getDataStats);
-    this.handle('iom:updateBrowserStorage', iomHandlers.updateBrowserStorage);
-    this.handle('iom:updateDataStats', iomHandlers.updateDataStats);
+    this.handle('iom:getConnectionStatus', iomHandlers.getConnectionStatus);
     this.handle('iom:createPairingInvitation', iomHandlers.createPairingInvitation);
     this.handle('iom:acceptPairingInvitation', iomHandlers.acceptPairingInvitation);
 
