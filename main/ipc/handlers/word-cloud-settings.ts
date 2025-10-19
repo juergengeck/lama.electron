@@ -6,8 +6,20 @@
  */
 
 import { WordCloudSettingsHandler } from '@lama/core/handlers/WordCloudSettingsHandler.js';
-import { wordCloudSettingsManager, DEFAULT_WORD_CLOUD_SETTINGS } from '@lama/core/one-ai/storage/word-cloud-settings-manager.js';
+import { wordCloudSettingsManager } from '@lama/core/one-ai/storage/word-cloud-settings-manager.js';
 import type { IpcMainInvokeEvent } from 'electron';
+
+// Default settings matching WordCloudSettingsHandler interface
+const DEFAULT_SETTINGS = {
+  enabled: true,
+  maxWords: 100,
+  minFontSize: 12,
+  maxFontSize: 64,
+  colorScheme: 'viridis',
+  layout: 'archimedean',
+  padding: 2,
+  spiral: 'archimedean'
+};
 
 // Singleton handler instance
 let wordCloudSettingsHandler: WordCloudSettingsHandler | null = null;
@@ -20,7 +32,7 @@ function getHandler(nodeOneCore: any): WordCloudSettingsHandler {
     wordCloudSettingsHandler = new WordCloudSettingsHandler(
       nodeOneCore,
       wordCloudSettingsManager,
-      DEFAULT_WORD_CLOUD_SETTINGS
+      DEFAULT_SETTINGS
     );
   }
   return wordCloudSettingsHandler;

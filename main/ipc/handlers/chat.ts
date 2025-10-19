@@ -33,7 +33,7 @@ if (nodeOneCore.initialized) {
     console.log('[ChatAdapter] MessageVersionManager initialized');
   }
   if (!messageAssertionManager) {
-    messageAssertionManager = new MessageAssertionManager(nodeOneCore);
+    messageAssertionManager = new MessageAssertionManager(nodeOneCore.leuteModel.trust, nodeOneCore.leuteModel);
     console.log('[ChatAdapter] MessageAssertionManager initialized');
   }
   chatHandler.setMessageManagers(messageVersionManager, messageAssertionManager);
@@ -196,7 +196,7 @@ const chatHandlers = {
   ) {
     // Ensure message managers are initialized
     if (!messageAssertionManager) {
-      messageAssertionManager = new MessageAssertionManager(nodeOneCore);
+      messageAssertionManager = new MessageAssertionManager(nodeOneCore.leuteModel.trust, nodeOneCore.leuteModel);
       chatHandler.setMessageManagers(messageVersionManager!, messageAssertionManager);
     }
     return await chatHandler.exportMessageCredential(params);
@@ -211,7 +211,7 @@ const chatHandlers = {
   ) {
     // Ensure message managers are initialized
     if (!messageAssertionManager) {
-      messageAssertionManager = new MessageAssertionManager(nodeOneCore);
+      messageAssertionManager = new MessageAssertionManager(nodeOneCore.leuteModel.trust, nodeOneCore.leuteModel);
       chatHandler.setMessageManagers(messageVersionManager!, messageAssertionManager);
     }
     return await chatHandler.verifyMessageAssertion(params);

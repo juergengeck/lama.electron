@@ -149,6 +149,7 @@ function subscribeToEvents(callback: (event: any) => void) {
   }
 
   // Use one.models events directly
+  // @ts-expect-error - ConnectionsModel extends EventEmitter but types are incomplete
   nodeOneCore.connectionsModel.on('connection:open', (data: any) => {
     callback({
       type: 'connection:open',
@@ -156,6 +157,7 @@ function subscribeToEvents(callback: (event: any) => void) {
     });
   });
 
+  // @ts-expect-error - ConnectionsModel extends EventEmitter but types are incomplete
   nodeOneCore.connectionsModel.on('connection:closed', (data: any) => {
     callback({
       type: 'connection:closed',
@@ -163,6 +165,7 @@ function subscribeToEvents(callback: (event: any) => void) {
     });
   });
 
+  // @ts-expect-error - ConnectionsModel extends EventEmitter but types are incomplete
   nodeOneCore.connectionsModel.on('connection:error', (data: any) => {
     callback({
       type: 'connection:error',
@@ -172,6 +175,7 @@ function subscribeToEvents(callback: (event: any) => void) {
 
   // ChannelManager sync events
   if (nodeOneCore.channelManager) {
+    // @ts-expect-error - ChannelManager extends EventEmitter but types are incomplete
     nodeOneCore.channelManager.on('sync:progress', (data: any) => {
       callback({
         type: 'sync:progress',
@@ -179,6 +183,7 @@ function subscribeToEvents(callback: (event: any) => void) {
       });
     });
 
+    // @ts-expect-error - ChannelManager extends EventEmitter but types are incomplete
     nodeOneCore.channelManager.on('sync:completed', (data: any) => {
       callback({
         type: 'sync:completed',

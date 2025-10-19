@@ -6,19 +6,19 @@
  */
 
 import { ipcMain } from 'electron';
-import { LLMConfigHandler } from '@lama/core/handlers/LLMConfigHandler.js';
-import type {
-  TestConnectionRequest,
-  TestConnectionResponse,
-  SetOllamaConfigRequest,
-  SetOllamaConfigResponse,
-  GetOllamaConfigRequest,
-  GetOllamaConfigResponse,
-  GetAvailableModelsRequest,
-  GetAvailableModelsResponse,
-  DeleteOllamaConfigRequest,
-  DeleteOllamaConfigResponse,
-} from '../../types/llm-config.js';
+import {
+  LLMConfigHandler,
+  type TestConnectionRequest,
+  type TestConnectionResponse,
+  type SetOllamaConfigRequest,
+  type SetOllamaConfigResponse,
+  type GetOllamaConfigRequest,
+  type GetOllamaConfigResponse,
+  type GetAvailableModelsRequest,
+  type GetAvailableModelsResponse,
+  type DeleteOllamaConfigRequest,
+  type DeleteOllamaConfigResponse,
+} from '@lama/core/handlers/LLMConfigHandler.js';
 import { testOllamaConnection, fetchOllamaModels } from '../../services/ollama-validator.js';
 import {
   encryptToken,
