@@ -62,9 +62,14 @@ All platform-agnostic AI assistant components have been implemented in `lama.cor
 - Maps to BrowserWindow IPC events
 - Safe window destruction checks
 
+**BrowserLLMPlatform** - `lama.browser/adapters/browser-llm-platform.ts`
+- Implements LLMPlatform for browser/worker environments
+- Uses CustomEvent for UI updates (window.dispatchEvent)
+- No MCP server support (browser can't spawn processes)
+
 ### ✅ Integration Complete
 
-**AI Assistant Handler Adapter** - `lama.electron/main/core/ai-assistant-handler-adapter.ts`
+**Electron Integration** - `lama.electron/main/core/ai-assistant-handler-adapter.ts`
 - Creates AIAssistantHandler with Electron dependencies
 - Initializes with ElectronLLMPlatform
 - Provides backward-compatible API
@@ -73,6 +78,16 @@ All platform-agnostic AI assistant components have been implemented in `lama.cor
 - Replaced monolithic AIAssistantModel with AIAssistantHandler
 - Uses `initializeAIAssistantHandler()` for setup
 - Connected to message listener (no breaking changes)
+
+**Browser Integration** - `lama.browser/worker/core/ai-assistant-handler-adapter.ts`
+- Creates AIAssistantHandler with browser/worker dependencies
+- Initializes with BrowserLLMPlatform
+- Same API as Electron adapter
+
+**Worker ONE.core Integration** - Updated `worker-one-core.ts`
+- Replaced stub implementation with AIAssistantHandler
+- Uses `initializeAIAssistantHandler()` for setup
+- Platform-agnostic AI functionality in browser
 
 ## 📊 Architecture Summary
 
@@ -270,11 +285,12 @@ The refactored AI assistant is **fully integrated and active**. Key capabilities
 
 The AI assistant core refactoring is **substantially complete**. The component-based architecture is:
 
-- ✅ **Production Ready** - Integrated and active in main process
-- ✅ **Platform Agnostic** - Zero Electron dependencies
+- ✅ **Production Ready** - Integrated and active in both Electron and browser
+- ✅ **Platform Agnostic** - Zero platform dependencies in core components
 - ✅ **Well Architected** - Clean separation of concerns
-- ✅ **Maintainable** - Small, focused components
+- ✅ **Maintainable** - Small, focused components (<400 lines each)
 - ✅ **Testable** - Interface-driven design
 - ✅ **Extensible** - Easy to add new capabilities
+- ✅ **Cross-Platform** - Works in Node.js (Electron) and browser (Web Worker)
 
 Remaining work is primarily **validation and polish** - the core business logic transformation is complete!
