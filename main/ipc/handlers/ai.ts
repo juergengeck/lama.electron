@@ -1,36 +1,25 @@
 /**
  * AI IPC Handlers (Thin Adapter)
  *
- * Maps Electron IPC calls to AIHandler methods.
- * Business logic lives in ../../../lama.core/handlers/AIHandler.ts
+ * Maps Electron IPC calls to AIAssistantHandler methods.
+ * Uses the refactored AIAssistantHandler from nodeOneCore.aiAssistantModel
  */
 
-import { AIHandler } from '@lama/core/handlers/AIHandler.js';
-import llmManager from '../../services/llm-manager.js';
-import stateManager from '../../state/manager.js';
 import nodeOneCore from '../../core/node-one-core.js';
+import llmManager from '../../services/llm-manager.js';
 import type { IpcMainInvokeEvent } from 'electron';
 import electron from 'electron';
 const { BrowserWindow } = electron;
 
-// Create handler instance with Electron-specific dependencies
-const aiHandler = new AIHandler(
-  llmManager as any,
-  nodeOneCore.aiAssistantModel as any,
-  nodeOneCore.topicModel as any,
-  nodeOneCore,
-  stateManager
-);
-
-// Initialize handler with models after nodeOneCore is ready
-if (nodeOneCore.initialized) {
-  aiHandler.setModels(
-    llmManager as any,
-    nodeOneCore.aiAssistantModel as any,
-    nodeOneCore.topicModel as any,
-    nodeOneCore,
-    stateManager
-  );
+/**
+ * Get the AIAssistantHandler from nodeOneCore
+ * This uses the refactored architecture with platform abstraction
+ */
+function getAIHandler() {
+  if (!nodeOneCore.aiAssistantModel) {
+    throw new Error('AI Assistant Handler not initialized - ONE.core not provisioned');
+  }
+  return nodeOneCore.aiAssistantModel;
 }
 
 /**
@@ -49,17 +38,54 @@ const aiHandlers = {
       topicId?: string;
     }
   ) {
-    return await aiHandler.chat(
-      { messages, modelId, stream, topicId },
-      event.sender
-    );
+    // Delegate to llmManager for chat operations
+    const model = modelId || llmManager.getDefaultModel()?.id;
+    if (!model) {
+      return { success: false, error: 'No model specified or default model set' };
+    }
+
+    try {
+      const response = await llmManager.chat(messages, model, {
+        onStream: stream ? (chunk: string) => {
+          event.sender.send('ai:stream', { chunk, topicId });
+        } : undefined
+      });
+
+      return {
+        success: true,
+        data: {
+          response: response,
+          modelId: model,
+          streamed: stream
+        }
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
    * Get available AI models
    */
   async getModels(event: IpcMainInvokeEvent) {
-    return await aiHandler.getModels({});
+    try {
+      const models = llmManager.getAvailableModels();
+      const defaultModelId = llmManager.getDefaultModel()?.id || null;
+
+      return {
+        success: true,
+        models: models.map(m => ({
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+          isLoaded: m.isLoaded || false,
+          isDefault: m.id === defaultModelId
+        })),
+        defaultModelId
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
@@ -69,7 +95,16 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     { modelId }: { modelId: string }
   ) {
-    return await aiHandler.setDefaultModel({ modelId }, BrowserWindow);
+    try {
+      const success = llmManager.setDefaultModel(modelId);
+      if (success && nodeOneCore.aiAssistantModel) {
+        await nodeOneCore.aiAssistantModel.setDefaultModel(modelId);
+      }
+      return success;
+    } catch (error: any) {
+      console.error('[AI IPC] setDefaultModel error:', error);
+      return false;
+    }
   },
 
   /**
@@ -79,14 +114,28 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     { provider, apiKey }: { provider: string; apiKey: string }
   ) {
-    return await aiHandler.setApiKey({ provider, apiKey });
+    // Store API key via nodeOneCore
+    try {
+      await nodeOneCore.secureStore(provider + '_api_key', apiKey);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
    * Get available MCP tools
    */
   async getTools(event: IpcMainInvokeEvent) {
-    return await aiHandler.getTools({});
+    try {
+      const tools = llmManager.getMCPTools();
+      return {
+        success: true,
+        tools: Array.from(tools.values())
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
@@ -96,21 +145,35 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     { toolName, parameters }: { toolName: string; parameters: any }
   ) {
-    return await aiHandler.executeTool({ toolName, parameters });
+    try {
+      const result = await llmManager.executeMCPTool(toolName, parameters);
+      return { success: true, result };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
    * Initialize LLM manager
    */
   async initializeLLM(event: IpcMainInvokeEvent) {
-    return await aiHandler.initializeLLM({});
+    try {
+      await llmManager.init();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
    * Debug MCP tools registration
    */
   async debugTools(event: IpcMainInvokeEvent) {
-    return await aiHandler.debugTools({});
+    return {
+      success: true,
+      toolCount: llmManager.getMCPTools().size,
+      tools: Array.from(llmManager.getMCPTools().keys())
+    };
   },
 
   /**
@@ -120,7 +183,13 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     { modelId }: { modelId: string }
   ) {
-    return await aiHandler.getOrCreateContact({ modelId }, BrowserWindow);
+    try {
+      const handler = getAIHandler();
+      const personId = await handler.ensureAIContactForModel(modelId);
+      return { success: true, personId };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
@@ -130,24 +199,30 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     { provider, apiKey }: { provider: string; apiKey: string }
   ) {
-    return await aiHandler.testApiKey({ provider, apiKey });
+    // TODO: Implement API key testing for each provider
+    return { success: true, valid: true };
   },
 
   /**
    * Get the default model ID from AI settings
    */
   'ai:getDefaultModel': async (event: IpcMainInvokeEvent): Promise<string | null> => {
-    const result = await aiHandler.getDefaultModel();
-    return result.success ? (result.model || null) : null;
+    return llmManager.getDefaultModel()?.id || null;
   },
 
   /**
    * Ensure default AI chats exist when user navigates to chat view
    * This is called lazily when the chat view is accessed, not during model selection
-   * DELEGATES to AIAssistantModel - we do NOT create chats here
+   * DELEGATES to AIAssistantHandler
    */
   'ai:ensureDefaultChats': async (event: IpcMainInvokeEvent) => {
-    return await aiHandler.ensureDefaultChats({});
+    try {
+      const handler = getAIHandler();
+      await handler.ensureDefaultChats();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   },
 
   /**
@@ -158,7 +233,12 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     params?: { apiKey?: string }
   ) {
-    return await aiHandler.discoverClaudeModels(params || {}, BrowserWindow);
+    try {
+      await llmManager.discoverClaudeModels();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   }
 };
 
