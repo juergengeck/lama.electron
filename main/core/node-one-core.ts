@@ -9,7 +9,9 @@ global.WebSocket = WebSocket as any;
 
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { AIAssistantModel } from './ai-assistant-model.js';
+// DEPRECATED: Old monolithic AI assistant model - replaced by component-based architecture
+// import { AIAssistantModel } from './ai-assistant-model.js';
+import { initializeAIAssistantHandler } from './ai-assistant-handler-adapter.js';
 import TopicAnalysisModel from '@lama/core/one-ai/models/TopicAnalysisModel.js';
 // QuicVC API server temporarily disabled during TS migration
 // import RefinioApiServer from '../api/refinio-api-server.js';
@@ -44,7 +46,8 @@ class NodeOneCore implements INodeOneCore {
   public multiUserModel: any;
   public localWsServer: any;
   public instanceModule: any;
-  public aiAssistantModel?: AIAssistantModel;
+  // AI Assistant Handler (refactored component-based architecture)
+  public aiAssistantModel?: any; // AIAssistantHandler from lama.core
   public apiServer: any;
   public topicGroupManager?: TopicGroupManager;
   public federationGroup: any;
@@ -1455,16 +1458,14 @@ class NodeOneCore implements INodeOneCore {
     await llmManager.discoverClaudeModels()
     console.log('[NodeOneCore] ✅ Claude models discovered')
 
-    // Initialize AI Assistant Model to orchestrate everything
+    // Initialize AI Assistant Handler (refactored component-based architecture)
     if (!this.aiAssistantModel) {
-      this.aiAssistantModel = new AIAssistantModel(this)
-      // Pre-warm LLM connections early
-      await this.aiAssistantModel.init()
-      console.log('[NodeOneCore] ✅ AI Assistant Model initialized with pre-warmed connections')
+      this.aiAssistantModel = await initializeAIAssistantHandler(this, llmManager)
+      console.log('[NodeOneCore] ✅ AI Assistant Handler initialized (refactored architecture)')
 
-      // Connect AIAssistantModel to the message listener
+      // Connect AIAssistantHandler to the message listener
       this.aiMessageListener.setAIAssistantModel(this.aiAssistantModel)
-      console.log('[NodeOneCore] ✅ Connected AIAssistantModel to message listener')
+      console.log('[NodeOneCore] ✅ Connected AIAssistantHandler to message listener')
     }
 
     // Register NodeOneCore with MCPManager to enable memory tools
