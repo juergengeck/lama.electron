@@ -2013,14 +2013,19 @@ class NodeOneCore implements INodeOneCore {
       console.log(`[NodeOneCore] Created assertions for Group ${String(groupIdHash).substring(0, 8)} and HashGroup ${String(hashGroupIdHash).substring(0, 8)}`)
 
       // Create certificates for each participant
-      const { AccessVersionedObjectLicense } = await import('@refinio/one.models/lib/recipes/Certificates/CertificateRecipes.js')
+      const { AccessVersionedObjectLicense } = await import('@refinio/one.models/lib/recipes/Certificates/AccessVersionedObjectCertificate.js')
+      const { storeUnversionedObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
+      const { calculateHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
+
+      // Get license hash (store if needed, or calculate from object)
+      const licenseHash = await calculateHashOfObj(AccessVersionedObjectLicense)
 
       for (const participant of participants) {
         const cert = await storeVersionedObject({
           $type$: 'AccessVersionedObjectCertificate',
           person: participant,
           data: groupIdHash,
-          license: AccessVersionedObjectLicense.hash
+          license: licenseHash
         } as any)
 
         // Also create assertion for certificate (optional but recommended)
