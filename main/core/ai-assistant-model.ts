@@ -9,7 +9,8 @@ import type { NodeOneCore } from '../types/one-core.js'
 import { AISettingsManager } from './ai-settings-manager.js'
 import LLMObjectManager from './llm-object-manager.js'
 import { ContextEnrichmentService } from '@lama/core/one-ai/services/ContextEnrichmentService.js'
-import llmManager from '../services/llm-manager.js'
+import type { LLMPlatform } from '@lama/core/services/llm-platform.js'
+import llmManager from '../services/llm-manager-singleton.js'
 const { BrowserWindow } = electron
 
 export class AIAssistantModel {
@@ -20,6 +21,7 @@ export class AIAssistantModel {
   llmObjectManager: LLMObjectManager | null;
   contextEnrichmentService: ContextEnrichmentService | null;
   aiSettingsManager: AISettingsManager | null;
+  platform: LLMPlatform | null;
   isInitialized: boolean;
   topicModelMap: Map<string, string>;
   defaultModelId: string | null;
@@ -35,6 +37,7 @@ export class AIAssistantModel {
     this.llmObjectManager = null
     this.contextEnrichmentService = null
     this.aiSettingsManager = null
+    this.platform = null
     this.isInitialized = false
     this.topicModelMap = new Map()
     this.defaultModelId = null // AI assistant owns this
@@ -94,12 +97,17 @@ export class AIAssistantModel {
   /**
    * Initialize the AI Assistant Model
    */
-  async initialize(llmManagerInstance?: typeof llmManager | null): Promise<void> {
+  async initialize(llmManagerInstance?: typeof llmManager | null, platformInstance?: LLMPlatform | null): Promise<void> {
     console.log('[AIAssistantModel] Initializing...')
 
     // Only set llmManager if we don't already have it from init()
     if (!this.llmManager && llmManagerInstance) {
       this.llmManager = llmManagerInstance
+    }
+
+    // Set platform if provided
+    if (!this.platform && platformInstance) {
+      this.platform = platformInstance
     }
 
     // Create AISettingsManager using static import
@@ -155,50 +163,7 @@ export class AIAssistantModel {
    * 1. Register existing 'hi' and 'lama' topics if they exist (even without a default model)
    * 2. Create new ones if they don't exist (requires a default model)
    */
-  async ensureDefaultChats(): Promise<void> {
-    console.log('[AIAssistantModel] Ensuring default AI chats...')
-
-    // FIRST: Try to register existing topics even without a default model
-    // This handles the case where LAMA exists but wasn't found during scanning
-    const hiExists = await this.checkAndRegisterExistingTopic('hi')
-    const lamaExists = await this.checkAndRegisterExistingTopic('lama')
-
-    // If both exist, we're done - they've been registered
-    if (hiExists && lamaExists) {
-      console.log('[AIAssistantModel] Both Hi and LAMA already exist and are registered')
-      return
-    }
-
-    // SECOND: Create missing topics (requires default model)
-    const model = this.getDefaultModel()
-    if (!model) {
-      console.log('[AIAssistantModel] No default model - cannot create missing default chats')
-      return
-    }
-
-    const modelId = typeof model === 'string' ? model : model.id
-    const aiPersonId = await this.ensureAIContactForModel(modelId)
-    if (!aiPersonId) {
-      console.error('[AIAssistantModel] Could not get AI person ID')
-      return
-    }
-
-    // Create Hi if it doesn't exist
-    if (!hiExists) {
-      await this.ensureHiChat(modelId, aiPersonId)
-    }
-
-    // Create LAMA if it doesn't exist (uses private model variant)
-    if (!lamaExists) {
-      const privateModelId = modelId + '-private'
-      const privateAiPersonId = await this.ensureAIContactForModel(privateModelId)
-      if (!privateAiPersonId) {
-        console.error('[AIAssistantModel] Could not get private AI person ID for LAMA')
-        return
-      }
-      await this.ensureLamaChat(privateModelId, privateAiPersonId)
-    }
-  }
+  // REMOVED: ensureDefaultChats() - replaced with proper create/update logic in setDefaultModel()
 
   /**
    * Check if a topic exists and register it if found
@@ -248,30 +213,21 @@ export class AIAssistantModel {
   /**
    * Ensure Hi chat exists with static welcome message
    */
-  private async ensureHiChat(modelId: string, aiPersonId: any): Promise<void> {
-    console.log('[AIAssistantModel] Ensuring Hi chat...')
+  /**
+   * Create Hi chat - throws if it already exists
+   */
+  private async createHiChat(modelId: string, aiPersonId: any): Promise<void> {
+    console.log('[AIAssistantModel] Creating Hi chat...')
 
-    try {
-      // Check if Hi topic already has messages
-      let topicRoom
-      let needsWelcome = false
+    // Create the topic - this will throw if it already exists
+    await this.nodeOneCore.topicGroupManager.createGroupTopic('Hi', 'hi', [aiPersonId])
 
-      try {
-        topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('hi')
-        const messages = await topicRoom.retrieveAllMessages()
-        needsWelcome = messages.length === 0
-      } catch (e) {
-        // Topic doesn't exist, create it
-        await this.nodeOneCore.topicGroupManager.createGroupTopic('Hi', 'hi', [aiPersonId])
-        topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('hi')
-        needsWelcome = true
-      }
+    // Register as AI topic
+    this.registerAITopic('hi', modelId)
 
-      // Register as AI topic
-      this.registerAITopic('hi', modelId)
-
-      if (needsWelcome) {
-        const staticWelcome = `Hi! I'm LAMA, your local AI assistant.
+    // Send static welcome message
+    const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('hi')
+    const staticWelcome = `Hi! I'm LAMA, your local AI assistant.
 
 You can make me your own, give me a name of your choice, give me a persistent identity.
 
@@ -281,60 +237,78 @@ The LAMA chat below is my memory. You can configure its visibility in Settings. 
 
 What can I help you with today?`
 
-        await topicRoom.sendMessage(staticWelcome, aiPersonId, aiPersonId)
-        console.log('[AIAssistantModel] ✅ Hi chat created with welcome message')
-      } else {
-        console.log('[AIAssistantModel] ✅ Hi chat already exists')
-      }
-    } catch (error) {
-      console.error('[AIAssistantModel] Failed to ensure Hi chat:', error)
-    }
+    await topicRoom.sendMessage(staticWelcome, aiPersonId, aiPersonId)
+    console.log('[AIAssistantModel] ✅ Created Hi chat with static welcome')
   }
 
   /**
-   * Ensure LAMA chat exists with AI-generated welcome message
-   * @param privateModelId - The private model ID (e.g., "gpt-oss:20b-private")
-   * @param privateAiPersonId - The Person ID for the private model variant
+   * Create LAMA chat - throws if it already exists
    */
-  private async ensureLamaChat(privateModelId: string, privateAiPersonId: any): Promise<void> {
-    console.log(`[AIAssistantModel] Ensuring LAMA chat with private model: ${privateModelId}`)
+  private async createLamaChat(privateModelId: string, privateAiPersonId: any): Promise<void> {
+    console.log(`[AIAssistantModel] Creating LAMA chat with private model: ${privateModelId}`)
 
-    try {
-      // Check if LAMA topic already has messages
-      let topicRoom
-      let needsWelcome = false
+    // Create the topic with the PRIVATE AI contact - this will throw if it already exists
+    await this.nodeOneCore.topicGroupManager.createGroupTopic('LAMA', 'lama', [privateAiPersonId])
 
-      try {
-        topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
-        const messages = await topicRoom.retrieveAllMessages()
-        needsWelcome = messages.length === 0
-      } catch (e) {
-        // Topic doesn't exist, create it with the PRIVATE AI contact
-        await this.nodeOneCore.topicGroupManager.createGroupTopic('LAMA', 'lama', [privateAiPersonId])
-        topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
-        needsWelcome = true
-      }
+    // Register as AI topic with the PRIVATE model ID
+    this.registerAITopic('lama', privateModelId)
 
-      // Register as AI topic with the PRIVATE model ID
-      this.registerAITopic('lama', privateModelId)
+    // Generate welcome message asynchronously (non-blocking)
+    const topicRoom = await this.nodeOneCore.topicModel.enterTopicRoom('lama')
+    setImmediate(() => {
+      this.handleNewTopic('lama', topicRoom).catch(err => {
+        console.error('[AIAssistantModel] Failed to generate LAMA welcome:', err)
+      })
+    })
 
-      if (needsWelcome) {
-        // Use the private model that was passed in
-        const privateModel = this.llmManager?.getModel(privateModelId) || this.getModelById(privateModelId.replace('-private', ''))
+    console.log('[AIAssistantModel] ✅ Created LAMA chat, generating welcome message')
+  }
 
-        // Generate welcome message asynchronously (non-blocking)
-        setImmediate(() => {
-          this.handleNewTopic('lama', topicRoom).catch(err => {
-            console.error('[AIAssistantModel] Failed to generate LAMA welcome:', err)
-          })
-        })
-        console.log('[AIAssistantModel] ✅ LAMA chat created, welcome message generating in background')
-      } else {
-        console.log('[AIAssistantModel] ✅ LAMA chat already exists')
-      }
-    } catch (error) {
-      console.error('[AIAssistantModel] Failed to ensure LAMA chat:', error)
+  /**
+   * Update topic participant when changing models
+   */
+  private async updateTopicParticipant(topicId: string, newAiPersonId: any): Promise<void> {
+    console.log(`[AIAssistantModel] Updating topic ${topicId} participant to ${String(newAiPersonId).substring(0, 8)}...`)
+
+    // Get the conversation group for this topic
+    const groupIdHash = this.nodeOneCore.topicGroupManager.conversationGroups.get(topicId)
+    if (!groupIdHash) {
+      throw new Error(`No group found for topic ${topicId}`)
     }
+
+    // Get the existing group
+    const { getIdObject, getObjectByIdHash } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+    const group = await getIdObject(groupIdHash) as any
+
+    // Resolve HashGroup to get participants
+    const hashGroup = await getObjectByIdHash(group.hashGroup)
+    const participants = hashGroup.obj.members || []
+    const newParticipants = participants.filter((p: any) => {
+      // Keep if it's not an AI contact (i.e., it's the owner)
+      return !this.isAIPerson(p)
+    })
+
+    // Add new AI participant
+    newParticipants.push(newAiPersonId)
+
+    // Create new HashGroup with updated participants
+    const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
+    const newHashGroup = {
+      $type$: 'HashGroup' as const,
+      members: newParticipants
+    }
+    const hashGroupResult = await storeVersionedObject(newHashGroup)
+
+    // Update the group to reference new HashGroup
+    const updatedGroup = {
+      $type$: 'Group' as const,
+      $versionHash$: (group as any).$versionHash$,
+      name: group.name,
+      hashGroup: hashGroupResult.idHash
+    }
+    await storeVersionedObject(updatedGroup)
+
+    console.log(`[AIAssistantModel] ✅ Updated topic ${topicId} participant`)
   }
 
   // REMOVED: createLamaTopicWithWelcome() - deprecated, use ensureDefaultChats() instead
@@ -374,11 +348,13 @@ What can I help you with today?`
           const person = await getIdObject(personId)
           const email = (person as any).email || ''
 
-          console.log(`[AIAssistantModel] Checking contact: email="${email}", personId=${personId.toString().substring(0, 8)}...`)
+          const personIdShort = personId.toString().substring(0, 8)
+          console.log(`[AIAssistantModel] Checking contact: email="${email}", personId=${personIdShort}...`)
 
           // Extract model ID from email (reverse the pattern from createAIContact)
           // Pattern: "${modelId.replace(/[^a-zA-Z0-9]/g, '_')}@ai.local"
           if (email.endsWith('@ai.local')) {
+            console.log(`[AIAssistantModel] 🔍 Contact ${personIdShort} has @ai.local email, checking if it matches a model...`)
             // Convert email back to modelId by replacing underscores with original chars
             const emailPrefix = email.replace('@ai.local', '')
 
@@ -415,6 +391,12 @@ What can I help you with today?`
       }
 
       console.log(`[AIAssistantModel] ✅ Loaded ${aiContactCount} AI contacts from ${others.length} total contacts`)
+
+      // Log all AI contacts for debugging
+      console.log(`[AIAssistantModel] AI Contacts cache:`)
+      for (const [modelId, personId] of this.aiContacts) {
+        console.log(`[AIAssistantModel]   - ${modelId} → ${personId.toString().substring(0, 8)}...`)
+      }
     } catch (error) {
       console.error('[AIAssistantModel] Failed to load AI contacts:', error)
     }
@@ -763,14 +745,11 @@ What can I help you with today?`
                     }
                     console.log(`[AIAssistantModel] Created ${subjectKeywords?.length || 0} keywords for subject: ${name}`)
 
-                    // Notify UI that a new subject was created
-                    for (const window of BrowserWindow.getAllWindows()) {
-                      window.webContents.send('subjects:updated', {
-                        topicId,
-                        subject: { id: subject.idHash, name, description, keywords: keywordTerms }
-                      })
+                    // Notify UI that subjects have been updated using platform abstraction
+                    if (this.platform?.emitAnalysisUpdate) {
+                      this.platform.emitAnalysisUpdate(topicId, 'subjects')
+                      console.log(`[AIAssistantModel] Emitted subjects analysis update for topic ${topicId}`)
                     }
-                    console.log(`[AIAssistantModel] Sent subjects:updated event to UI for topic ${topicId}`)
                   } else {
                     // Update existing subject or mark as active
                     const subjects = await (this.nodeOneCore as any).topicAnalysisModel.getSubjects(topicId)
@@ -781,25 +760,21 @@ What can I help you with today?`
                       await (this.nodeOneCore as any).topicAnalysisModel.unarchiveSubject(topicId, existing.id)
                       console.log(`[AIAssistantModel] Reactivated subject: ${name}`)
 
-                      // Notify UI that subject was reactivated
-                      for (const window of BrowserWindow.getAllWindows()) {
-                        window.webContents.send('subjects:updated', {
-                          topicId,
-                          subject: existing
-                        })
+                      // Notify UI that subject was reactivated using platform abstraction
+                      if (this.platform?.emitAnalysisUpdate) {
+                        this.platform.emitAnalysisUpdate(topicId, 'subjects')
+                        console.log(`[AIAssistantModel] Emitted subjects analysis update for topic ${topicId}`)
                       }
                     }
                     }
                   }
                 }
 
-                // Notify UI that keywords have been updated for all subjects
-                for (const window of BrowserWindow.getAllWindows()) {
-                  window.webContents.send('keywords:updated', {
-                    topicId
-                  })
+                // Notify UI that keywords have been updated for all subjects using platform abstraction
+                if (this.platform?.emitAnalysisUpdate) {
+                  this.platform.emitAnalysisUpdate(topicId, 'keywords')
+                  console.log(`[AIAssistantModel] Emitted keywords analysis update for topic ${topicId}`)
                 }
-                console.log(`[AIAssistantModel] Sent keywords:updated event to UI for topic ${topicId}`)
               }
 
               // Process summary update if provided
@@ -1080,18 +1055,28 @@ What can I help you with today?`
   isAIPerson(personId: any): any {
     if (!personId) return false
 
+    const personIdStr = personId.toString().substring(0, 8)
+
     // Check if this person ID is in our AI contacts cache
     for (const [modelId, aiPersonId] of this.aiContacts) {
       if (aiPersonId === personId) {
+        console.log(`[AIAssistantModel] ✅ Person ${personIdStr}... IS AI via aiContacts (modelId: ${modelId})`)
         return true
       }
     }
 
     // Also check with LLMObjectManager if available
     if (this.llmObjectManager) {
-      return this.llmObjectManager.isLLMPerson(personId)
+      const isLLM = this.llmObjectManager.isLLMPerson(personId)
+      if (isLLM) {
+        console.log(`[AIAssistantModel] ✅ Person ${personIdStr}... IS AI via LLMObjectManager`)
+      } else {
+        console.log(`[AIAssistantModel] ❌ Person ${personIdStr}... is NOT AI (checked both aiContacts and LLMObjectManager)`)
+      }
+      return isLLM
     }
 
+    console.log(`[AIAssistantModel] ❌ Person ${personIdStr}... is NOT AI (no llmObjectManager)`)
     return false
   }
 
@@ -1381,6 +1366,9 @@ What can I do for you today?`
   async setDefaultModel(modelId: any): Promise<any> {
     console.log('[AIAssistantModel] Setting default model:', modelId)
 
+    const isFirstTime = !this.defaultModelId
+    const oldModelId = this.defaultModelId
+
     // Update local state
     this.defaultModelId = modelId
 
@@ -1395,6 +1383,45 @@ What can I do for you today?`
     }
 
     console.log('[AIAssistantModel] Default model set and persisted')
+
+    // Get AI person ID for this model
+    const aiPersonId = await this.ensureAIContactForModel(modelId)
+    if (!aiPersonId) {
+      throw new Error(`Failed to create AI contact for model ${modelId}`)
+    }
+
+    if (isFirstTime) {
+      console.log('[AIAssistantModel] First model selection - creating Hi and LAMA chats')
+
+      // Create Hi chat
+      await this.createHiChat(modelId, aiPersonId)
+
+      // Create LAMA chat with private model variant
+      const privateModelId = modelId + '-private'
+      const privateAiPersonId = await this.ensureAIContactForModel(privateModelId)
+      if (!privateAiPersonId) {
+        throw new Error(`Failed to create private AI contact for model ${privateModelId}`)
+      }
+      await this.createLamaChat(privateModelId, privateAiPersonId)
+
+    } else {
+      console.log(`[AIAssistantModel] Model changed from ${oldModelId} to ${modelId} - updating participants`)
+
+      // Update Hi chat participant
+      await this.updateTopicParticipant('hi', aiPersonId)
+
+      // Update LAMA chat participant (private variant)
+      const privateModelId = modelId + '-private'
+      const privateAiPersonId = await this.ensureAIContactForModel(privateModelId)
+      if (!privateAiPersonId) {
+        throw new Error(`Failed to create private AI contact for model ${privateModelId}`)
+      }
+      await this.updateTopicParticipant('lama', privateAiPersonId)
+
+      // Update topic-to-model mappings
+      this.registerAITopic('hi', modelId)
+      this.registerAITopic('lama', privateModelId)
+    }
   }
 
   /**
