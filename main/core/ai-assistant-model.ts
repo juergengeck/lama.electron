@@ -282,7 +282,7 @@ What can I help you with today?`
 
     // Resolve HashGroup to get participants
     const hashGroup = await getObjectByIdHash(group.hashGroup)
-    const participants = hashGroup.obj.members || []
+    const participants = (hashGroup.obj as any).members || []
     const newParticipants = participants.filter((p: any) => {
       // Keep if it's not an AI contact (i.e., it's the owner)
       return !this.isAIPerson(p)

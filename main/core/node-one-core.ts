@@ -1096,7 +1096,8 @@ class NodeOneCore implements INodeOneCore {
     console.log('[NodeOneCore] Federation API initialized')
 
     // Create AssertionVerifier for Group sharing via objectFilter
-    const instanceOwner = await this.leuteModel.me().mainIdentity()
+    const me = await this.leuteModel.me()
+    const instanceOwner = await me.mainIdentity()
     const { getInstanceOwnerIdHash, getInstanceIdHash } = await import('@refinio/one.core/lib/instance.js')
     const instanceIdHash = await getInstanceIdHash()
 
@@ -2012,7 +2013,7 @@ class NodeOneCore implements INodeOneCore {
       console.log(`[NodeOneCore] Created assertions for Group ${String(groupIdHash).substring(0, 8)} and HashGroup ${String(hashGroupIdHash).substring(0, 8)}`)
 
       // Create certificates for each participant
-      const { AccessVersionedObjectLicense } = await import('@refinio/one.core/lib/recipes.js')
+      const { AccessVersionedObjectLicense } = await import('@refinio/one.models/lib/recipes/Certificates/CertificateRecipes.js')
 
       for (const participant of participants) {
         const cert = await storeVersionedObject({
@@ -2020,7 +2021,7 @@ class NodeOneCore implements INodeOneCore {
           person: participant,
           data: groupIdHash,
           license: AccessVersionedObjectLicense.hash
-        })
+        } as any)
 
         // Also create assertion for certificate (optional but recommended)
         await this.assertionVerifier.createAssertion(cert.hash)
