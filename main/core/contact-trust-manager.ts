@@ -256,7 +256,8 @@ class ContactTrustManager extends EventEmitter {
     // Create Someone object with trust VC reference
     const SomeoneModel = (await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')).default
 
-    const someone = await SomeoneModel.constructWithNewSomeone(personIdHash, this.nodeOneCore?.leuteModel)
+    const someoneId = `someone-for-${credential.subject}`
+    const someone = await SomeoneModel.constructWithNewSomeone(this.nodeOneCore.leuteModel, someoneId, profile)
     
     // Add to contacts (but with limited permissions due to trust level)
     if (this.nodeOneCore.leuteModel) {

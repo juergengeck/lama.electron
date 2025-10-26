@@ -240,7 +240,7 @@ export function ConnectionsView({ onNavigateToChat }: ConnectionsViewProps = {})
     
     try {
       // Call the Node.js handler to accept the invitation
-      const result = await window.electronAPI.invoke('iom:acceptPairingInvitation', invitationUrl)
+      const result = await window.electronAPI.invoke('connection:acceptPairingInvitation', invitationUrl)
       
       if (result.success) {
         console.log('[ConnectionsView] Invitation accepted successfully')

@@ -149,10 +149,12 @@ export class AISettingsManager {
 
   /**
    * Get the default model ID
+   * Returns null if no model is configured (undefined or empty string)
    */
   async getDefaultModelId(): Promise<string | null> {
     const settings = await this.getSettings()
-    return settings?.defaultModelId ?? null
+    // Return null if defaultModelId is undefined, null, or empty string
+    return settings?.defaultModelId || null
   }
 
   /**

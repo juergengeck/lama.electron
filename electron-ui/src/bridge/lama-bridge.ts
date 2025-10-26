@@ -27,6 +27,7 @@ export interface LamaAPI {
   queryLocalAI: (prompt: string) => Promise<string>
   loadModel: (modelId: string) => Promise<boolean>
   getAvailableModels: () => Promise<any[]>
+  getDefaultModel: () => Promise<string | null>
   setDefaultModel: (modelId: string) => Promise<boolean>
   enableAIForTopic: (topicId: string) => Promise<boolean>
   disableAIForTopic: (topicId: string) => Promise<boolean>
@@ -288,6 +289,19 @@ class LamaBridge implements LamaAPI {
     // Handler returns result.data.models, not result.models
     return result.data?.models || []
   }
+
+  async getDefaultModel(): Promise<string | null> {
+    if (!window.electronAPI) {
+      throw new Error('IPC not available')
+    }
+    try {
+      const result = await window.electronAPI.invoke('ai:getDefaultModel')
+      return result || null
+    } catch (error) {
+      console.error('[LamaBridge] Failed to get default model:', error)
+      return null
+    }
+  }
   
   async setDefaultModel(modelId: string): Promise<boolean> {
     if (!window.electronAPI) {
@@ -458,14 +472,14 @@ class LamaBridge implements LamaAPI {
     return await window.electronAPI.invoke('devices:connected')
   }
   
-  async createInvitation(): Promise<any> {
+  async createInvitation(mode?: 'IoM' | 'IoP'): Promise<any> {
     if (!window.electronAPI) {
       return {
         success: false,
         error: 'Invitations require Electron environment'
       }
     }
-    return await window.electronAPI.invoke('invitation:create')
+    return await window.electronAPI.invoke('invitation:create', mode)
   }
 }
 

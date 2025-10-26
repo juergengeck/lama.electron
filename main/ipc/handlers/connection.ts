@@ -1,8 +1,8 @@
 /**
- * IOM IPC Handlers (Thin Adapter)
+ * Connection IPC Handlers (Thin Adapter)
  *
- * Maps Electron IPC calls to IOMHandler methods.
- * Business logic lives in ../../../lama.core/handlers/IOMHandler.ts
+ * Maps Electron IPC calls to ConnectionHandler methods.
+ * Business logic lives in @chat/core/handlers/ConnectionHandler.ts
  * Platform-specific operations (fs, storage, events) handled here.
  */
 
@@ -11,11 +11,16 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import type { IpcMainInvokeEvent } from 'electron';
-import { IOMHandler } from '@lama/core/handlers/IOMHandler.js';
+import { ConnectionHandler } from '@chat/core/handlers/ConnectionHandler.js';
 import nodeOneCore from '../../core/node-one-core.js';
 
 // Singleton handler instance
-let iomHandler: IOMHandler | null = null;
+let connectionHandler: ConnectionHandler | null = null;
+
+// Get web URL from global config
+function getWebUrl(): string | undefined {
+  return (global as any).lamaConfig?.web?.url;
+}
 
 /**
  * Platform-specific storage provider for Electron
@@ -26,7 +31,8 @@ const storageProvider = {
    */
   async getNodeStorage() {
     try {
-      const dataPath = path.join(process.cwd(), 'OneDB');
+      // Use runtime configuration path (respects --storage CLI arg)
+      const dataPath = (global as any).lamaConfig?.instance.directory || path.join(process.cwd(), 'OneDB');
 
       let totalSize = 0;
       let availableSpace = 0;
@@ -52,7 +58,7 @@ const storageProvider = {
           }
         }
       } catch (e) {
-        console.error('[IOM] Failed to get disk stats:', e);
+        console.error('[Connection] Failed to get disk stats:', e);
         availableSpace = os.freemem();
       }
 
@@ -81,7 +87,7 @@ const storageProvider = {
         percentage: totalCapacity > 0 ? Math.round((totalSize / totalCapacity) * 100) : 0
       };
     } catch (error) {
-      console.error('[IOM] Failed to get storage info:', error);
+      console.error('[Connection] Failed to get storage info:', error);
       return {
         used: 0,
         total: 0,
@@ -94,30 +100,33 @@ const storageProvider = {
 /**
  * Get handler instance (creates on first use)
  */
-function getHandler(): IOMHandler {
-  if (!iomHandler) {
-    iomHandler = new IOMHandler(nodeOneCore, storageProvider);
+function getHandler(): ConnectionHandler {
+  if (!connectionHandler) {
+    const webUrl = getWebUrl();
+    connectionHandler = new ConnectionHandler(nodeOneCore, storageProvider, webUrl);
   }
-  return iomHandler;
+  return connectionHandler;
 }
 
 /**
- * Get current IOM instances and their states
+ * Get current instances and their states
  * Delegates to one.models ConnectionsModel
  */
-async function getIOMInstances(event: IpcMainInvokeEvent) {
+async function getInstances(event: IpcMainInvokeEvent) {
   const handler = getHandler();
-  const result = await handler.getIOMInstances({});
+  const result = await handler.getInstances({});
   return result.instances;
 }
 
 /**
  * Create a pairing invitation
  * Delegates to one.models ConnectionsModel.pairing
+ * Supports both IoM (device) and IoP (partner) modes
  */
-async function createPairingInvitation(event: IpcMainInvokeEvent) {
+async function createPairingInvitation(event: IpcMainInvokeEvent, mode?: 'IoM' | 'IoP') {
   const handler = getHandler();
-  return await handler.createPairingInvitation({});
+  const webUrl = getWebUrl();
+  return await handler.createPairingInvitation({ mode, webUrl });
 }
 
 /**
@@ -139,12 +148,36 @@ async function getConnectionStatus(event: IpcMainInvokeEvent) {
 }
 
 /**
+ * Get data statistics (storage, objects, etc.)
+ * TODO: Implement proper stats calculation
+ */
+async function getDataStats(event: IpcMainInvokeEvent) {
+  try {
+    return {
+      success: true,
+      data: {
+        totalObjects: 0,
+        messages: 0,
+        files: 0,
+        contacts: 0,
+        conversations: 0
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: (error as Error).message
+    };
+  }
+}
+
+/**
  * Subscribe to ONE.core events for real-time updates
  * Uses one.models event emitters instead of custom tracking
  */
 function subscribeToEvents(callback: (event: any) => void) {
   if (!nodeOneCore.connectionsModel) {
-    console.warn('[IOM] ConnectionsModel not available for event subscription');
+    console.warn('[Connection] ConnectionsModel not available for event subscription');
     return;
   }
 
@@ -192,13 +225,14 @@ function subscribeToEvents(callback: (event: any) => void) {
     });
   }
 
-  console.log('[IOM] Subscribed to ONE.core events');
+  console.log('[Connection] Subscribed to ONE.core events');
 }
 
 export default {
-  getIOMInstances,
+  getInstances,
   createPairingInvitation,
   acceptPairingInvitation,
   getConnectionStatus,
+  getDataStats,
   subscribeToEvents
 };

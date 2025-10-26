@@ -34,18 +34,8 @@ export function useLamaInit() {
         const initialized = browserInit.isInitialized()
         const currentUser = browserInit.getCurrentUser()
         
-        // If already authenticated, connect the bridge
-        if (currentUser) {
-          const appModel = browserInit.getAppModel()
-          
-          if (appModel) {
-            console.log('[useLamaInit] Connecting lamaBridge to existing session...')
-            const { lamaBridge } = await import('@/bridge/lama-bridge')
-            
-            lamaBridge.setAppModel(appModel)
-            console.log('[useLamaInit] ✅ lamaBridge connected for existing session')
-          }
-        }
+        // lamaBridge is already initialized via IPC in its constructor
+        // No need to connect AppModel - browser is UI-only
         
         setState({
           isInitialized: initialized,
@@ -90,20 +80,9 @@ export function useLamaInit() {
           hint: password // Store password hint for auto-login
         }))
         
-        // Connect lamaBridge to the proper AppModel
-        const appModel = browserInit.getAppModel()
-        
-        if (appModel) {
-          console.log('[useLamaInit] Connecting lamaBridge to AppModel...')
-          // Import and set up bridge
-          const { lamaBridge } = await import('@/bridge/lama-bridge')
-          
-          // Connect the bridge with the full AppModel
-          lamaBridge.setAppModel(appModel)
-          console.log('[useLamaInit] ✅ lamaBridge connected to AppModel')
-        } else {
-          console.warn('[useLamaInit] No AppModel available for bridge connection')
-        }
+        // lamaBridge is already initialized via IPC in its constructor
+        // No need to connect AppModel - browser is UI-only
+        console.log('[useLamaInit] Login successful, lamaBridge uses IPC')
         
         setState(prev => ({
           ...prev,

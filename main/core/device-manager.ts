@@ -21,7 +21,9 @@ class DeviceManager {
     this.devices = new Map() // deviceId -> device info
     this.invites = new Map() // inviteId -> invite info
     this.connections = new Map() // websocket -> device info
-    this.configFile = path.join(process.cwd(), 'OneDB', 'devices.json')
+    // Use runtime configuration path (respects --storage CLI arg)
+    const storageDir = (global as any).lamaConfig?.instance.directory || path.join(process.cwd(), 'OneDB')
+    this.configFile = path.join(storageDir, 'devices.json')
 }
 
   /**

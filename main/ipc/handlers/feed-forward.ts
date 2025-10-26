@@ -5,7 +5,7 @@
  * Business logic lives in ../../../lama.core/handlers/FeedForwardHandler.ts
  */
 
-import { FeedForwardHandler } from '@lama/core/handlers/FeedForwardHandler.js';
+import { FeedForwardHandler } from '@chat/core/handlers/FeedForwardHandler.js';
 import FeedForwardManager from '../../core/feed-forward/manager.js';
 import type { IpcMainInvokeEvent } from 'electron';
 

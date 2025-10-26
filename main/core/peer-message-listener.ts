@@ -215,8 +215,8 @@ class PeerMessageListener {
     for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer)
     }
-    this.debounceTimers.clear()
-    (this.lastMessageCounts as any).clear()
+    this.debounceTimers.clear();
+    (this.lastMessageCounts as any).clear();
     
     console.log('[PeerMessageListener] Peer message listener stopped')
   }

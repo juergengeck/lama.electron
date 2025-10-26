@@ -201,10 +201,79 @@ class NodeProvisioning {
       } catch (error) {
         console.error('[NodeProvisioning] Failed to create pairing invitation:', error)
       }
-      
-      // Profile and endpoint creation handled in initializeNodeInstance now
-      // No need to duplicate here
-      
+
+      // Create profile with OneInstanceEndpoint so the instance can be paired
+      console.log('[NodeProvisioning] Creating profile with OneInstanceEndpoint...')
+      try {
+        const { getInstanceIdHash } = await import('@refinio/one.core/lib/instance.js')
+        const { getDefaultKeys } = await import('@refinio/one.core/lib/keychain/keychain.js')
+        const { default: ProfileModel } = await import('@refinio/one.models/lib/models/Leute/ProfileModel.js')
+
+        const instanceId = getInstanceIdHash()
+        const personId = nodeOneCore.ownerId
+
+        // Create the OneInstanceEndpoint for the Node
+        const personKeys = await getDefaultKeys(personId)
+        const instanceKeys = await getDefaultKeys(instanceId)
+
+        // Get commServerUrl from nodeOneCore
+        const commServerUrl = (nodeOneCore as any).commServerUrl || 'wss://comm10.dev.refinio.one'
+
+        const endpoint = {
+          $type$: 'OneInstanceEndpoint' as const,
+          personId: personId,
+          instanceId: instanceId,
+          personKeys: personKeys,
+          instanceKeys: instanceKeys,
+          url: commServerUrl
+        }
+
+        // Get or create profile for the Node's owner
+        const me = await nodeOneCore.leuteModel.me()
+        console.log('[NodeProvisioning] Getting main profile for Node person:', personId)
+        let profile = await me.mainProfile()
+
+        if (!profile) {
+          // Create profile on-the-fly
+          console.log('[NodeProvisioning] No existing profile found, creating new one...')
+          profile = await ProfileModel.constructWithNewProfile(personId, personId, 'default')
+          console.log('[NodeProvisioning] Created new profile for Node instance:', profile.idHash)
+        } else {
+          console.log('[NodeProvisioning] Using existing profile:', profile.idHash)
+        }
+
+        // Initialize communicationEndpoints array if it doesn't exist
+        if (!profile.communicationEndpoints) {
+          profile.communicationEndpoints = []
+          console.log('[NodeProvisioning] Initialized empty communicationEndpoints array')
+        } else {
+          console.log('[NodeProvisioning] Existing communicationEndpoints:', profile.communicationEndpoints.length, 'endpoints')
+        }
+
+        // Add or update the endpoint
+        const existingIndex = profile.communicationEndpoints.findIndex(
+          (ep: any) => ep.$type$ === 'OneInstanceEndpoint' && ep.instanceId === instanceId
+        )
+
+        if (existingIndex >= 0) {
+          profile.communicationEndpoints[existingIndex] = endpoint
+          console.log('[NodeProvisioning] Updated existing OneInstanceEndpoint at index:', existingIndex)
+        } else {
+          profile.communicationEndpoints.push(endpoint)
+          console.log('[NodeProvisioning] Added new OneInstanceEndpoint to profile')
+          console.log('[NodeProvisioning] Total endpoints now:', profile.communicationEndpoints.length)
+        }
+
+        console.log('[NodeProvisioning] Saving profile with endpoint...')
+        await profile.saveAndLoad()
+        console.log('[NodeProvisioning] ✅ Profile saved successfully with OneInstanceEndpoint')
+        console.log('[NodeProvisioning] Node person ID:', personId?.substring(0, 8))
+        console.log('[NodeProvisioning] Endpoint URL:', endpoint.url)
+
+      } catch (error) {
+        console.error('[NodeProvisioning] Failed to create profile with endpoint:', error)
+      }
+
       // Register browser instance for federation if info provided
       if (provisioningData.browserInstance) {
         console.log('[NodeProvisioning] Registering browser instance for federation...')
@@ -342,7 +411,7 @@ class NodeProvisioning {
     switch (capability) {
       case 'llm':
         // Initialize LLM capability - integrate with main process LLMManager
-        const { default: llmManager } = await import('../services/llm-manager.js')
+        const { default: llmManager } = await import('../services/llm-manager-singleton.js')
         const availableModels: any[] = llmManager.getAvailableModels().map((m: any) => m.id)
 
         await nodeOneCore.setState('capabilities.llm', {
@@ -422,7 +491,8 @@ class NodeProvisioning {
       // Clear storage (optional - for full reset)
       const fs = (await import('fs')).promises
       const path = await import('path')
-      const dataPath = path.join(process.cwd(), 'OneDB')
+      // Use runtime configuration path (respects --storage CLI arg)
+      const dataPath = (global as any).lamaConfig?.instance.directory || path.join(process.cwd(), 'OneDB')
       
       try {
         await fs.rm(dataPath, { recursive: true, force: true })

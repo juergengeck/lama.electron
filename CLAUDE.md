@@ -20,8 +20,13 @@ This file provides guidance to Claude Code when working with LAMA Electron.
   - `lmstudio.ts` - HTTP client for LM Studio
   - `claude.ts` - HTTP client for Anthropic Claude API
 
-- **AI Models** (`models/*`):
-  - `ai-assistant-model.ts` - AI contact/conversation management
+- **AI Models** (`models/ai/*`) - Component-based AI assistant architecture:
+  - `AIContactManager.ts` - AI Person/Profile/Someone lifecycle management
+  - `AITopicManager.ts` - Topic-to-model mappings and state management
+  - `AITaskManager.ts` - Dynamic task associations for IoM (Information over Messages)
+  - `AIPromptBuilder.ts` - Prompt construction with conversation context
+  - `AIMessageProcessor.ts` - Message queuing and LLM invocation
+  - `AIAssistantHandler.ts` - Main orchestrator (in handlers/)
   - `TopicAnalysisModel.ts` - Keyword/subject extraction from conversations
 
 **Dependencies**: ONLY `@refinio/one.core` and `@refinio/one.models`
@@ -76,6 +81,82 @@ export default {
 };
 ```
 
+## AI Assistant Architecture (Refactored)
+
+**IMPORTANT**: The AI assistant has been refactored from a monolithic 1605-line class into focused, platform-agnostic components.
+
+### Component-Based Architecture
+
+**Location**: `lama.core/models/ai/` and `lama.core/handlers/`
+
+```
+AIAssistantHandler (orchestrator)
+├── AIContactManager (300 lines) → AI contact lifecycle
+├── AITopicManager (390 lines) → Topic mappings & state
+├── AITaskManager (310 lines) → IoM task execution
+├── AIPromptBuilder (380 lines) → Prompt construction
+└── AIMessageProcessor (400 lines) → Message processing & LLM
+```
+
+**Key Features**:
+- ✅ All components <400 lines
+- ✅ Zero Electron dependencies in lama.core
+- ✅ Platform-agnostic via LLMPlatform interface
+- ✅ Two-phase initialization resolves circular dependencies
+- ✅ Dependency injection pattern throughout
+
+### Platform Abstraction Layer
+
+**LLMPlatform Interface** - `lama.core/services/llm-platform.ts`
+- Defines platform-agnostic event emission
+- `emitProgress()`, `emitError()`, `emitMessageUpdate()`
+- Optional MCP server operations
+
+**Platform Implementations**:
+- **ElectronLLMPlatform** - `lama.electron/adapters/electron-llm-platform.ts` (BrowserWindow events)
+- **BrowserLLMPlatform** - `lama.browser/adapters/browser-llm-platform.ts` (postMessage events)
+
+### Integration Pattern
+
+**Electron** - `lama.electron/main/core/ai-assistant-handler-adapter.ts`:
+```typescript
+import { AIAssistantHandler } from '@lama/core/handlers/AIAssistantHandler.js';
+import { ElectronLLMPlatform } from '../../adapters/electron-llm-platform.js';
+
+const platform = new ElectronLLMPlatform(mainWindow);
+const handler = new AIAssistantHandler({
+  oneCore: nodeOneCore,
+  channelManager: nodeOneCore.channelManager,
+  topicModel: nodeOneCore.topicModel,
+  leuteModel: nodeOneCore.leuteModel,
+  llmManager: llmManager,
+  platform: platform
+});
+
+await handler.init();
+```
+
+**Browser** - Similar pattern with BrowserLLMPlatform
+
+### Migrating from Old API
+
+The old `ai-assistant-model.ts` is deprecated. The new `AIAssistantHandler` provides the same public API:
+
+| Old Method | New Method | Notes |
+|------------|------------|-------|
+| `aiAssistantModel.processMessage()` | `aiHandler.processMessage()` | Same signature |
+| `aiAssistantModel.isAITopic()` | `aiHandler.isAITopic()` | Same signature |
+| `aiAssistantModel.registerAITopic()` | `aiHandler.registerAITopic()` | Same signature |
+| `aiAssistantModel.isAIPerson()` | `aiHandler.isAIPerson()` | Same signature |
+
+**No breaking changes** - existing code works without modification.
+
+### Documentation
+
+- **Quickstart**: `specs/021-ai-assistant-core-refactor/quickstart.md`
+- **Data Model**: `specs/021-ai-assistant-core-refactor/data-model.md`
+- **Status**: `specs/021-ai-assistant-core-refactor/IMPLEMENTATION-STATUS.md`
+
 ## NodeOneCore: Comprehensive ONE.core Instance
 
 **CRITICAL**: The Node.js process runs a FULL ONE.core instance (`NodeOneCore`) with complete capabilities:
@@ -85,7 +166,7 @@ export default {
 - `channelManager` - Complete channel management
 - `connectionsModel` - P2P connections, pairing, CHUM sync
 - `topicModel` - Chat topics and messages
-- `aiAssistantModel` - AI contact management
+- `aiAssistantModel` - AIAssistantHandler instance (refactored component-based architecture)
 - `llmManager` - LLM provider integration
 - `llmObjectManager` - LLM configuration storage
 - `topicGroupManager` - Group chat management

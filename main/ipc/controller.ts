@@ -9,8 +9,8 @@ import type { IPCHandler, IPCHandlerMap } from '../types/ipc.js';
 // Import handlers (will be JS files initially, then migrated to TS)
 import authHandlers from './handlers/auth.js';
 import stateHandlers from './handlers/state.js';
-import chatHandlers from './handlers/chat.js';
-import iomHandlers from './handlers/iom.js';
+import { chatHandlers } from './handlers/chat.js';
+import connectionHandlers from './handlers/connection.js';
 import cryptoHandlers from './handlers/crypto.js';
 import settingsHandlers from './handlers/settings.js';
 import aiHandlers from './handlers/ai.js';
@@ -20,6 +20,7 @@ import { subjectHandlers } from './handlers/subjects.js';
 import oneCoreHandlers from './handlers/one-core.js';
 // @ts-ignore - JS file with named export
 import { initializeDeviceHandlers } from './handlers/devices.js';
+import { initializeQuicVCDiscoveryHandlers, autoInitializeDiscovery } from './handlers/quicvc-discovery.js';
 // @ts-ignore - JS file with named export
 import { registerContactHandlers } from './handlers/contacts.js';
 import * as topicHandlers from './handlers/topics.js';
@@ -93,6 +94,9 @@ class IPCController {
     // Register all handlers
     this.registerHandlers();
 
+    // Auto-initialize QuicVC discovery (waits for nodeOneCore)
+    void autoInitializeDiscovery();
+
     this.safeLog('[IPCController] Initialized with handlers');
   }
 
@@ -157,11 +161,12 @@ class IPCController {
       return { success: true, data: testData };
     });
 
-    // IOM handlers (refactored - now delegates to one.models)
-    this.handle('iom:getInstances', iomHandlers.getIOMInstances);
-    this.handle('iom:getConnectionStatus', iomHandlers.getConnectionStatus);
-    this.handle('iom:createPairingInvitation', iomHandlers.createPairingInvitation);
-    this.handle('iom:acceptPairingInvitation', iomHandlers.acceptPairingInvitation);
+    // Connection handlers (pairing, instances, connections)
+    this.handle('connection:getInstances', connectionHandlers.getInstances);
+    this.handle('connection:getConnectionStatus', connectionHandlers.getConnectionStatus);
+    this.handle('connection:createPairingInvitation', connectionHandlers.createPairingInvitation);
+    this.handle('connection:acceptPairingInvitation', connectionHandlers.acceptPairingInvitation);
+    this.handle('connection:getDataStats', connectionHandlers.getDataStats);
 
     // Crypto handlers
     this.handle('crypto:getKeys', cryptoHandlers.getKeys);
@@ -189,7 +194,6 @@ class IPCController {
     this.handle('ai:discoverClaudeModels', aiHandlers.discoverClaudeModels);
     this.handle('ai:debugTools', aiHandlers.debugTools);
     this.handle('llm:testApiKey', aiHandlers.testApiKey);
-    this.handle('ai:ensureDefaultChats', aiHandlers['ai:ensureDefaultChats']);
     this.handle('ai:getDefaultModel', aiHandlers['ai:getDefaultModel']);
 
     // LLM Configuration handlers (network Ollama support)
@@ -305,6 +309,9 @@ class IPCController {
 
     // Device handlers
     initializeDeviceHandlers();
+
+    // QuicVC Discovery handlers
+    initializeQuicVCDiscoveryHandlers();
 
     // Contact handlers
     registerContactHandlers();
@@ -431,9 +438,9 @@ class IPCController {
       await deviceManager.saveDevices();
 
       // Clear ALL ONE.core storage
-      const storageDirs = [
-        path.join(process.cwd(), 'OneDB')
-      ];
+      // Use runtime configuration path (respects --storage CLI arg)
+      const storageDir = (global as any).lamaConfig?.instance.directory || path.join(process.cwd(), 'OneDB');
+      const storageDirs = [storageDir];
 
       for (const dir of storageDirs) {
         try {

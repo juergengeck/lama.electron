@@ -93,22 +93,8 @@ export function ChatLayout({ selectedConversationId }: ChatLayoutProps = {}) {
           throw new Error('Electron API not available')
         }
 
-        // First ensure default AI chats exist when chat view is accessed
-        console.log('[ChatLayout] Ensuring default AI chats exist...')
-        const ensureResult = await window.electronAPI.invoke('ai:ensureDefaultChats')
-        let topicsCreated = false
-        if (ensureResult.success) {
-          console.log('[ChatLayout] Default chats ensured:', ensureResult.topics)
-          // Check if any topics were newly created
-          if (ensureResult.created?.hi || ensureResult.created?.lama) {
-            console.log('[ChatLayout] New topics were created, waiting for them to be ready...')
-            topicsCreated = true
-            // Add a longer delay to ensure topics are fully created and channels registered
-            await new Promise(resolve => setTimeout(resolve, 1500))
-            console.log('[ChatLayout] Delay complete, now loading conversations...')
-          }
-        }
-
+        // Default chats are created when user selects model (in setDefaultModel)
+        // Just load conversations directly
         const result = await window.electronAPI.invoke('chat:getConversations')
         if (!result.success) {
           throw new Error(result.error || 'Failed to get conversations')

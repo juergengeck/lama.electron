@@ -106,6 +106,7 @@ async function chatWithOllama(
     // Prepare headers with auth if provided
     const headers = {
       'Content-Type': 'application/json',
+      'Connection': 'keep-alive',
       ...(authHeaders || {})
     };
 
@@ -119,7 +120,7 @@ async function chatWithOllama(
       stream: useStreaming,
       options: {
         temperature: options.temperature || 0.7,
-        num_predict: options.max_tokens || 2048,
+        num_predict: options.max_tokens || -1,  // -1 = unlimited, let model stop naturally via EOS
         top_k: 40,
         top_p: 0.95
       }

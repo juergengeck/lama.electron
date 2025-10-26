@@ -171,16 +171,20 @@ export default function InstancesView() {
             try {
               const personId = await someone.mainIdentity()
               const profile = await someone.mainProfile()
-              
+
               // Skip if this is the same as Node.js owner (avoid duplicates)
               if (personId === nodeInfo?.ownerId) {
                 continue
               }
-              
+
+              // Get name from PersonName description
+              const personName = profile?.personDescriptions?.find((d: any) => d.$type$ === 'PersonName')
+              const contactName = personName?.name || `Contact ${personId.substring(0, 8)}`
+
               chumContacts.push({
                 id: `contact-${personId}`,
                 personId: personId,
-                name: profile?.nickname || `Contact ${personId.substring(0, 8)}`,
+                name: contactName,
                 platform: 'external' as const,
                 role: 'contact' as const,
                 isLocal: false,

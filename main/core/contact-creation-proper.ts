@@ -53,7 +53,7 @@ export async function createProfileAndSomeoneForPerson(personId: any, leuteModel
     // 2. Create Someone using proper SomeoneModel API
     console.log('[ContactCreationProper]   ├─ Creating Someone object...')
     const someoneId = `someone-for-${personId}`
-    const someone = await SomeoneModel.constructWithNewSomeone(someoneId, profile.idHash)
+    const someone = await SomeoneModel.constructWithNewSomeone(leuteModel, someoneId, profile)
     console.log(`[ContactCreationProper]   ├─ Someone created: ${someone.idHash.toString().substring(0, 8)}`)
 
     // 3. Add to contacts (idempotent) - manual update to avoid frozen object error

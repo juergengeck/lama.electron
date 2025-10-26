@@ -8,6 +8,7 @@ import http from 'http';
 // Type augmentation for global object
 declare global {
   var isClearing: boolean | undefined;
+  var lamaConfig: LamaConfig | undefined;
 }
 
 // Get __dirname equivalent in ESM
@@ -18,6 +19,7 @@ const __dirname = path.dirname(__filename);
 import mainApp from './main/app.js';
 import { autoInitialize } from './main/startup/auto-init.js';
 import ipcLogger from './main/utils/ipc-logger.js';
+import { loadConfig, type LamaConfig } from './main/config/lama-config.js';
 
 // Set app name
 app.setName('LAMA');
@@ -120,6 +122,7 @@ function createWindow(): void {
 
   // Set up IPC logger to send Node logs to browser
   ipcLogger.setMainWindow(mainWindow);
+  ipcLogger.enable(); // Enable to debug welcome message generation
   
   // In development, load from Vite dev server
   if (process.env.NODE_ENV !== 'production') {
@@ -276,6 +279,11 @@ ipcMain.on('browser-log', (event: Electron.IpcMainEvent, level: string, message:
 });
 
 app.whenReady().then(async () => {
+  // Load configuration from environment variables and config files
+  console.log('[Main] Loading LAMA configuration...');
+  global.lamaConfig = await loadConfig();
+  console.log('[Main] Configuration loaded successfully');
+
   // Set dock icon for macOS after app is ready
   if (process.platform === 'darwin') {
     const dockIconPath = path.join(__dirname, 'assets', 'icons', 'icon-512.png');
@@ -416,6 +424,11 @@ async function clearAppDataShared(): Promise<{ success: boolean; message?: strin
         nodeProvisioning.reset();
         console.log('[ClearData] Node provisioning reset');
       }
+
+      // CRITICAL: Wait for OS to release file handles
+      // Without this delay, rmSync fails because files are still locked
+      console.log('[ClearData] Waiting 2 seconds for file handles to be released...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (e) {
       console.error('[ClearData] Error shutting down Node.js instance:', e);
     }
@@ -440,8 +453,19 @@ async function clearAppDataShared(): Promise<{ success: boolean; message?: strin
     // Step 4: Delete data folders
     console.log('[ClearData] Deleting data folders...');
 
-    const oneDbPath = path.join(process.cwd(), 'OneDB');
+    // Use runtime configuration path (respects --storage CLI arg and config files)
+    // Falls back to default if config not loaded yet
+    const oneDbPath = global.lamaConfig?.instance.directory || path.join(process.cwd(), 'OneDB');
     const userDataPath = app.getPath('userData');
+
+    // Log paths for debugging
+    console.log('[ClearData] ========================================');
+    console.log('[ClearData] CRITICAL PATH INFORMATION:');
+    console.log('[ClearData] global.lamaConfig?.instance.directory:', global.lamaConfig?.instance.directory);
+    console.log('[ClearData] process.cwd():', process.cwd());
+    console.log('[ClearData] Resolved OneDB path to DELETE:', oneDbPath);
+    console.log('[ClearData] User data path:', userDataPath);
+    console.log('[ClearData] ========================================');
 
     console.log('[ClearData] OneDB path:', oneDbPath);
     console.log('[ClearData] OneDB exists:', fs.existsSync(oneDbPath));

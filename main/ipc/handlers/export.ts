@@ -11,7 +11,7 @@ const { dialog, app, Notification } = electron;
 import fs from 'fs/promises';
 import path from 'path';
 import type { IpcMainInvokeEvent } from 'electron';
-import { ExportHandler } from '@lama/core/handlers/ExportHandler.js';
+import { ExportHandler } from '@chat/core/handlers/ExportHandler.js';
 
 interface FileFilter {
   name: string;

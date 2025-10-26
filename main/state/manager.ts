@@ -220,6 +220,7 @@ class StateManager extends EventEmitter {
   
   // Clear all state (for app reset)
   clearState(): any {
+    // Clear EVERYTHING - don't leave any stale keys like browserInvite
     this.state = {
       user: {
         authenticated: false,
@@ -242,10 +243,9 @@ class StateManager extends EventEmitter {
         syncStatus: 'idle'
       }
     }
-    
-    // Clear any browser instance ID as well
-    delete this.state.browserInstanceId
-    
+
+    // Don't need to delete specific keys - we replaced the entire state object above
+
     // Emit state cleared event
     this.emit('stateCleared')
   }

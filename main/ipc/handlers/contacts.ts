@@ -8,7 +8,7 @@
 import electron from 'electron';
 const { ipcMain, BrowserWindow } = electron;
 import nodeOneCore from '../../core/node-one-core.js';
-import { ContactsHandler } from '@lama/core/handlers/ContactsHandler.js';
+import { ContactsHandler } from '@chat/core/handlers/ContactsHandler.js';
 import type { IpcMainInvokeEvent } from 'electron';
 
 // Create handler instance with Electron-specific dependencies

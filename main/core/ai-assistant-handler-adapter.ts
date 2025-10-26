@@ -12,7 +12,11 @@
 
 import { AIAssistantHandler } from '@lama/core/handlers/AIAssistantHandler.js';
 import { ElectronLLMPlatform } from '../../adapters/electron-llm-platform.js';
+import { AISettingsManager } from './ai-settings-manager.js';
 import type { NodeOneCore } from '../types/one-core.js';
+import { storeVersionedObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import { getIdObject } from '@refinio/one.core/lib/storage-versioned-objects.js';
+import { createDefaultKeys, hasDefaultKeys } from '@refinio/one.core/lib/keychain/keychain.js';
 import electron from 'electron';
 const { BrowserWindow } = electron;
 
@@ -39,6 +43,9 @@ export function createAIAssistantHandler(nodeOneCore: NodeOneCore, llmManager: a
   // Create Electron platform adapter
   const platform = new ElectronLLMPlatform(mainWindow);
 
+  // Create settings persistence manager
+  const settingsPersistence = new AISettingsManager(nodeOneCore);
+
   // Create handler with all dependencies
   handlerInstance = new AIAssistantHandler({
     oneCore: nodeOneCore,
@@ -51,6 +58,14 @@ export function createAIAssistantHandler(nodeOneCore: NodeOneCore, llmManager: a
     llmObjectManager: (nodeOneCore as any).llmObjectManager,
     contextEnrichmentService: (nodeOneCore as any).contextEnrichmentService,
     topicAnalysisModel: (nodeOneCore as any).topicAnalysisModel,
+    topicGroupManager: (nodeOneCore as any).topicGroupManager,
+    settingsPersistence: settingsPersistence,
+    storageDeps: {
+      storeVersionedObject,
+      getIdObject,
+      createDefaultKeys,
+      hasDefaultKeys
+    }
   });
 
   console.log('[AIAssistantAdapter] AIAssistantHandler created');

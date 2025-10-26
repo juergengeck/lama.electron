@@ -23,37 +23,60 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
   const [loading, setLoading] = useState(false)
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
   const [profileDialogRequired, setProfileDialogRequired] = useState(false)
+  const [defaultModel, setDefaultModel] = useState<string | null>(null)
 
   useEffect(() => {
     loadContacts()
-    
+    loadDefaultModel()
+
     // Listen for contact updates
     const handleContactsUpdated = () => {
       console.log('[ContactsView] Contacts updated event received')
       loadContacts()
     }
-    
+
     // Listen for IPC contact added events from Node.js
     const handleContactAdded = () => {
       console.log('[ContactsView] Contact added via IPC')
       loadContacts()
     }
-    
+
+    // Listen for default model changes
+    const handleDefaultModelChanged = () => {
+      console.log('[ContactsView] Default model changed')
+      loadDefaultModel()
+      loadContacts() // Reload contacts to update AI contact visibility
+    }
+
     window.addEventListener('contacts:updated', handleContactsUpdated)
-    
+
     // Listen for IPC events if in Electron
     if (window.electronAPI?.on) {
       window.electronAPI.on('contact:added', handleContactAdded)
+      window.electronAPI.on('ai:defaultModelChanged', handleDefaultModelChanged)
     }
-    
+
     // Also refresh contacts periodically
     const interval = setInterval(loadContacts, 5000)
-    
+
     return () => {
       window.removeEventListener('contacts:updated', handleContactsUpdated)
       clearInterval(interval)
     }
   }, [bridge])
+
+  const loadDefaultModel = async () => {
+    if (!bridge) return
+
+    try {
+      const model = await bridge.getDefaultModel()
+      console.log('[ContactsView] Default model:', model)
+      setDefaultModel(model)
+    } catch (error) {
+      console.error('[ContactsView] Failed to load default model:', error)
+      setDefaultModel(null)
+    }
+  }
 
   const loadContacts = async () => {
     if (!bridge) return
@@ -114,7 +137,14 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
 
   const filteredContacts = contacts.filter(contact => {
     const name = contact.name || contact.displayName || ''
-    return name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase())
+
+    // Filter out AI contacts if no default model is selected
+    if (contact.isAI && !defaultModel) {
+      return false
+    }
+
+    return matchesSearch
   })
 
   const getStatusColor = (status: string) => {
@@ -316,9 +346,26 @@ export function ContactsView({ onNavigateToChat }: ContactsViewProps) {
             <div className="p-4 space-y-2 max-h-[calc(100vh-300px)]">
               {filteredContacts.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No contacts found</p>
-                  <p className="text-sm mt-2">Add contacts to start messaging</p>
+                  {!defaultModel && contacts.some(c => c.isAI) ? (
+                    // AI contacts exist but are hidden due to no default model
+                    <>
+                      <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p className="font-medium">Select an AI Model First</p>
+                      <p className="text-sm mt-2">
+                        AI contacts are hidden until you select a default model.
+                      </p>
+                      <p className="text-sm mt-1">
+                        Go to <strong>Settings → AI Models</strong> to choose one.
+                      </p>
+                    </>
+                  ) : (
+                    // No contacts at all
+                    <>
+                      <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No contacts found</p>
+                      <p className="text-sm mt-2">Add contacts to start messaging</p>
+                    </>
+                  )}
                 </div>
               ) : (
                 filteredContacts.map((contact) => (

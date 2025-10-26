@@ -31,7 +31,9 @@
     "paths": {
       "@/*": ["./main/*"],
       "@core/*": ["./main/core/*"],
-      "@models/*": ["./main/models/*"]
+      "@models/*": ["./main/models/*"],
+      "@refinio/one.core/*": ["./node_modules/@refinio/one.core/*"],
+      "@refinio/one.models/*": ["./node_modules/@refinio/one.models/*"]
     }
   },
   "include": [

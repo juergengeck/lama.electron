@@ -33,12 +33,16 @@ import('./llm-config.js').then(module => {
   };
 });
 
-// Lazy service instances - created after NodeOneCore is initialized
-let contactService: ContactService | null = null;
-let profileService: ProfileService | null = null;
-let llmKeyStorageService: LLMKeyStorageService | null = null;
+// Create service/handler instances
+const contactService = new ContactService(
+  nodeOneCore.leuteModel,
+  nodeOneCore.aiAssistantModel
+);
 
-// Platform handler can be created immediately (doesn't depend on models)
+const profileService = new ProfileService(nodeOneCore.leuteModel);
+
+const llmKeyStorageService = new LLMKeyStorageService(nodeOneCore.channelManager);
+
 const platformHandler = new NodePlatformHandler(
   nodeOneCore,
   stateManager,
@@ -46,51 +50,9 @@ const platformHandler = new NodePlatformHandler(
   credentialsManager
 );
 
-/**
- * Get ContactService instance - creates on first use after NodeOneCore init
- */
-function getContactService(): ContactService {
-  if (!nodeOneCore.leuteModel) {
-    throw new Error('NodeOneCore not initialized - leuteModel is null');
-  }
-  if (!contactService) {
-    contactService = new ContactService(
-      nodeOneCore.leuteModel,
-      nodeOneCore.aiAssistantModel
-    );
-  }
-  return contactService;
-}
-
-/**
- * Get ProfileService instance - creates on first use after NodeOneCore init
- */
-function getProfileService(): ProfileService {
-  if (!nodeOneCore.leuteModel) {
-    throw new Error('NodeOneCore not initialized - leuteModel is null');
-  }
-  if (!profileService) {
-    profileService = new ProfileService(nodeOneCore.leuteModel);
-  }
-  return profileService;
-}
-
-/**
- * Get LLMKeyStorageService instance - creates on first use after NodeOneCore init
- */
-function getLLMKeyStorageService(): LLMKeyStorageService {
-  if (!nodeOneCore.channelManager) {
-    throw new Error('NodeOneCore not initialized - channelManager is null');
-  }
-  if (!llmKeyStorageService) {
-    llmKeyStorageService = new LLMKeyStorageService(nodeOneCore.channelManager);
-  }
-  return llmKeyStorageService;
-}
-
 // Export function to invalidate cache when contacts change
 export function invalidateContactsCache(): void {
-  getContactService().invalidateContactsCache();
+  contactService.invalidateContactsCache();
 }
 
 /**
@@ -123,171 +85,161 @@ const oneCoreHandlers = {
    * Create local invite for browser connection
    */
   async createLocalInvite(event: IpcMainInvokeEvent, options: any = {}) {
-    return await platformHandler.createLocalInvite(options);
+    return await oneCoreHandler.createLocalInvite(options);
   },
 
   /**
    * Create pairing invitation for browser instance
    */
   async createBrowserPairingInvite(event: IpcMainInvokeEvent) {
-    return await platformHandler.createBrowserPairingInvite();
+    return await oneCoreHandler.createBrowserPairingInvite();
   },
 
   /**
    * Get stored browser pairing invitation
    */
   async getBrowserPairingInvite(event: IpcMainInvokeEvent) {
-    return await platformHandler.getBrowserPairingInvite();
+    return await oneCoreHandler.getBrowserPairingInvite();
   },
 
   /**
    * Create network invite for remote connections
    */
   async createNetworkInvite(event: IpcMainInvokeEvent, options: any = {}) {
-    return await platformHandler.createNetworkInvite(options);
+    return await oneCoreHandler.createNetworkInvite(options);
   },
 
   /**
    * List all active invites
    */
   async listInvites(event: IpcMainInvokeEvent) {
-    return await platformHandler.listInvites();
+    return await oneCoreHandler.listInvites();
   },
 
   /**
    * Revoke an invite
    */
   async revokeInvite(event: IpcMainInvokeEvent, { inviteId }: { inviteId: string }) {
-    return await platformHandler.revokeInvite(inviteId);
+    return await oneCoreHandler.revokeInvite(inviteId);
   },
 
   /**
    * Get Node instance status
    */
   async getNodeStatus(event: IpcMainInvokeEvent) {
-    return await platformHandler.getNodeStatus();
+    return await oneCoreHandler.getNodeStatus();
   },
 
   /**
    * Set Node instance configuration state
    */
   async setNodeState(event: IpcMainInvokeEvent, params: { key: string; value: any }) {
-    return await platformHandler.setNodeState(params);
+    return await oneCoreHandler.setNodeState(params);
   },
 
   /**
    * Get Node instance configuration state
    */
   async getNodeState(event: IpcMainInvokeEvent, params: { key: string }) {
-    return await platformHandler.getNodeState(params);
+    return await oneCoreHandler.getNodeState(params);
   },
 
   /**
    * Get Node instance full configuration
    */
   async getNodeConfig(event: IpcMainInvokeEvent) {
-    return await platformHandler.getNodeConfig();
+    return await oneCoreHandler.getNodeConfig();
   },
 
   /**
    * Get contacts from Node.js ONE.core instance
    */
   async getContacts(event?: IpcMainInvokeEvent) {
-    const contacts = await getContactService().getContacts();
-    return { success: true, contacts };
+    return await oneCoreHandler.getContacts({});
   },
 
   /**
    * Test settings replication with credentials
    */
   async testSettingsReplication(event: IpcMainInvokeEvent, params: { category: string; data: any }) {
-    return await platformHandler.testSettingsReplication(params.category, params.data);
+    return await oneCoreHandler.testSettingsReplication(params.category, params.data);
   },
 
   /**
    * Sync connection settings to peers
    */
   async syncConnectionSettings(event: IpcMainInvokeEvent, connectionSettings: any) {
-    return await platformHandler.syncConnectionSettings(connectionSettings);
+    return await oneCoreHandler.syncConnectionSettings(connectionSettings);
   },
 
   /**
    * Get credentials status and trust information
    */
   async getCredentialsStatus(event: IpcMainInvokeEvent) {
-    return await platformHandler.getCredentialsStatus();
+    return await oneCoreHandler.getCredentialsStatus();
   },
 
   /**
    * Get shared credentials for browser IoM setup
    */
   async getBrowserCredentials(event: IpcMainInvokeEvent) {
-    return await platformHandler.getBrowserCredentials();
+    return await oneCoreHandler.getBrowserCredentials();
   },
 
   /**
    * Get list of connected peers
    */
   async getPeerList(event: IpcMainInvokeEvent) {
-    return await getContactService().getPeerList();
+    return await oneCoreHandler.getPeerList();
   },
 
   /**
    * Store data securely using LLM objects
    */
   async secureStore(event: IpcMainInvokeEvent, params: { key: string; value: any; encrypted?: boolean }) {
-    return await getLLMKeyStorageService().secureStore(params.key, params.value, llmConfigHandler);
+    return await oneCoreHandler.secureStore(params.key, params.value, params.encrypted, llmConfigHandler);
   },
 
   /**
    * Retrieve data from LLM objects
    */
   async secureRetrieve(event: IpcMainInvokeEvent, params: { key: string }) {
-    return await getLLMKeyStorageService().secureRetrieve(params.key, decryptToken);
+    return await oneCoreHandler.secureRetrieve(params.key, decryptToken);
   },
 
   /**
    * Clear storage
    */
   async clearStorage(event: IpcMainInvokeEvent) {
-    return await platformHandler.clearStorage(clearAppDataShared);
+    return await oneCoreHandler.clearStorage(clearAppDataShared);
   },
 
   /**
    * Restart Node.js ONE.core instance
    */
   async restartNode(event: IpcMainInvokeEvent) {
-    return await platformHandler.restartNode();
+    return await oneCoreHandler.restartNode();
   },
 
   /**
    * Update user's mood
    */
   async updateMood(event: IpcMainInvokeEvent, params: { mood: string }) {
-    const me = await nodeOneCore.leuteModel.me();
-    const personId = await me.mainIdentity();
-    const data = await getProfileService().updateMood(personId, params.mood);
-    return { success: true, data };
+    return await oneCoreHandler.updateMood({ mood: params.mood });
   },
 
   /**
    * Check if the current user has a PersonName set in their profile
    */
   async hasPersonName(event: IpcMainInvokeEvent) {
-    const me = await nodeOneCore.leuteModel.me();
-    const personId = await me.mainIdentity();
-    const result = await getProfileService().hasPersonName(personId);
-    return { success: true, ...result };
+    return await oneCoreHandler.hasPersonName();
   },
 
   /**
    * Set PersonName for the current user's profile
    */
   async setPersonName(event: IpcMainInvokeEvent, params: { name: string }) {
-    const me = await nodeOneCore.leuteModel.me();
-    const personId = await me.mainIdentity();
-    await getProfileService().setPersonName(personId, params.name);
-    return { success: true, data: { name: params.name } };
+    return await oneCoreHandler.setPersonName({ name: params.name });
   }
 };
 

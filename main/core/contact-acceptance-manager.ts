@@ -320,51 +320,38 @@ class ContactAcceptanceManager extends EventEmitter {
     }
 
     const personHash = await storeVersionedObject(person as any)
-    
-    // Create Profile for the contact
-    const profile = {
-      $type$: 'Profile' as const,
-      personDescriptions: [
-        {
-          $type$: 'PersonName' as const,
-          name: pendingContact.displayInfo.name
-        }
-      ]
-    }
 
-    const profileHash = await storeVersionedObject(profile as any)
+    // Create Profile for the contact using ProfileModel
+    const { default: ProfileModel } = await import('@refinio/one.models/lib/models/Leute/ProfileModel.js')
+    const { default: SomeoneModel } = await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')
 
-    // Create OneInstanceEndpoint for connection
-    const endpoint = {
-      $type$: 'OneInstanceEndpoint' as const,
-      personId: pendingContact.credential.subject,
-      instanceId: pendingContact.credential.instanceId,
-      personKeys: { publicSignKey: pendingContact.credential.publicKey },
-      instanceKeys: { publicSignKey: pendingContact.credential.publicKey }
-    }
-
-    const endpointHash = await storeVersionedObject(endpoint as any)
+    const profile = await ProfileModel.constructWithNewProfile(
+      pendingContact.credential.subject,
+      this.nodeOneCore.ownerId,
+      pendingContact.displayInfo.name || 'Unknown',
+      [],
+      [pendingContact.credential.publicKey]
+    )
 
     // Add to contacts via LeuteModel
     if (this.nodeOneCore.leuteModel) {
-      const { default: SomeoneModel } = await import('@refinio/one.models/lib/models/Leute/SomeoneModel.js')
-
       // Create Someone with both Person and Profile
-      // SomeoneModel.constructWithNewSomeone expects (personHash, leuteModel)
+      const someoneId = `someone-for-${pendingContact.credential.subject}`
       const someone = await SomeoneModel.constructWithNewSomeone(
-        (personHash as any)?.idHash || personHash,
-        this.nodeOneCore?.leuteModel
+        this.nodeOneCore.leuteModel,
+        someoneId,
+        profile
       )
       
       // Add to contacts
       await this.nodeOneCore.leuteModel.addSomeoneElse(someone.idHash)
       
       console.log('[ContactAcceptanceManager] Contact added to LeuteModel')
-      
+
       return {
         personHash: personHash,
         someoneHash: someone.idHash,
-        profileHash: profileHash,
+        profileHash: profile.idHash,
         person: person,
         profile: profile,
         someone: someone
@@ -373,7 +360,7 @@ class ContactAcceptanceManager extends EventEmitter {
     
     return {
       personHash: personHash,
-      profileHash: profileHash,
+      profileHash: profile.idHash,
       person: person,
       profile: profile
     }

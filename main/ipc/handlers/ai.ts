@@ -6,7 +6,9 @@
  */
 
 import nodeOneCore from '../../core/node-one-core.js';
-import llmManager from '../../services/llm-manager.js';
+import llmManager from '../../services/llm-manager-singleton.js';
+import mcpManager from '../../services/mcp-manager.js';
+import { SettingsStore } from '@refinio/one.core/lib/system/settings-store.js';
 import type { IpcMainInvokeEvent } from 'electron';
 import electron from 'electron';
 const { BrowserWindow } = electron;
@@ -39,13 +41,12 @@ const aiHandlers = {
     }
   ) {
     // Delegate to llmManager for chat operations
-    const model = modelId || llmManager.getDefaultModel()?.id;
-    if (!model) {
-      return { success: false, error: 'No model specified or default model set' };
+    if (!modelId) {
+      return { success: false, error: 'Model ID is required' };
     }
 
     try {
-      const response = await llmManager.chat(messages, model, {
+      const response = await llmManager.chat(messages, modelId, {
         onStream: stream ? (chunk: string) => {
           event.sender.send('ai:stream', { chunk, topicId });
         } : undefined
@@ -55,7 +56,7 @@ const aiHandlers = {
         success: true,
         data: {
           response: response,
-          modelId: model,
+          modelId: modelId,
           streamed: stream
         }
       };
@@ -70,7 +71,6 @@ const aiHandlers = {
   async getModels(event: IpcMainInvokeEvent) {
     try {
       const models = llmManager.getAvailableModels();
-      const defaultModelId = llmManager.getDefaultModel()?.id || null;
 
       return {
         success: true,
@@ -78,10 +78,8 @@ const aiHandlers = {
           id: m.id,
           name: m.name,
           provider: m.provider,
-          isLoaded: m.isLoaded || false,
-          isDefault: m.id === defaultModelId
-        })),
-        defaultModelId
+          isLoaded: m.isLoaded || false
+        }))
       };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -90,19 +88,21 @@ const aiHandlers = {
 
   /**
    * Set default AI model
+   * Note: LLMManager doesn't have default model concept, so this just validates the model exists
    */
   async setDefaultModel(
     event: IpcMainInvokeEvent,
     { modelId }: { modelId: string }
   ) {
     try {
-      const success = llmManager.setDefaultModel(modelId);
-      if (success && nodeOneCore.aiAssistantModel) {
-        await nodeOneCore.aiAssistantModel.setDefaultModel(modelId);
-      }
-      return success;
+      console.log(`[AI IPC] Setting default model: ${modelId}`);
+      const handler = getAIHandler();
+      await handler.setDefaultModel(modelId);
+      console.log(`[AI IPC] ✅ Default model set successfully: ${modelId}`);
+      return true;
     } catch (error: any) {
-      console.error('[AI IPC] setDefaultModel error:', error);
+      console.error('[AI IPC] ❌ setDefaultModel error:', error);
+      console.error('[AI IPC] ❌ Error stack:', error.stack);
       return false;
     }
   },
@@ -114,9 +114,9 @@ const aiHandlers = {
     event: IpcMainInvokeEvent,
     { provider, apiKey }: { provider: string; apiKey: string }
   ) {
-    // Store API key via nodeOneCore
+    // Store API key via SettingsStore
     try {
-      await nodeOneCore.secureStore(provider + '_api_key', apiKey);
+      await SettingsStore.setItem(provider + '_api_key', apiKey);
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -128,7 +128,7 @@ const aiHandlers = {
    */
   async getTools(event: IpcMainInvokeEvent) {
     try {
-      const tools = llmManager.getMCPTools();
+      const tools = llmManager.mcpTools;
       return {
         success: true,
         tools: Array.from(tools.values())
@@ -146,7 +146,7 @@ const aiHandlers = {
     { toolName, parameters }: { toolName: string; parameters: any }
   ) {
     try {
-      const result = await llmManager.executeMCPTool(toolName, parameters);
+      const result = await mcpManager.executeTool(toolName, parameters, {});
       return { success: true, result };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -171,8 +171,8 @@ const aiHandlers = {
   async debugTools(event: IpcMainInvokeEvent) {
     return {
       success: true,
-      toolCount: llmManager.getMCPTools().size,
-      tools: Array.from(llmManager.getMCPTools().keys())
+      toolCount: llmManager.mcpTools.size,
+      tools: Array.from(llmManager.mcpTools.keys())
     };
   },
 
@@ -207,23 +207,25 @@ const aiHandlers = {
    * Get the default model ID from AI settings
    */
   'ai:getDefaultModel': async (event: IpcMainInvokeEvent): Promise<string | null> => {
-    return llmManager.getDefaultModel()?.id || null;
-  },
-
-  /**
-   * Ensure default AI chats exist when user navigates to chat view
-   * This is called lazily when the chat view is accessed, not during model selection
-   * DELEGATES to AIAssistantHandler
-   */
-  'ai:ensureDefaultChats': async (event: IpcMainInvokeEvent) => {
     try {
-      const handler = getAIHandler();
-      await handler.ensureDefaultChats();
-      return { success: true };
+      // Get from AIAssistantHandler which loads from AISettingsManager
+      if (nodeOneCore.aiAssistantModel?.getDefaultModel) {
+        const model = nodeOneCore.aiAssistantModel.getDefaultModel();
+        if (model) {
+          // Model can be string or object with id property
+          const modelId = typeof model === 'string' ? model : model.id;
+          // CRITICAL: Return null if modelId is undefined or empty
+          // This ensures ModelOnboarding shows when no model is configured
+          return modelId || null;
+        }
+      }
+      return null;
     } catch (error: any) {
-      return { success: false, error: error.message };
+      console.error('[AI IPC] Error getting default model:', error);
+      return null;
     }
   },
+
 
   /**
    * Discover Claude models from Anthropic API

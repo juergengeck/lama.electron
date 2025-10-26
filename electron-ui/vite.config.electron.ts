@@ -15,6 +15,17 @@ export default defineConfig({
         if (builtins.includes(id)) {
           return { id, external: true, moduleSideEffects: false };
         }
+        // Handle electron module - don't try to stub it
+        if (id === 'electron') {
+          return { id, external: true, moduleSideEffects: false };
+        }
+        return null;
+      },
+      load(id) {
+        // Provide empty stub for electron that doesn't overwrite window.electronAPI
+        if (id === 'electron') {
+          return 'export default {}';
+        }
         return null;
       }
     }
@@ -57,6 +68,8 @@ export default defineConfig({
     rollupOptions: {
       external: [
         'electron',
+        '@refinio/one.core',
+        '@refinio/one.models',
         // Don't externalize Node built-ins - we have them available
       ],
       output: {

@@ -7,7 +7,7 @@
 
 import { TopicAnalysisHandler } from '@lama/core/handlers/TopicAnalysisHandler.js';
 import nodeOneCoreInstance from '../../core/node-one-core.js';
-import llmManager from '../../services/llm-manager.js';
+import llmManager from '../../services/llm-manager-singleton.js';
 import type { IpcMainInvokeEvent } from 'electron';
 
 // Create handler instance
@@ -110,8 +110,8 @@ const topicAnalysisHandlers = {
   ) {
     // Helper function to get messages for auto-generate
     const chatHandlerGetMessages = async (params: { conversationId: string; limit?: number }) => {
-      const chatHandlers = await import('./chat.js');
-      return await chatHandlers.default.getMessages(event, params);
+      const { chatHandlers } = await import('./chat.js');
+      return await chatHandlers.getMessages(event, params);
     };
 
     return await topicAnalysisHandler.updateSummary(
@@ -185,8 +185,8 @@ const topicAnalysisHandlers = {
   ) {
     // Helper function to get messages
     const chatHandlerGetMessages = async (params: { conversationId: string }) => {
-      const chatHandlers = await import('./chat.js');
-      return await chatHandlers.default.getMessages(event, params);
+      const { chatHandlers } = await import('./chat.js');
+      return await chatHandlers.getMessages(event, params);
     };
 
     return await topicAnalysisHandler.extractConversationKeywords(

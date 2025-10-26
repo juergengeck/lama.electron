@@ -84,6 +84,7 @@ class NodeOneCore implements INodeOneCore {
   models?: any
   topicAnalysisModel?: TopicAnalysisModel
   commServerModel?: any
+  commServerUrl?: string  // CommServer URL for invitations and connections
   llmManager?: any
   llmObjectManager?: any
 
@@ -520,6 +521,73 @@ class NodeOneCore implements INodeOneCore {
             console.log('[NodeOneCore] 🔓 Granting mutual access permissions...')
             await this.grantPeerAccess(remotePersonId, 'pairing')
             console.log('[NodeOneCore] ✅ Access permissions granted')
+
+            // Step 4: Add contact and conversation to StateManager for UI
+            console.log('[NodeOneCore] 📲 Step 4: Adding to StateManager and notifying UI...')
+            try {
+              const { default: stateManager } = await import('../state/manager.js')
+              const { BrowserWindow } = await import('electron')
+
+              // Get profile info for display
+              let displayName = 'Unknown Contact'
+              if (someone?.mainProfile) {
+                try {
+                  const profile = typeof someone.mainProfile === 'function' ?
+                    await someone.mainProfile() : someone.mainProfile
+
+                  // Extract name from PersonDescriptions
+                  const personName = profile.personDescriptions?.find((d: any) => d.$type$ === 'PersonName')
+                  if (personName?.name) {
+                    displayName = personName.name
+                  }
+                } catch (e: any) {
+                  console.log('[NodeOneCore]   • Could not get profile name')
+                }
+              }
+
+              // Add contact to state
+              const contactId = remotePersonId
+              stateManager.addContact({
+                id: contactId,
+                name: displayName,
+                personId: remotePersonId,
+                someoneId: someone?.idHash
+              })
+              console.log('[NodeOneCore]   • Contact added to state:', contactId.substring(0, 8))
+
+              // Create P2P conversation ID
+              const p2pId = localPersonId < remotePersonId ?
+                `${localPersonId}<->${remotePersonId}` :
+                `${remotePersonId}<->${localPersonId}`
+
+              // Add conversation to state
+              stateManager.addConversation({
+                id: p2pId,
+                name: displayName,
+                type: 'p2p',
+                participants: [localPersonId, remotePersonId],
+                lastMessage: null,
+                lastMessageTime: Date.now(),
+                unreadCount: 0
+              })
+              console.log('[NodeOneCore]   • Conversation added to state:', p2pId)
+
+              // Notify UI
+              const windows = BrowserWindow.getAllWindows()
+              windows.forEach(window => {
+                window.webContents.send('contacts:updated', {
+                  contacts: Array.from(stateManager.getState().contacts.values())
+                })
+                window.webContents.send('conversations:updated', {
+                  conversations: Array.from(stateManager.getState().conversations.values())
+                })
+              })
+              console.log('[NodeOneCore]   • UI notified of updates')
+
+            } catch (error) {
+              console.error('[NodeOneCore] ❌ Failed to update StateManager:', error)
+            }
+
             console.log('[NodeOneCore] ═══════════════════════════════════════════')
             console.log('[NodeOneCore] 🎉 PAIRING COMPLETE - Remote contact is ready!')
 
@@ -550,6 +618,7 @@ class NodeOneCore implements INodeOneCore {
 
     // Use commserver URL from config (supports local testing)
     const commServerUrl = global.lamaConfig?.commServer.url || 'wss://comm10.dev.refinio.one'
+    this.commServerUrl = commServerUrl  // Store as property for node-provisioning to access
     console.log('[NodeOneCore] Using CommServer URL:', commServerUrl)
     
     // Initialize object events (handle already initialized case)

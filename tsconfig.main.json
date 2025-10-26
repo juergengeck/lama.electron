@@ -51,7 +51,6 @@
     "specs/**",
     "tests/**",
     "packages/**",
-    "reference/**",
-    "../lama.core/**"
+    "reference/**"
   ]
 }

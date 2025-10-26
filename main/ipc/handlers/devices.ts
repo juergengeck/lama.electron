@@ -46,107 +46,13 @@ interface IpcResponse<T = any> {
 function initializeDeviceHandlers() {
   /**
    * Create an invitation for pairing
+   * Delegates to IOMHandler for proper IoM/IoP support
    */
-  ipcMain.handle('invitation:create', async (event: IpcMainInvokeEvent): Promise<IpcResponse> => {
+  ipcMain.handle('invitation:create', async (event: IpcMainInvokeEvent, mode?: 'IoM' | 'IoP'): Promise<IpcResponse> => {
     try {
-      console.log('[DeviceHandlers] UPDATED CODE - Creating invitation for pairing')
-
-      // Check if Node.js instance is functionally ready
-      console.log('[DeviceHandlers] Node.js instance state:', {
-        ownerId: nodeOneCore.ownerId,
-        instanceName: nodeOneCore.instanceName,
-        initialized: nodeOneCore.initialized,
-        hasConnectionsModel: !!nodeOneCore.connectionsModel,
-        hasPairing: !!nodeOneCore.connectionsModel?.pairing
-      })
-
-      if (!nodeOneCore.ownerId || !nodeOneCore.instanceName) {
-        throw new Error(`Node.js instance not provisioned - missing identity (ownerId: ${!!nodeOneCore.ownerId}, instanceName: ${!!nodeOneCore.instanceName})`)
-      }
-
-      // Check if connections model exists
-      if (!nodeOneCore.connectionsModel?.pairing) {
-        console.error('[DeviceHandlers] No pairing module found:', {
-          hasConnectionsModel: !!nodeOneCore.connectionsModel,
-          hasPairing: !!nodeOneCore.connectionsModel?.pairing
-        })
-        throw new Error('Node.js instance does not have networking initialized')
-      }
-
-      // Log pairing configuration details
-      console.log('[DeviceHandlers] Pairing module state:', {
-        hasCreateInvitation: typeof nodeOneCore.connectionsModel.pairing.createInvitation === 'function',
-        activeInvitations: (nodeOneCore.connectionsModel.pairing as any).activeInvitations?.size || 0,
-        url: (nodeOneCore.connectionsModel.pairing as any).url,
-        expirationDuration: nodeOneCore.connectionsModel.pairing.inviteExpirationDurationInMs
-      })
-
-      // Create invitation through Node.js instance's ConnectionsModel
-      const rawInvitation = await nodeOneCore.connectionsModel.pairing.createInvitation()
-      console.log('[DeviceHandlers] Raw invitation received:', {
-        hasToken: !!(rawInvitation as any)?.token,
-        hasPublicKey: !!(rawInvitation as any)?.publicKey,
-        hasUrl: !!(rawInvitation as any)?.url,
-        rawInvitation: JSON.stringify(rawInvitation, null, 2)
-      })
-      console.log('[DeviceHandlers] Active invitations after creation:', (nodeOneCore.connectionsModel.pairing as any).activeInvitations?.size || 0)
-
-      // Extract values as plain strings (following LAMA pattern from InviteManager.ts)
-      const token = String((rawInvitation as any).token || '')
-      const publicKey = String((rawInvitation as any).publicKey || '')
-      const url = String((rawInvitation as any).url || '')
-
-      console.log('[DeviceHandlers] Extracted values:')
-      console.log('  - Token type:', typeof token, 'length:', token.length)
-      console.log('  - PublicKey type:', typeof publicKey, 'length:', publicKey.length)
-      console.log('  - URL type:', typeof url, 'length:', url.length)
-
-      // Verify the invitation format
-      if (!token || !publicKey || !url) {
-        console.error('[DeviceHandlers] Invalid invitation format - missing fields')
-        throw new Error(`Invalid invitation format: token:${!!token} publicKey:${!!publicKey} url:${!!url}`)
-      }
-
-      // Create plain invitation object (not from one.models)
-      const invitationData = {
-        token: token,
-        publicKey: publicKey,
-        url: url
-      }
-
-      console.log('[DeviceHandlers] Plain invitation data:', JSON.stringify(invitationData))
-
-      // Serialize and encode the plain object
-      const serializedData = JSON.stringify(invitationData)
-      const encodedData = encodeURIComponent(serializedData)
-
-      console.log('[DeviceHandlers] Serialization:')
-      console.log('  - Serialized length:', serializedData.length)
-      console.log('  - Encoded length:', encodedData.length)
-
-      // Create the proper invitation URL
-      // The URL in the invitation object is the commServerUrl (e.g., wss://comm10.dev.refinio.one)
-      // We need to convert it to the web app URL for the invitation link
-      let baseUrl = 'https://edda.dev.refinio.one'  // Default for dev environment
-
-      // Try to determine the correct base URL from the commServerUrl
-      if (url.includes('dev.refinio.one')) {
-        baseUrl = 'https://edda.dev.refinio.one'
-      } else if (url.includes('refinio.one')) {
-        baseUrl = 'https://edda.refinio.one'
-      }
-
-      const fullInvitationUrl = `${baseUrl}/invites/invitePartner/?invited=true/#${encodedData}`
-
-      console.log('[DeviceHandlers] Returning invitation URL:', fullInvitationUrl)
-
-      return {
-        success: true,
-        invitation: {
-          url: fullInvitationUrl,
-          token
-        }
-      }
+      // Delegate to ConnectionHandler
+      const connectionHandlers = (await import('./connection.js')).default
+      return await connectionHandlers.createPairingInvitation(event, mode)
     } catch (error) {
       console.error('[DeviceHandlers] Failed to create invitation:', error)
       return {

@@ -21,7 +21,7 @@ declare global {
 // Core modules
 import nodeProvisioning from './services/node-provisioning.js';
 import ipcController from './ipc/controller.js';
-import llmManager from './services/llm-manager.js';
+import llmManager from './services/llm-manager-singleton.js';
 import attachmentService from './services/attachment-service.js';
 
 class MainApplication {

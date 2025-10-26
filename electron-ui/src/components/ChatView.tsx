@@ -8,9 +8,11 @@ import { useLamaAuth, useLamaPeers } from '@/hooks/useLama'
 import { lamaBridge } from '@/bridge/lama-bridge'
 import { topicAnalysisService } from '@/services/topic-analysis-service'
 import { useChatSubjects } from '@/hooks/useChatSubjects'
+import { useChatKeywords } from '@/hooks/useChatKeywords'
 import { ChatHeader } from './chat/ChatHeader'
 import { ChatContext } from './chat/ChatContext'
 import { KeywordDetailPanel } from './KeywordDetail/KeywordDetailPanel'
+import { KeywordLine } from './chat/KeywordLine'
 
 export const ChatView = memo(function ChatView({
   conversationId = 'lama',
@@ -30,6 +32,7 @@ export const ChatView = memo(function ChatView({
   const { messages, loading, sendMessage } = useLamaMessages(conversationId)
   const { user } = useLamaAuth()
   const { subjects, subjectsJustAppeared } = useChatSubjects(conversationId)
+  const { keywords } = useChatKeywords(conversationId, messages)
   const chatHeaderRef = useRef<HTMLDivElement>(null)
 
   // Debug: log messages received from hook
@@ -275,6 +278,11 @@ export const ChatView = memo(function ChatView({
       </div>
 
       <CardContent className="flex-1 p-0 min-h-0 flex flex-col">
+        {/* Keywords Line - Shows current chat keywords */}
+        {keywords.length > 0 && hasAIParticipant && (
+          <KeywordLine keywords={keywords} maxLines={1} />
+        )}
+
         {/* AI Summary Panel - Shows at top when visible */}
         {showSummary && hasAIParticipant && (
           <div className="border-b bg-muted/30">

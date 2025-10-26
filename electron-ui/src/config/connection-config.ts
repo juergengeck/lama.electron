@@ -29,9 +29,7 @@ export const defaultConnectionConfig: ConnectionConfig = {
   useDirectConnection: true,
   nodeEndpoint: 'ws://localhost:8765',
   enableCommServer: true,
-  commServerUrl: process.env.NODE_ENV === 'development' 
-    ? 'wss://comm10.dev.refinio.one'
-    : 'wss://comm.refinio.net',
+  commServerUrl: 'wss://comm10.dev.refinio.one',
   connectionPriority: 'both'
 }
 

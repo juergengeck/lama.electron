@@ -100,4 +100,28 @@ export class ElectronLLMPlatform implements LLMPlatform {
   async readModelFile(_path: string): Promise<Buffer> {
     throw new Error('Model file reading not yet implemented in refactored architecture');
   }
+
+  /**
+   * Emit analysis update notification
+   * Maps to 'keywords:updated' and/or 'subjects:updated' events for UI
+   */
+  emitAnalysisUpdate(topicId: string, analysisType: 'keywords' | 'subjects' | 'both'): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return;
+    }
+
+    console.log(`[ElectronLLMPlatform] Emitting analysis update for ${topicId}: ${analysisType}`);
+
+    if (analysisType === 'keywords' || analysisType === 'both') {
+      this.mainWindow.webContents.send('keywords:updated', {
+        topicId,
+      });
+    }
+
+    if (analysisType === 'subjects' || analysisType === 'both') {
+      this.mainWindow.webContents.send('subjects:updated', {
+        topicId,
+      });
+    }
+  }
 }
