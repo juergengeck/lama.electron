@@ -11,6 +11,8 @@ import LLMObjectManager from './llm-object-manager.js'
 import { ContextEnrichmentService } from '@lama/core/one-ai/services/ContextEnrichmentService.js'
 import type { LLMPlatform } from '@lama/core/services/llm-platform.js'
 import llmManager from '../services/llm-manager-singleton.js'
+import type { SHA256IdHash, SHA256Hash } from '@refinio/one.core/lib/util/type-checks.js'
+import type { Person, HashGroup } from '@refinio/one.core/lib/recipes.js'
 const { BrowserWindow } = electron
 
 export class AIAssistantModel {
@@ -281,30 +283,32 @@ What can I help you with today?`
     const group = await getIdObject(groupIdHash) as any
 
     // Resolve HashGroup to get participants
-    const hashGroup = await getObjectByIdHash(group.hashGroup)
-    const participants = (hashGroup.obj as any).members || []
-    const newParticipants = participants.filter((p: any) => {
+    const { getObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
+    const hashGroupObj: HashGroup<Person> = await getObject(group.hashGroup)
+    const participants = Array.from(hashGroupObj.person)
+    const newParticipants = participants.filter((p: SHA256IdHash<Person>) => {
       // Keep if it's not an AI contact (i.e., it's the owner)
       return !this.isAIPerson(p)
     })
 
     // Add new AI participant
-    newParticipants.push(newAiPersonId)
+    newParticipants.push(newAiPersonId as SHA256IdHash<Person>)
 
     // Create new HashGroup with updated participants
+    const { storeUnversionedObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
     const { storeVersionedObject } = await import('@refinio/one.core/lib/storage-versioned-objects.js')
-    const newHashGroup = {
-      $type$: 'HashGroup' as const,
-      members: newParticipants
+    const newHashGroup: HashGroup<Person> = {
+      $type$: 'HashGroup',
+      person: new Set(newParticipants)
     }
-    const hashGroupResult = await storeVersionedObject(newHashGroup)
+    const hashGroupResult = await storeUnversionedObject(newHashGroup)
 
     // Update the group to reference new HashGroup
     const updatedGroup = {
       $type$: 'Group' as const,
       $versionHash$: (group as any).$versionHash$,
       name: group.name,
-      hashGroup: hashGroupResult.idHash
+      hashGroup: hashGroupResult.hash as SHA256Hash<HashGroup<Person>>
     }
     await storeVersionedObject(updatedGroup)
 
@@ -672,8 +676,8 @@ What can I help you with today?`
         })
       }
       
-      // Get AI response with analysis in a single call
-      const result: any = await this.llmManager?.chatWithAnalysis(history, modelId, {
+      // Get AI response
+      const result: any = await this.llmManager?.chat(history, modelId, {
         onStream: (chunk: string) => {
           fullResponse += chunk
 
@@ -689,7 +693,7 @@ What can I help you with today?`
             })
           }
         }
-      }, topicId) // Pass topicId for analysis
+      })
 
       const response = (result as any)?.response
 

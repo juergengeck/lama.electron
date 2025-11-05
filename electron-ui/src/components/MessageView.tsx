@@ -475,9 +475,18 @@ export function MessageView({
       <EnhancedMessageInput
         onSendMessage={handleEnhancedSend}
         onHashtagClick={handleHashtagClick}
+        onStopStreaming={async () => {
+          console.log('[MessageView] Stop streaming requested')
+          const stopped = await lamaBridge.stopStreaming()
+          if (stopped) {
+            setIsAIProcessing(false)
+            setAiStreamingContent('')
+          }
+        }}
         placeholder={placeholder}
         theme="dark"
         conversationId={topicId}
+        isStreaming={isAIProcessing || !!aiStreamingContent}
       />
     </div>
   )

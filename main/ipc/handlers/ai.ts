@@ -241,6 +241,22 @@ const aiHandlers = {
     } catch (error: any) {
       return { success: false, error: error.message };
     }
+  },
+
+  /**
+   * Stop all active streaming requests
+   */
+  async stopStreaming(event: IpcMainInvokeEvent) {
+    try {
+      console.log('[AI IPC] Stopping all active streams');
+      // Import dynamically to avoid circular dependencies
+      const { cancelAllOllamaRequests } = await import('../../services/ollama.js');
+      cancelAllOllamaRequests();
+      return { success: true };
+    } catch (error: any) {
+      console.error('[AI IPC] Failed to stop streaming:', error);
+      return { success: false, error: error.message };
+    }
   }
 };
 

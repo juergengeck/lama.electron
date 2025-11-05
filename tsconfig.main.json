@@ -51,6 +51,7 @@
     "specs/**",
     "tests/**",
     "packages/**",
-    "reference/**"
+    "reference/**",
+    "main/api/refinio-api-server.ts"
   ]
 }

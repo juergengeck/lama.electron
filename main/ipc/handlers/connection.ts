@@ -2,7 +2,7 @@
  * Connection IPC Handlers (Thin Adapter)
  *
  * Maps Electron IPC calls to ConnectionHandler methods.
- * Business logic lives in @chat/core/handlers/ConnectionHandler.ts
+ * Business logic lives in @lama/connection.core
  * Platform-specific operations (fs, storage, events) handled here.
  */
 
@@ -11,7 +11,7 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import type { IpcMainInvokeEvent } from 'electron';
-import { ConnectionHandler } from '@chat/core/handlers/ConnectionHandler.js';
+import { ConnectionHandler } from '@lama/connection.core';
 import nodeOneCore from '../../core/node-one-core.js';
 
 // Singleton handler instance

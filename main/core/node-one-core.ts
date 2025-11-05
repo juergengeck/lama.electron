@@ -31,11 +31,11 @@ import ConnectionsModel from '@refinio/one.models/lib/models/ConnectionsModel.js
 import TopicModel from '@refinio/one.models/lib/models/Chat/TopicModel.js';
 import { LLMObjectManager } from '@lama/core/models/LLMObjectManager.js';
 import { storeVersionedObject, storeVersionObjectAsChange, getObjectByIdHash } from '@refinio/one.core/lib/storage-versioned-objects.js';
-import { getObject } from '@refinio/one.core/lib/storage-unversioned-objects.js';
+import { getObject, storeUnversionedObject } from '@refinio/one.core/lib/storage-unversioned-objects.js';
 import { calculateIdHashOfObj, calculateHashOfObj } from '@refinio/one.core/lib/util/object.js';
 import { createAccess } from '@refinio/one.core/lib/access.js';
-import SingleUserNoAuth from '@refinio/one.models/lib/models/Authenticator/SingleUserNoAuth.js';
-import { createAssertionVerifier } from '@refinio/one.models/lib/misc/AssertionVerifier.js';
+import MultiUser from '@refinio/one.models/lib/models/Authenticator/MultiUser.js';
+// AssertionVerifier removed - using TopicGroupManager filters instead
 import type { Recipe, RecipeRule } from '@refinio/one.core/lib/recipes.js';
 import type { AnyObjectResult } from '@refinio/one.models/lib/misc/ObjectEventDispatcher.js';
 // PropertyTree type import (if needed will be handled differently)
@@ -89,7 +89,7 @@ class NodeOneCore implements INodeOneCore {
   llmObjectManager?: any
 
   // Additional properties
-  oneAuth: SingleUserNoAuth
+  oneAuth: MultiUser
   grantedAccessPeers: Set<string>
   quicTransport?: QuicTransport
   email: any
@@ -107,7 +107,6 @@ class NodeOneCore implements INodeOneCore {
   accessRightsManager: any
   initFailed: any
   directSocketStopFn: any
-  assertionVerifier: any // AssertionVerifier for Group sharing via objectFilter
 
   constructor() {
     this.initialized = false
@@ -297,8 +296,8 @@ class NodeOneCore implements INodeOneCore {
       // OK if there was no existing instance
     }
     
-    // Import SingleUserNoAuth - same as browser and one.leute
-    const { default: SingleUserNoAuth } = await import('@refinio/one.models/lib/models/Authenticator/SingleUserNoAuth.js')
+    // Import MultiUser for multi-user support
+    const { default: MultiUser } = await import('@refinio/one.models/lib/models/Authenticator/MultiUser.js')
     const { getInstanceOwnerIdHash } = await import('@refinio/one.core/lib/instance.js')
 
     // Use DIFFERENT email from browser to enable federation
@@ -306,7 +305,7 @@ class NodeOneCore implements INodeOneCore {
     const instanceName = `lama-node-${username}`
     const email = `node-${username}@lama.local`  // Different email for federation to work
 
-    console.log('[NodeOneCore] Using SingleUserNoAuth pattern for Node instance:', email)
+    console.log('[NodeOneCore] Using MultiUser pattern for Node instance:', email)
 
     // Import recipes following one.leute pattern
     const RecipesStable = (await import('@refinio/one.models/lib/recipes/recipes-stable.js')).default
@@ -327,9 +326,9 @@ class NodeOneCore implements INodeOneCore {
       AppStateJournalRecipe
     ] as Recipe[]
 
-    console.log('[NodeOneCore] Creating SingleUserNoAuth with', allRecipes.length, 'recipes')
+    console.log('[NodeOneCore] Creating MultiUser instance with', allRecipes.length, 'recipes')
 
-    this.oneAuth = new SingleUserNoAuth({
+    this.oneAuth = new MultiUser({
       directory: oneDbPath,
       recipes: allRecipes,
       reverseMaps: new Map([
@@ -349,20 +348,16 @@ class NodeOneCore implements INodeOneCore {
       console.log('[NodeOneCore] Current OneDB path:', oneDbPath)
       console.log('[NodeOneCore] Checking with credentials:', { email, instanceName })
 
-      const isRegistered = await this.oneAuth.isRegistered()
+      const isRegistered = await this.oneAuth.isRegistered(email, instanceName)
       console.log('[NodeOneCore] isRegistered() returned:', isRegistered)
 
       if (isRegistered) {
         console.log('[NodeOneCore] Instance already registered, logging in...')
-        await this.oneAuth.login()
+        await this.oneAuth.login(email, password, instanceName)
       } else {
         console.log('[NodeOneCore] Instance not found as registered, calling register()')
         console.log('[NodeOneCore] Registering new instance with email:', email)
-        await this.oneAuth.register({
-          email: email,
-          instanceName: instanceName,
-          secret: password
-        })
+        await this.oneAuth.register(email, password, instanceName)
       }
       
       // Get owner ID AFTER proper authentication
@@ -488,11 +483,12 @@ class NodeOneCore implements INodeOneCore {
             console.log('[NodeOneCore] ✅ Address book entry created successfully!')
             console.log('[NodeOneCore]   • Someone ID:', someone?.idHash?.toString()?.substring(0, 8) || 'null')
 
-            // Step 3: Auto-create P2P topic for immediate messaging
-            console.log('[NodeOneCore] 💬 Step 3: Creating P2P topic for messaging...')
-            const { autoCreateP2PTopicAfterPairing } = await import('./p2p-topic-creator.js')
+            // Step 3: Detect invitation type and create appropriate topic
+            console.log('[NodeOneCore] 💬 Step 3: Handling pairing completion...')
+            const { handlePairingCompletion } = await import('../../../connection.core/dist/esm/index.js')
 
-            const topicRoom = await autoCreateP2PTopicAfterPairing({
+            const pairingResult = await handlePairingCompletion({
+              leuteModel: this.leuteModel,
               topicModel: this.topicModel,
               channelManager: this.channelManager,
               localPersonId,
@@ -500,11 +496,10 @@ class NodeOneCore implements INodeOneCore {
               initiatedLocally
             })
 
-            if (topicRoom) {
-              console.log('[NodeOneCore] ✅ P2P topic ready for messaging!')
-            } else {
-              console.warn('[NodeOneCore] ⚠️ Could not create P2P topic')
-            }
+            console.log('[NodeOneCore] ✅ Pairing complete - type:', pairingResult.type)
+            console.log('[NodeOneCore]   Channel:', pairingResult.channelId.substring(0, 20))
+
+            const topicRoom = pairingResult.topicRoom
 
             // Log the profile info
             if (someone?.mainProfile) {
@@ -560,17 +555,18 @@ class NodeOneCore implements INodeOneCore {
                 `${localPersonId}<->${remotePersonId}` :
                 `${remotePersonId}<->${localPersonId}`
 
-              // Add conversation to state
+              // Add conversation to state with detected type
               stateManager.addConversation({
-                id: p2pId,
+                id: pairingResult.channelId,
                 name: displayName,
-                type: 'p2p',
+                type: pairingResult.type,
                 participants: [localPersonId, remotePersonId],
                 lastMessage: null,
                 lastMessageTime: Date.now(),
                 unreadCount: 0
               })
-              console.log('[NodeOneCore]   • Conversation added to state:', p2pId)
+              console.log('[NodeOneCore]   • Conversation added to state:', pairingResult.channelId.substring(0, 20))
+              console.log('[NodeOneCore]   • Conversation type:', pairingResult.type)
 
               // Notify UI
               const windows = BrowserWindow.getAllWindows()
@@ -1105,6 +1101,22 @@ class NodeOneCore implements INodeOneCore {
     await this.topicModel.init()
     console.log('[NodeOneCore] ✅ TopicModel initialized')
 
+    // Initialize Topic Group Manager for proper group topics
+    // Must be initialized BEFORE ConnectionsModel so filters are available
+    if (!this.topicGroupManager) {
+      this.topicGroupManager = new TopicGroupManager(this, {
+        storeVersionedObject,
+        storeUnversionedObject,
+        getObjectByIdHash,
+        getObject,
+        getAllOfType: async (type: string) => [], // Stub implementation - TopicGroupManager doesn't actually use this
+        createAccess,
+        calculateIdHashOfObj,
+        calculateHashOfObj
+      })
+      console.log('[NodeOneCore] ✅ Topic Group Manager initialized')
+    }
+
     // Set up P2P channel access monitoring
     const { monitorP2PChannels } = await import('./p2p-channel-access.js')
     monitorP2PChannels(this.channelManager, this.leuteModel)
@@ -1164,18 +1176,6 @@ class NodeOneCore implements INodeOneCore {
     // when the browser is invited (in node-provisioning.js)
     console.log('[NodeOneCore] Federation API initialized')
 
-    // Create AssertionVerifier for Group sharing via objectFilter
-    const me = await this.leuteModel.me()
-    const instanceOwner = await me.mainIdentity()
-    const { getInstanceOwnerIdHash, getInstanceIdHash } = await import('@refinio/one.core/lib/instance.js')
-    const instanceIdHash = await getInstanceIdHash()
-
-    this.assertionVerifier = createAssertionVerifier(instanceOwner, instanceIdHash, {
-      checkExpiration: false,
-      requireSignature: false
-    })
-    console.log('[NodeOneCore] AssertionVerifier created for Group sharing')
-
     // Create ConnectionsModel with standard configuration matching one.leute
     // Use the imported ConnectionsModel class - no dynamic import
 
@@ -1194,7 +1194,8 @@ class NodeOneCore implements INodeOneCore {
       pairingTokenExpirationDuration: 60000 * 15,  // 15 minutes
       noImport: false,
       noExport: false,
-      objectFilter: this.assertionVerifier.createObjectFilter()  // Enable Group/HashGroup sharing via assertions
+      objectFilter: this.topicGroupManager.createObjectFilter(),   // Outbound: allowlist of Groups we created
+      importFilter: this.topicGroupManager.createImportFilter()    // Inbound: validate certificates from trusted people
     })
     
     console.log('[NodeOneCore] ConnectionsModel created:', {
@@ -1575,20 +1576,10 @@ class NodeOneCore implements INodeOneCore {
       this.channelManager,
       this.topicModel
     )
-    
-    // Initialize Topic Group Manager for proper group topics
-    if (!this.topicGroupManager) {
-      this.topicGroupManager = new TopicGroupManager(this, {
-        storeVersionedObject,
-        getObjectByIdHash,
-        getObject,
-        createAccess,
-        calculateIdHashOfObj,
-        calculateHashOfObj
-      })
-      console.log('[NodeOneCore] ✅ Topic Group Manager initialized')
-    }
-    
+
+    // Note: Topic Group Manager already initialized earlier (before ConnectionsModel)
+    // to provide objectFilter and importFilter
+
     // Initialize Topic Analysis Model for keyword/subject extraction
     if (!this.topicAnalysisModel) {
       this.topicAnalysisModel = new TopicAnalysisModel(this.channelManager, this.topicModel)
@@ -1603,16 +1594,14 @@ class NodeOneCore implements INodeOneCore {
     console.log('[NodeOneCore] ✅ Claude models discovered')
 
     // Initialize AI Assistant Handler (refactored component-based architecture)
-    // TEMP: Commented out for connection testing - prevents auto-selection of default LLM model
-    // if (!this.aiAssistantModel) {
-    //   this.aiAssistantModel = await initializeAIAssistantHandler(this, llmManager)
-    //   console.log('[NodeOneCore] ✅ AI Assistant Handler initialized (refactored architecture)')
+    if (!this.aiAssistantModel) {
+      this.aiAssistantModel = await initializeAIAssistantHandler(this, llmManager)
+      console.log('[NodeOneCore] ✅ AI Assistant Handler initialized (refactored architecture)')
 
-    //   // Connect AIAssistantHandler to the message listener
-    //   this.aiMessageListener.setAIAssistantModel(this.aiAssistantModel)
-    //   console.log('[NodeOneCore] ✅ Connected AIAssistantHandler to message listener')
-    // }
-    console.log('[NodeOneCore] ⚠️ AI Assistant initialization skipped for testing')
+      // Connect AIAssistantHandler to the message listener
+      this.aiMessageListener.setAIAssistantModel(this.aiAssistantModel)
+      console.log('[NodeOneCore] ✅ Connected AIAssistantHandler to message listener')
+    }
 
     // Register NodeOneCore with MCPManager to enable memory tools
     console.log('[NodeOneCore] Registering memory tools with MCP Manager...')
@@ -2055,60 +2044,6 @@ class NodeOneCore implements INodeOneCore {
 
   // REMOVED: startDirectListener()
   // Direct WebSocket listener now handled by ConnectionsModel via socketConfig
-
-  /**
-   * Create assertions for Group and HashGroup to enable CHUM sharing
-   * Also creates certificates for each participant
-   *
-   * @param groupIdHash - ID hash of the Group
-   * @param hashGroupIdHash - ID hash of the HashGroup
-   * @param participants - Array of participant Person ID hashes
-   */
-  async createGroupAssertions(
-    groupIdHash: SHA256IdHash<any>,
-    hashGroupIdHash: SHA256IdHash<any>,
-    participants: SHA256IdHash<Person>[]
-  ): Promise<void> {
-    if (!this.assertionVerifier) {
-      console.warn('[NodeOneCore] AssertionVerifier not initialized, skipping Group assertions')
-      return
-    }
-
-    try {
-      // Create assertions for Group and HashGroup to allow CHUM sharing
-      await this.assertionVerifier.createAssertion(groupIdHash)
-      await this.assertionVerifier.createAssertion(hashGroupIdHash)
-
-      console.log(`[NodeOneCore] Created assertions for Group ${String(groupIdHash).substring(0, 8)} and HashGroup ${String(hashGroupIdHash).substring(0, 8)}`)
-
-      // Create certificates for each participant
-      const { AccessVersionedObjectLicense } = await import('@refinio/one.models/lib/recipes/Certificates/AccessVersionedObjectCertificate.js')
-      const { storeUnversionedObject } = await import('@refinio/one.core/lib/storage-unversioned-objects.js')
-      const { calculateHashOfObj } = await import('@refinio/one.core/lib/util/object.js')
-
-      // Get license hash (store if needed, or calculate from object)
-      const licenseHash = await calculateHashOfObj(AccessVersionedObjectLicense)
-
-      for (const participant of participants) {
-        const cert = await storeVersionedObject({
-          $type$: 'AccessVersionedObjectCertificate',
-          person: participant,
-          data: groupIdHash,
-          license: licenseHash
-        } as any)
-
-        // Also create assertion for certificate (optional but recommended)
-        await this.assertionVerifier.createAssertion(cert.hash)
-
-        console.log(`[NodeOneCore] Created certificate for participant ${String(participant).substring(0, 8)}`)
-      }
-
-      console.log(`[NodeOneCore] ✅ Group assertions and certificates created for ${participants.length} participants`)
-    } catch (error) {
-      console.error('[NodeOneCore] Failed to create Group assertions:', error)
-      throw error
-    }
-  }
 
   /**
    * Reset the singleton instance to clean state

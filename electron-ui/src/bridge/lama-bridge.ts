@@ -33,6 +33,7 @@ export interface LamaAPI {
   disableAIForTopic: (topicId: string) => Promise<boolean>
   getBestModelForTask: (task: 'coding' | 'reasoning' | 'chat' | 'analysis') => Promise<any>
   getModelsByCapability: (capability: string) => Promise<any[]>
+  stopStreaming: () => Promise<boolean>
   
   // UDP Sockets
   createUdpSocket: (options: SocketOptions) => Promise<string>
@@ -347,6 +348,14 @@ class LamaBridge implements LamaAPI {
       return []
     }
     return result.models || []
+  }
+
+  async stopStreaming(): Promise<boolean> {
+    if (!window.electronAPI) {
+      throw new Error('IPC not available')
+    }
+    const result = await window.electronAPI.invoke('ai:stopStreaming')
+    return result.success || false
   }
   
   async getContacts(): Promise<any[]> {

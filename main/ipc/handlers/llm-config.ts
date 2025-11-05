@@ -31,6 +31,7 @@ import nodeOneCore from '../../core/node-one-core.js';
 // Create handler instance with Electron-specific dependencies
 const llmConfigHandler = new LLMConfigHandler(
   nodeOneCore,
+  nodeOneCore.aiAssistantModel,
   {
     testOllamaConnection,
     fetchOllamaModels,

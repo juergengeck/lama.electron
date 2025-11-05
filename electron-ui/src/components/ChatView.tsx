@@ -88,8 +88,6 @@ export const ChatView = memo(function ChatView({
 
   // Listen for AI streaming events
   useEffect(() => {
-    if (!window.electronAPI) return
-    
     // Handle thinking indicator (used for all AI messages including welcome)
     const handleThinking = (data: any) => {
       console.log(`[ChatView-${conversationId}] 🔔 Received thinking event for: "${data.conversationId}"`)
@@ -104,15 +102,17 @@ export const ChatView = memo(function ChatView({
         console.log(`[ChatView-${conversationId}] ❌ Ignoring event for different conversation`)
       }
     }
-    
+
     // Handle streaming chunks
     const handleStream = (data: any) => {
+      console.log(`[ChatView-${conversationId}] 🌊 Received stream event for: "${data.conversationId}"`)
       if (data.conversationId === conversationId) {
+        console.log(`[ChatView-${conversationId}] ✅ Setting streaming content`)
         setIsAIProcessing(false)
         setAiStreamingContent(data.partial || '')
       }
     }
-    
+
     // Handle message complete
     const handleComplete = (data: any) => {
       if (data.conversationId === conversationId) {
@@ -121,18 +121,18 @@ export const ChatView = memo(function ChatView({
         onProcessingChange?.(false) // Update parent state
       }
     }
-    
-    // Subscribe to streaming events via electronAPI
-    const unsubThinking = window.electronAPI.on('message:thinking', handleThinking)
-    const unsubStream = window.electronAPI.on('message:stream', handleStream)
-    const unsubComplete = window.electronAPI.on('message:updated', handleComplete)
-    
+
+    // Subscribe to streaming events via lamaBridge (not directly to electronAPI)
+    lamaBridge.on('message:thinking', handleThinking)
+    lamaBridge.on('message:stream', handleStream)
+    lamaBridge.on('message:updated', handleComplete)
+
     return () => {
-      if (unsubThinking) unsubThinking()
-      if (unsubStream) unsubStream()
-      if (unsubComplete) unsubComplete()
+      lamaBridge.off('message:thinking', handleThinking)
+      lamaBridge.off('message:stream', handleStream)
+      lamaBridge.off('message:updated', handleComplete)
     }
-  }, [conversationId])
+  }, [conversationId, onProcessingChange])
   
   useEffect(() => {
     // Get the conversation/contact name
