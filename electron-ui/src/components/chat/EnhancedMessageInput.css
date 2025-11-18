@@ -362,6 +362,19 @@
   transform: scale(1.05);
 }
 
+.send-button.stop-button {
+  background: #ff3b30;
+  color: white;
+  box-shadow: 0 2px 6px rgba(255, 59, 48, 0.3);
+  font-size: 18px;
+}
+
+.send-button.stop-button:hover {
+  background: #ff2d20;
+  transform: scale(1.05);
+  box-shadow: 0 3px 10px rgba(255, 59, 48, 0.4);
+}
+
 .send-button:disabled {
   background: #333;
   color: #666;
@@ -416,6 +429,48 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Radar animation for uploading state */
+@keyframes radarSweep {
+  0% {
+    transform: rotate(0deg);
+    opacity: 0.8;
+  }
+  100% {
+    transform: rotate(360deg);
+    opacity: 0.8;
+  }
+}
+
+@keyframes radarFade {
+  0% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 0.4;
+  }
+}
+
+.radar-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-hand {
+  animation: radarSweep 2s linear infinite;
+  transform-origin: center;
+}
+
+.radar-shadow {
+  animation: radarFade 2s ease-in-out infinite;
 }
 
 /* Scrollbar styles */

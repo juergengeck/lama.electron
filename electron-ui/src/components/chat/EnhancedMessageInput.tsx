@@ -34,11 +34,18 @@ export interface HashtagSuggestion {
 
 export interface EnhancedMessageInputProps {
   onSendMessage: (text: string, attachments?: EnhancedAttachment[]) => Promise<void>;
+  onStopStreaming?: () => void;
   onHashtagClick?: (hashtag: string) => void;
+  onTextChange?: (text: string) => void; // Callback for real-time input tracking
+  onRetryMessage?: () => void; // Retry last failed message
+  onSwitchModel?: (newModelId: string) => void; // Switch to different LLM model
   placeholder?: string;
   disabled?: boolean;
   theme?: 'light' | 'dark';
   conversationId?: string; // Used to detect conversation changes for auto-focus
+  isStreaming?: boolean; // Show stop button when streaming
+  initialText?: string; // Pre-fill input with text
+  availableModels?: Array<{ id: string; name: string }>; // For model switching
 }
 
 // Subject hashtag extractor (simplified web version)
@@ -246,11 +253,18 @@ const HashtagSuggestionsPanel: React.FC<{
 // Main enhanced message input component
 export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
   onSendMessage,
+  onStopStreaming,
   onHashtagClick,
+  onTextChange,
+  onRetryMessage,
+  onSwitchModel,
   placeholder = "Type a message...",
   disabled = false,
   theme = 'light',
-  conversationId
+  conversationId,
+  isStreaming = false,
+  initialText = '',
+  availableModels = []
 }) => {
   const [messageText, setMessageText] = useState('');
   const [attachments, setAttachments] = useState<EnhancedAttachment[]>([]);
@@ -590,15 +604,51 @@ export const EnhancedMessageInput: React.FC<EnhancedMessageInputProps> = ({
           rows={1}
         />
         
-        {/* Send button */}
-        <button
-          className={`send-button ${canSend ? 'active' : ''}`}
-          onClick={handleSend}
-          disabled={!canSend}
-          title="Send message"
-        >
-          {isUploading ? '⏳' : '➤'}
-        </button>
+        {/* Send or Stop button */}
+        {isStreaming ? (
+          <button
+            className="send-button stop-button"
+            onClick={onStopStreaming}
+            title="Stop streaming"
+          >
+            <svg className="radar-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              {/* Outer circle */}
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" opacity="0.3"/>
+
+              {/* Radar sweep shadow - fading trail */}
+              <g className="radar-shadow">
+                <path
+                  d="M 8 8 L 8 2 A 6 6 0 0 1 14 8 Z"
+                  fill="currentColor"
+                  opacity="0.15"
+                />
+              </g>
+
+              {/* Hour hand - rotating */}
+              <g className="radar-hand">
+                <line
+                  x1="8"
+                  y1="8"
+                  x2="8"
+                  y2="3"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+                <circle cx="8" cy="8" r="1.5" fill="currentColor"/>
+              </g>
+            </svg>
+          </button>
+        ) : (
+          <button
+            className={`send-button ${canSend ? 'active' : ''}`}
+            onClick={handleSend}
+            disabled={!canSend}
+            title="Send message"
+          >
+            ➤
+          </button>
+        )}
       </div>
       
       {isDragOver && (
