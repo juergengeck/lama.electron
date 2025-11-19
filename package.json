@@ -1,5 +1,5 @@
 {
-  "name": "lama",
+  "name": "@lama/electron",
   "version": "1.0.0",
   "description": "LAMA - Local AI Messaging Assistant",
   "author": "LAMA Team",
